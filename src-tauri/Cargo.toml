@@ -35,13 +35,22 @@ sha2 = "0.10"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 similar = { version = "2", features = ["text"] }
 notify = "6"
-thiserror = "1"
+thiserror = "2"
 hex = "0.4"
 tempfile = "3"
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] }
+percent-encoding = "2"
 
 [dev-dependencies]
 tempfile = "3"
+mockito = "1"
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true

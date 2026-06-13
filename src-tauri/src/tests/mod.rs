@@ -1,7 +1,8 @@
-// Integration-level test modules for WS-B.
-// Unit tests are colocated in each source file.
-// These modules add cross-module and pipeline-level tests.
-
+// Test module root for all workstreams.
+// WS-B: data engine tests
 pub mod file_io_tests;
 pub mod annotations_tests;
 pub mod reanchor_tests;
+// WS-D: settings, secrets & Obsidian tests
+pub mod settings_tests;
+pub mod obsidian_tests;
