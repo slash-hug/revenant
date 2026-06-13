@@ -21,8 +21,10 @@
  */
 
 import MarkdownIt from 'markdown-it';
+// markdown-it-footnote ships no TypeScript declarations.
+// The ambient module declaration in markdown-it-footnote.d.ts stubs the types.
 import MarkdownItFootnote from 'markdown-it-footnote';
-import DOMPurify from 'dompurify';
+import DOMPurify, { type Config as DOMPurifyConfig } from 'dompurify';
 
 // ---------------------------------------------------------------------------
 // DOMPurify config
@@ -195,7 +197,7 @@ export function renderMarkdown(src: string): string {
   _blockCounter = 0;
   const { content } = stripFrontmatter(src);
   const rawHtml = md.render(content);
-  return DOMPurify.sanitize(rawHtml, PURIFY_CONFIG as unknown as DOMPurify.Config) as string;
+  return DOMPurify.sanitize(rawHtml, PURIFY_CONFIG as unknown as DOMPurifyConfig) as unknown as string;
 }
 
 /**
@@ -209,7 +211,7 @@ export async function renderCodeBlock(code: string, lang: string): Promise<strin
     const validLang = hljs.getLanguage(lang) ? lang : 'plaintext';
     const result = hljs.highlight(code, { language: validLang });
     const highlighted = `<pre><code class="hljs language-${validLang}">${result.value}</code></pre>`;
-    return DOMPurify.sanitize(highlighted, PURIFY_CONFIG as unknown as DOMPurify.Config) as string;
+    return DOMPurify.sanitize(highlighted, PURIFY_CONFIG as unknown as DOMPurifyConfig) as unknown as string;
   } catch {
     // Per-block error isolation: return plain code block, don't crash.
     return `<pre><code>${escapeHtml(code)}</code></pre>`;
@@ -228,7 +230,7 @@ export async function renderMermaid(code: string, blockId: string): Promise<stri
     const id = `mermaid-${blockId}`;
     const { svg } = await mermaid.render(id, code);
     // Sanitize the SVG output (C15 — Mermaid SVG is user/agent-supplied).
-    const sanitized = DOMPurify.sanitize(svg, PURIFY_CONFIG as unknown as DOMPurify.Config) as string;
+    const sanitized = DOMPurify.sanitize(svg, PURIFY_CONFIG as unknown as DOMPurifyConfig) as unknown as string;
     return sanitized;
   } catch (err) {
     const msg = err instanceof Error ? escapeHtml(err.message) : 'Diagram error';

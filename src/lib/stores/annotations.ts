@@ -8,14 +8,14 @@
  *  - C9  annotation panel = right-side drawer (the store feeds it).
  *  - C10 general_notes is a top-level sidecar field, persisted with every save.
  *  - A3  schema_version: 1 in every sidecar write.
- *  - C8  both editor-side and preview-side anchors are supported in v1.
+ *  - C8  anchored | detached | block_level statuses match the IPC contract.
  */
 
 import { writable, get } from 'svelte/store';
-import { invoke } from '@tauri-apps/api/core';
-import type { Annotation, Sidecar, AnchorV1 } from '../types/ipc';
+import type { Annotation, Sidecar } from '../types/ipc';
+import { loadAnnotations, saveAnnotations } from '../types/ipc';
 
-export type { Annotation, AnchorV1 };
+export type { Annotation, Sidecar };
 
 interface AnnotationsState {
   docPath: string | null;
@@ -49,21 +49,21 @@ function createAnnotationsStore() {
   async function load(docPath: string, docContentHash: string): Promise<void> {
     update((s) => ({ ...s, loading: true, error: null, docPath, docContentHash }));
     try {
-      const sidecar = await invoke<Sidecar>('load_annotations', { doc_path: docPath });
+      const sidecar = await loadAnnotations(docPath);
       update((s) => ({
         ...s,
         loading: false,
         generalNotes: sidecar.general_notes ?? '',
         annotations: sidecar.annotations ?? [],
       }));
-    } catch (err) {
-      // If no sidecar exists yet, start fresh.
+    } catch {
+      // If no sidecar exists yet, start fresh — not a real error.
       update((s) => ({
         ...s,
         loading: false,
         generalNotes: '',
         annotations: [],
-        error: null, // not a real error — file just doesn't exist yet
+        error: null,
       }));
     }
   }
@@ -77,17 +77,13 @@ function createAnnotationsStore() {
 
     const sidecar: Sidecar = {
       schema_version: 1,
-      doc_path: state.docPath,
       doc_content_hash: state.docContentHash,
       general_notes: state.generalNotes,
       annotations: state.annotations,
     };
 
     try {
-      await invoke('save_annotations', {
-        doc_path: state.docPath,
-        sidecar,
-      });
+      await saveAnnotations(state.docPath, sidecar);
     } catch (err) {
       update((s) => ({ ...s, error: String(err) }));
       throw err;
@@ -95,17 +91,38 @@ function createAnnotationsStore() {
   }
 
   /**
-   * Add a new annotation with the given anchor and body.
+   * Add a new annotation with the given anchor fields and body.
    * Immediately persists after adding.
+   *
+   * @param lineStart   - 0-indexed starting line.
+   * @param lineEnd     - 0-indexed ending line (inclusive).
+   * @param charStart   - Character offset within lineStart.
+   * @param charEnd     - Character offset within lineEnd.
+   * @param quotedText  - The exact selected text at anchor time.
+   * @param body        - Reviewer's comment.
+   * @param status      - Initial anchor status ('anchored' | 'block_level').
    */
-  async function addAnnotation(anchor: AnchorV1, body: string): Promise<Annotation> {
+  async function addAnnotation(
+    lineStart: number,
+    lineEnd: number,
+    charStart: number,
+    charEnd: number,
+    quotedText: string,
+    body: string,
+    status: 'anchored' | 'block_level' = 'anchored',
+  ): Promise<Annotation> {
     const now = new Date().toISOString();
     const annotation: Annotation = {
       id: generateAnnotationId(),
-      anchor,
       body,
-      status: 'open',
+      quoted_text: quotedText,
+      line_start: lineStart,
+      line_end: lineEnd,
+      char_start: charStart,
+      char_end: charEnd,
+      status,
       created_at: now,
+      updated_at: now,
     };
 
     update((s) => ({
@@ -118,27 +135,51 @@ function createAnnotationsStore() {
   }
 
   /**
-   * Resolve an annotation (mark it as resolved). Persists immediately.
+   * Update an annotation's body. Persists immediately.
    */
-  async function resolveAnnotation(id: string): Promise<void> {
+  async function updateAnnotationBody(id: string, body: string): Promise<void> {
     const now = new Date().toISOString();
     update((s) => ({
       ...s,
       annotations: s.annotations.map((a) =>
-        a.id === id ? { ...a, status: 'resolved', resolved_at: now } : a
+        a.id === id ? { ...a, body, updated_at: now } : a
       ),
     }));
     await save();
   }
 
   /**
-   * Reopen a resolved annotation.
+   * Mark an annotation as detached (anchor could not be re-found after edit).
+   * The annotation is preserved — the UI shows a "detached" badge.
    */
-  async function reopenAnnotation(id: string): Promise<void> {
+  async function detachAnnotation(id: string): Promise<void> {
+    const now = new Date().toISOString();
     update((s) => ({
       ...s,
       annotations: s.annotations.map((a) =>
-        a.id === id ? { ...a, status: 'open', resolved_at: undefined } : a
+        a.id === id ? { ...a, status: 'detached' as const, updated_at: now } : a
+      ),
+    }));
+    await save();
+  }
+
+  /**
+   * Re-anchor a previously detached annotation to a new line range.
+   */
+  async function reanchorAnnotation(
+    id: string,
+    lineStart: number,
+    lineEnd: number,
+    charStart: number,
+    charEnd: number,
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    update((s) => ({
+      ...s,
+      annotations: s.annotations.map((a) =>
+        a.id === id
+          ? { ...a, line_start: lineStart, line_end: lineEnd, char_start: charStart, char_end: charEnd, status: 'anchored' as const, updated_at: now }
+          : a
       ),
     }));
     await save();
@@ -166,7 +207,7 @@ function createAnnotationsStore() {
 
   /**
    * Update the in-memory doc content hash (called after a successful save so
-   * re-anchoring can detect stale anchors).
+   * re-anchoring can detect stale anchors on the next load).
    */
   function setDocContentHash(hash: string): void {
     update((s) => ({ ...s, docContentHash: hash }));
@@ -182,8 +223,9 @@ function createAnnotationsStore() {
     load,
     save,
     addAnnotation,
-    resolveAnnotation,
-    reopenAnnotation,
+    updateAnnotationBody,
+    detachAnnotation,
+    reanchorAnnotation,
     deleteAnnotation,
     updateGeneralNotes,
     setDocContentHash,

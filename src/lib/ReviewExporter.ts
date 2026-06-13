@@ -13,27 +13,29 @@
  */
 
 import type { Annotation, Sidecar } from './types/ipc';
-import { invoke } from '@tauri-apps/api/core';
+import { generateReview as ipcGenerateReview } from './types/ipc';
 
 // ---------------------------------------------------------------------------
 // Format helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Build the line-range label for an annotation anchor.
- * Source anchors get "L<start>–L<end>"; block anchors get "block:<id>".
+ * Build the line-range label for an annotation.
+ * Source anchors get "L<start>–L<end>" (1-indexed for human display).
+ * Block-level anchors get "block:<line>".
  */
 function formatAnchorLabel(ann: Annotation): string {
-  if (ann.anchor.type === 'source') {
-    const { start_line, end_line } = ann.anchor.anchor;
-    if (start_line === end_line) {
-      return `L${start_line}`;
-    }
-    return `L${start_line}–L${end_line}`;
+  if (ann.status === 'block_level') {
+    // Block-level anchor: show the line as a reference point.
+    return `block:L${ann.line_start + 1}`;
   }
-  // Block-level anchor (Mermaid / table / footnote fallback per C8 ruling)
-  const { block_id, block_type } = ann.anchor.anchor;
-  return `block:${block_type}:${block_id}`;
+  // 0-indexed internally; display as 1-indexed.
+  const start = ann.line_start + 1;
+  const end = ann.line_end + 1;
+  if (start === end) {
+    return `L${start}`;
+  }
+  return `L${start}–L${end}`;
 }
 
 /**
@@ -47,7 +49,7 @@ function formatQuote(text: string): string {
 }
 
 /**
- * Format a single open (non-resolved) annotation as a numbered comment block.
+ * Format a single anchored (non-detached) annotation as a numbered comment block.
  *
  * Output shape:
  * ### Comment N — L42–L45
@@ -58,12 +60,7 @@ function formatQuote(text: string): string {
  */
 function formatAnnotation(ann: Annotation, index: number): string {
   const anchorLabel = formatAnchorLabel(ann);
-  const quotedText =
-    ann.anchor.type === 'source'
-      ? ann.anchor.anchor.quoted_text
-      : ann.anchor.anchor.quoted_text;
-
-  const quote = formatQuote(quotedText);
+  const quote = formatQuote(ann.quoted_text);
   const lines: string[] = [`### Comment ${index} — ${anchorLabel}`];
   if (quote) {
     lines.push('');
@@ -82,17 +79,19 @@ function formatAnnotation(ann: Annotation, index: number): string {
 export interface ReviewPayload {
   /** The formatted review markdown string. */
   markdown: string;
-  /** Count of open (non-resolved) annotations included. */
-  openCount: number;
+  /** Count of anchored (active) annotations included. */
+  anchoredCount: number;
   /** Count of detached annotations included. */
   detachedCount: number;
+  /** Count of block_level annotations included. */
+  blockLevelCount: number;
 }
 
 /**
  * Format a Sidecar's annotations + general notes into review markdown.
  *
- * Only open and detached annotations are included. Resolved annotations
- * are omitted (they have been addressed).
+ * Anchored and block_level annotations are included as "Open comments".
+ * Detached annotations are listed separately with a warning note.
  *
  * Output structure:
  *   # Review — <filename>
@@ -110,7 +109,11 @@ export interface ReviewPayload {
  */
 export function formatReview(sidecar: Sidecar, docPath: string): ReviewPayload {
   const filename = docPath.split('/').pop() ?? docPath;
-  const openAnnotations = sidecar.annotations.filter((a) => a.status === 'open');
+
+  // "Open" = anchored + block_level (active anchors that the reviewer cares about).
+  const openAnnotations = sidecar.annotations.filter(
+    (a) => a.status === 'anchored' || a.status === 'block_level'
+  );
   const detachedAnnotations = sidecar.annotations.filter((a) => a.status === 'detached');
 
   const sections: string[] = [`# Review — ${filename}`, ''];
@@ -134,11 +137,7 @@ export function formatReview(sidecar: Sidecar, docPath: string): ReviewPayload {
     );
     detachedAnnotations.forEach((ann, i) => {
       const label = `[detached] ${formatAnchorLabel(ann)}`;
-      const quote = formatQuote(
-        ann.anchor.type === 'source'
-          ? ann.anchor.anchor.quoted_text
-          : ann.anchor.anchor.quoted_text
-      );
+      const quote = formatQuote(ann.quoted_text);
       const lines = [`### Comment ${openAnnotations.length + i + 1} — ${label}`];
       if (quote) {
         lines.push('', quote);
@@ -158,8 +157,9 @@ export function formatReview(sidecar: Sidecar, docPath: string): ReviewPayload {
 
   return {
     markdown: sections.join('\n'),
-    openCount: openAnnotations.length,
+    anchoredCount: openAnnotations.filter((a) => a.status === 'anchored').length,
     detachedCount: detachedAnnotations.length,
+    blockLevelCount: openAnnotations.filter((a) => a.status === 'block_level').length,
   };
 }
 
@@ -171,9 +171,7 @@ export function formatReview(sidecar: Sidecar, docPath: string): ReviewPayload {
  */
 export async function generateReview(sidecar: Sidecar, docPath: string): Promise<ReviewPayload> {
   const payload = formatReview(sidecar, docPath);
-  await invoke('generate_review', {
-    doc_path: docPath,
-    review_markdown: payload.markdown,
-  });
+  // Use the typed IPC wrapper which sends { payload: { doc_path, markdown } }.
+  await ipcGenerateReview({ doc_path: docPath, markdown: payload.markdown });
   return payload;
 }
