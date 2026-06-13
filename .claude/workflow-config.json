@@ -1,0 +1,122 @@
+{
+  "project": "revenant",
+  "description": "Markdown viewer and review companion — Tauri 2 + Svelte",
+  "packageManager": "npm",
+  "commands": {
+    "build": "cargo tauri build",
+    "dev": "cargo tauri dev",
+    "rustBuild": "cargo build --manifest-path src-tauri/Cargo.toml",
+    "rustTest": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "frontendBuild": "npm run build",
+    "frontendTest": "npm test",
+    "typeCheck": "npx tsc --noEmit",
+    "versionCheck": "revenant --version"
+  },
+  "verification": {
+    "beforePR": [
+      "cargo build --manifest-path src-tauri/Cargo.toml",
+      "npm test",
+      "npx tsc --noEmit",
+      "npm run build"
+    ],
+    "afterMerge": [
+      "cargo test --manifest-path src-tauri/Cargo.toml",
+      "npm test"
+    ]
+  },
+  "ciMatrix": {
+    "os": ["macos-latest", "windows-latest"],
+    "steps": ["cargo test", "npm test", "cargo tauri build"]
+  },
+  "personas": {
+    "rustDev": {
+      "focus": "src-tauri/",
+      "model": "sonnet"
+    },
+    "frontendDev": {
+      "focus": "src/",
+      "model": "sonnet"
+    },
+    "reviewer": {
+      "model": "opus"
+    },
+    "backendArchitect": {
+      "focus": "src-tauri/src/",
+      "model": "opus"
+    }
+  },
+  "workstreams": {
+    "WS-A": {
+      "description": "Foundation & contract",
+      "files": [
+        "CLAUDE.md",
+        ".claude/**",
+        ".gitignore",
+        "README.md",
+        "package.json",
+        "package-lock.json",
+        "vite.config.ts",
+        "tsconfig.json",
+        "svelte.config.js",
+        "vitest.config.ts",
+        "index.html",
+        "src/main.ts",
+        "src/App.svelte",
+        "src-tauri/Cargo.toml",
+        "src-tauri/build.rs",
+        "src-tauri/tauri.conf.json",
+        "src-tauri/capabilities/**",
+        "src-tauri/src/main.rs",
+        "src-tauri/src/lib.rs",
+        "src-tauri/src/ipc.rs",
+        "src/lib/types/ipc.ts",
+        ".github/workflows/**"
+      ]
+    },
+    "WS-B": {
+      "description": "Annotation data engine (Rust)",
+      "dependsOn": "WS-A",
+      "files": [
+        "src-tauri/src/file_io.rs",
+        "src-tauri/src/annotations.rs",
+        "src-tauri/src/reanchor.rs",
+        "src-tauri/src/frontmatter.rs",
+        "src-tauri/src/paths.rs",
+        "src-tauri/src/tests/reanchor_tests.rs",
+        "src-tauri/src/tests/annotations_tests.rs",
+        "src-tauri/src/tests/file_io_tests.rs"
+      ]
+    },
+    "WS-C": {
+      "description": "Frontend UI & render (Svelte/TS)",
+      "dependsOn": "WS-A",
+      "files": [
+        "src/lib/TabManager.svelte",
+        "src/lib/EditorPane.svelte",
+        "src/lib/PreviewPane.svelte",
+        "src/lib/AnnotationDrawer.svelte",
+        "src/lib/ConflictModal.svelte",
+        "src/lib/Toolbar.svelte",
+        "src/lib/ReviewExporter.ts",
+        "src/lib/render/markdown.ts",
+        "src/lib/stores/tabs.ts",
+        "src/lib/stores/annotations.ts",
+        "src/tests/review_exporter.test.ts",
+        "src/tests/annotations.test.ts",
+        "src/tests/scroll_sync.test.ts",
+        "src/tests/preview_isolation.test.ts"
+      ]
+    },
+    "WS-D": {
+      "description": "Settings, secrets & Obsidian (Rust)",
+      "dependsOn": "WS-A",
+      "files": [
+        "src-tauri/src/settings.rs",
+        "src-tauri/src/secrets.rs",
+        "src-tauri/src/obsidian.rs",
+        "src-tauri/src/tests/settings_tests.rs",
+        "src-tauri/src/tests/obsidian_tests.rs"
+      ]
+    }
+  }
+}
