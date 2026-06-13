@@ -4,10 +4,10 @@
  * Tests for the annotations Svelte store.
  *
  * Covers:
- *  - create/resolve/reopen/delete annotation lifecycle.
- *  - Detached annotations are displayed with the detached flag.
+ *  - add/detach/reanchor/delete annotation lifecycle.
+ *  - Detached annotations are retained with 'detached' status.
  *  - General notes persistence.
- *  - Schema_version: 1 is always written to the sidecar.
+ *  - schema_version: 1 is always written to the sidecar.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
@@ -22,10 +22,9 @@ const mockInvoke = vi.mocked(invoke);
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeEmptySidecar(docPath = '/doc.md'): Sidecar {
+function makeEmptySidecar(): Sidecar {
   return {
     schema_version: 1,
-    doc_path: docPath,
     doc_content_hash: 'hash001',
     general_notes: '',
     annotations: [],
@@ -50,27 +49,20 @@ describe('annotationsStore', () => {
   it('loads annotations from the Rust sidecar on load()', async () => {
     const sidecar: Sidecar = {
       schema_version: 1,
-      doc_path: '/doc.md',
       doc_content_hash: 'hash001',
       general_notes: 'Some notes',
       annotations: [
         {
           id: 'a1',
-          status: 'open',
+          status: 'anchored',
           body: 'Check this',
+          quoted_text: 'test text',
+          line_start: 5,
+          line_end: 5,
+          char_start: 0,
+          char_end: 9,
           created_at: '2026-01-01T00:00:00Z',
-          anchor: {
-            type: 'source',
-            anchor: {
-              start_line: 5,
-              end_line: 5,
-              start_char: 0,
-              end_char: 10,
-              quoted_text: 'test text',
-              context_before: '',
-              context_after: '',
-            },
-          },
+          updated_at: '2026-01-01T00:00:00Z',
         },
       ],
     };
@@ -99,88 +91,86 @@ describe('annotationsStore', () => {
   // Add annotation
   // -------------------------------------------------------------------------
 
-  it('adds a new open annotation and saves', async () => {
+  it('adds a new anchored annotation and saves', async () => {
     mockInvoke.mockResolvedValueOnce(makeEmptySidecar()); // load_annotations
     await annotationsStore.load('/doc.md', 'hash001');
 
     mockInvoke.mockResolvedValueOnce(undefined); // save_annotations
     const ann = await annotationsStore.addAnnotation(
-      {
-        type: 'source',
-        anchor: {
-          start_line: 10,
-          end_line: 10,
-          start_char: 0,
-          end_char: 5,
-          quoted_text: 'hello',
-          context_before: '',
-          context_after: '',
-        },
-      },
-      'This needs work'
+      10,   // lineStart
+      10,   // lineEnd
+      0,    // charStart
+      5,    // charEnd
+      'hello', // quotedText
+      'This needs work', // body
     );
 
     const state = get(annotationsStore);
     expect(state.annotations).toHaveLength(1);
-    expect(ann.status).toBe('open');
+    expect(ann.status).toBe('anchored');
     expect(ann.body).toBe('This needs work');
+    expect(ann.quoted_text).toBe('hello');
     // Verify save was called.
     expect(mockInvoke).toHaveBeenCalledWith('save_annotations', expect.anything());
   });
 
+  it('adds a block_level annotation for transformed blocks', async () => {
+    mockInvoke.mockResolvedValueOnce(makeEmptySidecar());
+    await annotationsStore.load('/doc.md', 'hash001');
+
+    mockInvoke.mockResolvedValueOnce(undefined);
+    const ann = await annotationsStore.addAnnotation(
+      5, 5, 0, 0, '', 'Mermaid diagram issue', 'block_level'
+    );
+
+    expect(ann.status).toBe('block_level');
+  });
+
   // -------------------------------------------------------------------------
-  // Resolve / reopen
+  // Detach / re-anchor
   // -------------------------------------------------------------------------
 
-  it('resolves an annotation and sets resolved_at', async () => {
+  it('marks an annotation as detached', async () => {
     mockInvoke.mockResolvedValueOnce(makeEmptySidecar());
     await annotationsStore.load('/doc.md', 'hash001');
 
     mockInvoke.mockResolvedValueOnce(undefined); // save on add
-    const ann = await annotationsStore.addAnnotation(
-      { type: 'source', anchor: { start_line: 1, end_line: 1, start_char: 0, end_char: 1, quoted_text: 'x', context_before: '', context_after: '' } },
-      'A comment'
-    );
+    const ann = await annotationsStore.addAnnotation(1, 1, 0, 1, 'x', 'A comment');
 
-    mockInvoke.mockResolvedValueOnce(undefined); // save on resolve
-    await annotationsStore.resolveAnnotation(ann.id);
+    mockInvoke.mockResolvedValueOnce(undefined); // save on detach
+    await annotationsStore.detachAnnotation(ann.id);
 
     const state = get(annotationsStore);
-    const resolved = state.annotations.find((a) => a.id === ann.id);
-    expect(resolved?.status).toBe('resolved');
-    expect(resolved?.resolved_at).toBeTruthy();
+    const found = state.annotations.find((a) => a.id === ann.id);
+    expect(found?.status).toBe('detached');
   });
 
-  it('reopens a resolved annotation', async () => {
+  it('re-anchors a detached annotation to new position', async () => {
     mockInvoke.mockResolvedValueOnce(makeEmptySidecar());
     await annotationsStore.load('/doc.md', 'hash001');
 
     mockInvoke.mockResolvedValueOnce(undefined);
-    const ann = await annotationsStore.addAnnotation(
-      { type: 'source', anchor: { start_line: 1, end_line: 1, start_char: 0, end_char: 1, quoted_text: 'y', context_before: '', context_after: '' } },
-      'Body'
-    );
+    const ann = await annotationsStore.addAnnotation(1, 1, 0, 1, 'y', 'Body');
 
     mockInvoke.mockResolvedValueOnce(undefined);
-    await annotationsStore.resolveAnnotation(ann.id);
+    await annotationsStore.detachAnnotation(ann.id);
 
     mockInvoke.mockResolvedValueOnce(undefined);
-    await annotationsStore.reopenAnnotation(ann.id);
+    await annotationsStore.reanchorAnnotation(ann.id, 5, 5, 0, 10);
 
     const state = get(annotationsStore);
-    const reopened = state.annotations.find((a) => a.id === ann.id);
-    expect(reopened?.status).toBe('open');
-    expect(reopened?.resolved_at).toBeUndefined();
+    const found = state.annotations.find((a) => a.id === ann.id);
+    expect(found?.status).toBe('anchored');
+    expect(found?.line_start).toBe(5);
   });
 
   // -------------------------------------------------------------------------
-  // Detached display
+  // Detached annotations are retained
   // -------------------------------------------------------------------------
 
   it('detached annotations are retained and their status is detached', async () => {
     const sidecar: Sidecar = {
       schema_version: 1,
-      doc_path: '/doc.md',
       doc_content_hash: 'newhash',
       general_notes: '',
       annotations: [
@@ -188,19 +178,13 @@ describe('annotationsStore', () => {
           id: 'd1',
           status: 'detached',
           body: 'Old paragraph was here',
+          quoted_text: 'moved text',
+          line_start: 200,
+          line_end: 200,
+          char_start: 0,
+          char_end: 10,
           created_at: '2026-01-01T00:00:00Z',
-          anchor: {
-            type: 'source',
-            anchor: {
-              start_line: 200,
-              end_line: 200,
-              start_char: 0,
-              end_char: 5,
-              quoted_text: 'moved text',
-              context_before: '',
-              context_after: '',
-            },
-          },
+          updated_at: '2026-01-01T00:00:00Z',
         },
       ],
     };
@@ -243,10 +227,7 @@ describe('annotationsStore', () => {
       return Promise.resolve(undefined);
     });
 
-    await annotationsStore.addAnnotation(
-      { type: 'source', anchor: { start_line: 1, end_line: 1, start_char: 0, end_char: 1, quoted_text: 'z', context_before: '', context_after: '' } },
-      'test body'
-    );
+    await annotationsStore.addAnnotation(1, 1, 0, 1, 'z', 'test body');
 
     const sidecar = (capturedArgs as { sidecar: Sidecar }).sidecar;
     expect(sidecar.schema_version).toBe(1);
@@ -261,10 +242,7 @@ describe('annotationsStore', () => {
     await annotationsStore.load('/doc.md', 'hash001');
 
     mockInvoke.mockResolvedValueOnce(undefined);
-    const ann = await annotationsStore.addAnnotation(
-      { type: 'source', anchor: { start_line: 1, end_line: 1, start_char: 0, end_char: 1, quoted_text: 'w', context_before: '', context_after: '' } },
-      'To delete'
-    );
+    const ann = await annotationsStore.addAnnotation(1, 1, 0, 1, 'w', 'To delete');
 
     mockInvoke.mockResolvedValueOnce(undefined);
     await annotationsStore.deleteAnnotation(ann.id);

@@ -56,8 +56,8 @@ describe('renderMarkdown — scroll sync attributes', () => {
     const src = '# Heading One\n\nSome text.\n\n## Heading Two\n\nMore text.';
     const html = renderMarkdown(src);
     const doc = parseHtml(html);
-    const h1 = doc.querySelector('h1');
-    const h2 = doc.querySelector('h2');
+    const h1 = doc.querySelector<HTMLElement>('h1');
+    const h2 = doc.querySelector<HTMLElement>('h2');
     expect(h1?.dataset.sourceLine).toBeTruthy();
     expect(h2?.dataset.sourceLine).toBeTruthy();
   });
@@ -100,7 +100,7 @@ describe('renderMarkdown — scroll sync attributes', () => {
     const src = '> A quoted block.';
     const html = renderMarkdown(src);
     const doc = parseHtml(html);
-    const bq = doc.querySelector('blockquote');
+    const bq = doc.querySelector<HTMLElement>('blockquote');
     expect(bq?.dataset.blockType).toBe('blockquote');
   });
 
@@ -108,7 +108,7 @@ describe('renderMarkdown — scroll sync attributes', () => {
     const src = '| A | B |\n|---|---|\n| 1 | 2 |';
     const html = renderMarkdown(src);
     const doc = parseHtml(html);
-    const table = doc.querySelector('table');
+    const table = doc.querySelector<HTMLElement>('table');
     expect(table?.dataset.blockType).toBe('table');
     expect(table?.dataset.blockId).toBeTruthy();
     expect(table?.dataset.sourceLine).toBeTruthy();
@@ -118,7 +118,7 @@ describe('renderMarkdown — scroll sync attributes', () => {
     const src = '```mermaid\ngraph TD\nA-->B\n```';
     const html = renderMarkdown(src);
     const doc = parseHtml(html);
-    const mermaidDiv = doc.querySelector('[data-mermaid-pending]');
+    const mermaidDiv = doc.querySelector<HTMLElement>('[data-mermaid-pending]');
     expect(mermaidDiv).not.toBeNull();
     expect(mermaidDiv?.dataset.blockType).toBe('mermaid');
     expect(mermaidDiv?.dataset.blockId).toBeTruthy();

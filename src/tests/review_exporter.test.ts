@@ -8,7 +8,7 @@
  *  - General notes section present.
  *  - NO assistant-specific strings (TRAP 2 enforcement — "Claude", "Copilot", etc.).
  *  - Detached annotations land in their own section.
- *  - Resolved annotations are NOT included.
+ *  - Anchored + block_level are "open" for review purposes; detached goes in its own section.
  */
 import { describe, it, expect } from 'vitest';
 import { formatReview } from '../lib/ReviewExporter';
@@ -18,54 +18,25 @@ import type { Sidecar, Annotation } from '../lib/types/ipc';
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeSourceAnnotation(
+function makeAnnotation(
   id: string,
   status: Annotation['status'],
   body: string,
-  startLine = 10,
-  endLine = 10,
-  quotedText = 'sample text'
+  lineStart = 10,
+  lineEnd = 10,
+  quotedText = 'sample text',
 ): Annotation {
   return {
     id,
     status,
     body,
+    quoted_text: quotedText,
+    line_start: lineStart,
+    line_end: lineEnd,
+    char_start: 0,
+    char_end: quotedText.length,
     created_at: '2026-01-01T00:00:00Z',
-    anchor: {
-      type: 'source',
-      anchor: {
-        start_line: startLine,
-        end_line: endLine,
-        start_char: 0,
-        end_char: quotedText.length,
-        quoted_text: quotedText,
-        context_before: '',
-        context_after: '',
-      },
-    },
-  };
-}
-
-function makeBlockAnnotation(
-  id: string,
-  status: Annotation['status'],
-  body: string,
-  blockId = 'blk-1',
-  blockType: 'mermaid' | 'table' | 'footnote' | 'generic' = 'mermaid'
-): Annotation {
-  return {
-    id,
-    status,
-    body,
-    created_at: '2026-01-01T00:00:00Z',
-    anchor: {
-      type: 'block',
-      anchor: {
-        block_id: blockId,
-        block_type: blockType,
-        quoted_text: '',
-      },
-    },
+    updated_at: '2026-01-01T00:00:00Z',
   };
 }
 
@@ -75,7 +46,6 @@ function makeSidecar(
 ): Sidecar {
   return {
     schema_version: 1,
-    doc_path: '/docs/spec.md',
     doc_content_hash: 'abc123',
     general_notes: generalNotes,
     annotations,
@@ -93,47 +63,61 @@ describe('formatReview', () => {
     expect(markdown).toContain('# Review — spec.md');
   });
 
-  it('numbers open comments sequentially starting at 1', () => {
+  it('numbers anchored comments sequentially starting at 1 (1-indexed display)', () => {
     const sidecar = makeSidecar([
-      makeSourceAnnotation('a1', 'open', 'First issue', 5, 5),
-      makeSourceAnnotation('a2', 'open', 'Second issue', 20, 22),
+      makeAnnotation('a1', 'anchored', 'First issue', 4, 4),   // line_start=4 → display L5
+      makeAnnotation('a2', 'anchored', 'Second issue', 19, 21), // line_start=19 → display L20–L22
     ]);
-    const { markdown, openCount } = formatReview(sidecar, '/docs/spec.md');
-    expect(openCount).toBe(2);
+    const { markdown, anchoredCount } = formatReview(sidecar, '/docs/spec.md');
+    expect(anchoredCount).toBe(2);
     expect(markdown).toContain('### Comment 1 — L5');
     expect(markdown).toContain('First issue');
     expect(markdown).toContain('### Comment 2 — L20–L22');
     expect(markdown).toContain('Second issue');
   });
 
-  it('includes the quoted snippet for source anchors', () => {
+  it('includes the quoted snippet for anchored annotations', () => {
     const sidecar = makeSidecar([
-      makeSourceAnnotation('a1', 'open', 'Check this', 3, 3, 'important sentence'),
+      makeAnnotation('a1', 'anchored', 'Check this', 3, 3, 'important sentence'),
     ]);
     const { markdown } = formatReview(sidecar, '/docs/spec.md');
     expect(markdown).toContain('> important sentence');
   });
 
-  it('omits resolved annotations', () => {
+  it('omits detached annotations from the open section', () => {
+    // "detached" should NOT appear as an open comment — it goes in Detached section.
     const sidecar = makeSidecar([
-      makeSourceAnnotation('a1', 'open', 'Open comment'),
-      makeSourceAnnotation('a2', 'resolved', 'Already done'),
+      makeAnnotation('a1', 'anchored', 'Open comment'),
+      makeAnnotation('a2', 'detached', 'Lost anchor'),
     ]);
-    const { markdown, openCount } = formatReview(sidecar, '/docs/spec.md');
-    expect(openCount).toBe(1);
-    expect(markdown).not.toContain('Already done');
+    const { markdown, anchoredCount } = formatReview(sidecar, '/docs/spec.md');
+    expect(anchoredCount).toBe(1);
+    // The open section should only contain the anchored comment.
+    expect(markdown).toContain('## Open comments (1)');
   });
 
   it('puts detached annotations in a separate section', () => {
     const sidecar = makeSidecar([
-      makeSourceAnnotation('a1', 'open', 'Still relevant', 7),
-      makeSourceAnnotation('a2', 'detached', 'Lost anchor', 99),
+      makeAnnotation('a1', 'anchored', 'Still relevant', 6),
+      makeAnnotation('a2', 'detached', 'Lost anchor', 99),
     ]);
     const { markdown, detachedCount } = formatReview(sidecar, '/docs/spec.md');
     expect(detachedCount).toBe(1);
     expect(markdown).toContain('## Detached comments (1)');
     expect(markdown).toContain('Lost anchor');
     expect(markdown).toContain('[detached]');
+  });
+
+  it('includes block_level annotations in the open section', () => {
+    const sidecar = makeSidecar([
+      makeAnnotation('a1', 'block_level', 'Wrong diagram', 5, 5, ''),
+    ]);
+    const { markdown, blockLevelCount } = formatReview(sidecar, '/docs/spec.md');
+    expect(blockLevelCount).toBe(1);
+    // block_level should appear in "Open comments"
+    expect(markdown).toContain('## Open comments (1)');
+    expect(markdown).toContain('Wrong diagram');
+    expect(markdown).toContain('block:');
   });
 
   it('includes the general notes section', () => {
@@ -151,19 +135,10 @@ describe('formatReview', () => {
 
   it('shows placeholder when no open comments exist', () => {
     const sidecar = makeSidecar([]);
-    const { markdown, openCount } = formatReview(sidecar, '/docs/spec.md');
-    expect(openCount).toBe(0);
+    const { markdown, anchoredCount, blockLevelCount } = formatReview(sidecar, '/docs/spec.md');
+    expect(anchoredCount).toBe(0);
+    expect(blockLevelCount).toBe(0);
     expect(markdown).toContain('_No open comments._');
-  });
-
-  it('handles block-level anchors (Mermaid degradation path)', () => {
-    const sidecar = makeSidecar([
-      makeBlockAnnotation('a1', 'open', 'Wrong diagram', 'blk-3', 'mermaid'),
-    ]);
-    const { markdown } = formatReview(sidecar, '/docs/spec.md');
-    // Block anchors are labeled as block:<type>:<id>
-    expect(markdown).toContain('block:mermaid:blk-3');
-    expect(markdown).toContain('Wrong diagram');
   });
 
   // -------------------------------------------------------------------------
@@ -172,7 +147,7 @@ describe('formatReview', () => {
 
   it('TRAP2: contains no assistant-specific strings', () => {
     const sidecar = makeSidecar([
-      makeSourceAnnotation('a1', 'open', 'Some comment'),
+      makeAnnotation('a1', 'anchored', 'Some comment'),
     ], 'Some general notes');
     const { markdown } = formatReview(sidecar, '/docs/spec.md');
 
@@ -198,7 +173,7 @@ describe('formatReview', () => {
   it('truncates long quoted text to 3 lines', () => {
     const longText = 'line 1\nline 2\nline 3\nline 4\nline 5';
     const sidecar = makeSidecar([
-      makeSourceAnnotation('a1', 'open', 'Check this', 1, 5, longText),
+      makeAnnotation('a1', 'anchored', 'Check this', 0, 4, longText),
     ]);
     const { markdown } = formatReview(sidecar, '/docs/spec.md');
     // Only first 3 lines should appear as quotes.
@@ -216,13 +191,12 @@ describe('formatReview', () => {
   it('matches format snapshot for a typical review', () => {
     const sidecar: Sidecar = {
       schema_version: 1,
-      doc_path: '/project/design.md',
       doc_content_hash: 'deadbeef',
       general_notes: 'Focus on the auth section.',
       annotations: [
-        makeSourceAnnotation('a1', 'open', 'Clarify this requirement.', 12, 12, 'must be idempotent'),
-        makeSourceAnnotation('a2', 'resolved', 'This was fixed.', 30, 30, 'TODO'),
-        makeSourceAnnotation('a3', 'detached', 'This block was moved.', 50, 52, 'old text'),
+        // line_start=11 → displayed as L12
+        makeAnnotation('a1', 'anchored', 'Clarify this requirement.', 11, 11, 'must be idempotent'),
+        makeAnnotation('a2', 'detached', 'This block was moved.', 50, 52, 'old text'),
       ],
     };
     const { markdown } = formatReview(sidecar, '/project/design.md');
@@ -236,7 +210,7 @@ describe('formatReview', () => {
     expect(markdown).toContain('## Detached comments (1)');
     expect(markdown).toContain('## General notes');
     expect(markdown).toContain('Focus on the auth section.');
-    // Resolved not present
-    expect(markdown).not.toContain('This was fixed.');
+    // The detached annotation body should appear in the detached section
+    expect(markdown).toContain('This block was moved.');
   });
 });
