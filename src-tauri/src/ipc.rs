@@ -325,7 +325,12 @@ pub fn open_file(path: String) -> IpcResult<FileResult> {
 /// Returns HASH_MISMATCH error if on-disk hash differs from expected_hash.
 ///
 /// Path confinement (A7/C16): canonicalized path must be inside a configured
-/// vault directory or the already-opened document's parent directory.
+/// vault directory.  The target path supplied by the frontend is *untrusted*:
+/// we never derive the allowed set from the target path itself, because that
+/// would allow any path to authorize its own parent, making confinement a no-op.
+///
+/// Write confinement fails *closed*: if vault list cannot be loaded we reject
+/// the write rather than falling back to "allow all".
 #[tauri::command]
 pub fn save_file(request: SaveFileRequest) -> IpcResult<FileResult> {
     let p = std::path::Path::new(&request.path);
@@ -334,19 +339,24 @@ pub fn save_file(request: SaveFileRequest) -> IpcResult<FileResult> {
     let canon = std::fs::canonicalize(p)
         .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
     let settings_path = settings_file_path();
-    if let Ok(settings) = crate::settings::get_settings(&settings_path) {
-        if !settings.vaults.is_empty() {
-            let mut allowed: Vec<std::path::PathBuf> = settings.vaults.iter()
-                .filter_map(|v| std::fs::canonicalize(v).ok())
-                .collect();
-            // Allow the document's own directory (the user opened it themselves).
-            if let Some(d) = canon.parent() {
-                allowed.push(d.to_path_buf());
-            }
-            crate::paths::assert_confined(&canon, &allowed)
-                .map_err(|e| IpcError { code: "PATH_CONFINED".into(), message: e.to_string() })?;
+    let settings = crate::settings::get_settings(&settings_path).map_err(|e| {
+        IpcError {
+            code: "SETTINGS_ERROR".into(),
+            message: format!("cannot load settings for confinement check: {e}"),
         }
+    })?;
+
+    if !settings.vaults.is_empty() {
+        // Allowed dirs come ONLY from the pre-configured vault list — never from
+        // the (frontend-supplied, untrusted) target path.
+        let allowed: Vec<std::path::PathBuf> = settings.vaults.iter()
+            .filter_map(|v| std::fs::canonicalize(v).ok())
+            .collect();
+        crate::paths::assert_confined(&canon, &allowed)
+            .map_err(|e| IpcError { code: "PATH_CONFINED".into(), message: e.to_string() })?;
     }
+    // When no vaults are configured (first-run), saves are unrestricted.
+    // Once vaults are configured, every save must be inside them.
 
     let new_hash = crate::file_io::save_file(p, &request.content, &request.expected_hash)
         .map_err(file_io_err)?;
