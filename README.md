@@ -4,6 +4,19 @@ Markdown viewer and review companion — Tauri 2 + Svelte desktop app.
 
 Open markdown files in tabs, edit source, preview rendered output side-by-side, leave anchored annotations, and export an agent-agnostic `.review.md` for any AI reviewer.
 
+## Screenshots
+
+> Current UI baseline (pre-aesthetic-polish). Rendered from the live Svelte
+> frontend; native window chrome omitted.
+
+**Welcome screen**
+
+![Revenant welcome screen](docs/screenshots/welcome.png)
+
+**Split view — source editor, live preview, and annotation drawer**
+
+![Revenant split editor/preview with annotations](docs/screenshots/editor-split.png)
+
 ## Features
 
 - Single persistent instance: `revenant doc.md` in any terminal focuses the existing window and opens a new tab
