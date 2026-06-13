@@ -11,8 +11,12 @@
 Revenant is a fast, cross-platform markdown viewer and review companion built to pair
 with Superpowers. Whenever Superpowers (or Claude Code) generates a markdown file, it can
 run `revenant <file.md>` to open the document for review. The app supports editing the
-source, annotating with anchored comments, exporting a Claude-readable review summary that
+source, annotating with anchored comments, exporting an agent-readable review summary that
 feeds the existing "address the notes" loop, and exporting documents into an Obsidian vault.
+
+The review export is **agent-agnostic** — it produces a plain markdown file any coding agent
+can read (Claude Code on macOS, GitHub Copilot CLI on the Windows work machine, etc.). The
+spec uses "the agent" generically; nothing is hardcoded to a specific assistant.
 
 **Primary use case:** review docs Superpowers just created, leave feedback, and hand that
 feedback back to Claude with minimal friction. Runs on the author's macOS dev machine and
@@ -24,7 +28,7 @@ Windows work machine.
 - Subsequent opens are effectively instant (runtime cost paid once).
 - Source editing with live preview; save writes back to the file.
 - Anchored comments persist in a sidecar file; markdown source stays clean.
-- A one-action export produces a `<doc>.review.md` Claude can read.
+- A one-action export produces a `<doc>.review.md` any coding agent can read.
 - Export to an Obsidian vault via REST (if running) or filesystem copy (fallback).
 - Ships installable builds for **macOS and Windows** from a CI matrix.
 
@@ -74,8 +78,8 @@ Each component has one clear purpose, a defined interface, and is independently 
    with the editor; view-mode toggle (source-only / preview-only / split).
 5. **Annotation layer** (frontend + sidecar) — select text in the preview/editor → attach
    an anchored comment; render margin markers; persist to sidecar JSON.
-6. **Review exporter** (frontend + Rust write) — transform annotations into a
-   Claude-readable `<doc>.review.md`.
+6. **Review exporter** (frontend + Rust write) — transform annotations into an
+   agent-readable `<doc>.review.md` (agent-agnostic plain markdown).
 7. **Obsidian exporter** (Rust) — push note to a vault via Local REST API if available,
    else filesystem copy; merge/add YAML frontmatter.
 8. **Settings** (Rust persistence) — vault paths, default export subfolder, REST URL/key,
@@ -101,14 +105,15 @@ implement'" workflow.
 
 ### Review export
 
-- A **"Generate review for Claude"** action (button + optional on-save) writes a
-  human-readable `<doc>.review.md` next to the document:
+- A **"Generate review"** action (button + optional on-save) writes a human-readable,
+  agent-agnostic `<doc>.review.md` next to the document:
   - A numbered list of each open comment with its **line range**, the **quoted snippet**,
     and the **note body**.
   - A free-form **"General notes"** section for document-wide feedback.
-- The user then tells Claude: *"address the review notes in `<doc>.review.md`."* Claude
-  reads it, revises the document; the app **hot-reloads** the file (with a conflict prompt
-  if there are also unsaved in-app edits).
+- The user then tells whatever agent they're driving (Claude Code, Copilot CLI, etc.):
+  *"address the review notes in `<doc>.review.md`."* The agent reads it, revises the
+  document; the app **hot-reloads** the file (with a conflict prompt if there are also
+  unsaved in-app edits).
 
 ---
 
@@ -119,10 +124,10 @@ revenant doc.md
   → single-instance forward (if app running)
   → open tab (editor + preview)
   → user edits (Ctrl/Cmd+S writes the file) and/or adds anchored comments (→ sidecar JSON)
-  → "Generate review for Claude" (→ <doc>.review.md)
+  → "Generate review" (→ <doc>.review.md)
   → optional "Export to Obsidian" (REST or file copy, with frontmatter)
-  → user tells Claude to address the review notes
-  → Claude revises the file
+  → user tells their agent (Claude Code / Copilot CLI / etc.) to address the review notes
+  → the agent revises the file
   → app file-watcher detects change → hot-reload (conflict prompt if unsaved edits exist)
 ```
 
