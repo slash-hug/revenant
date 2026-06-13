@@ -6,10 +6,10 @@
 ///   3. If not reachable → `ObsidianError::NotRunning` → filesystem fallback.
 ///   4. If 401 → `ObsidianError::Misconfigured` → surface configure prompt.
 ///
-/// Frontmatter merge: uses `crate::frontmatter::{parse, merge, render}`
+/// Frontmatter merge: uses `crate::frontmatter::{parse, merge_mappings, reassemble}`
 /// (implemented by WS-B). Incoming review metadata is merged into the
 /// document's existing frontmatter before export.
-use crate::frontmatter::{merge, parse, render};
+use crate::frontmatter::{merge_mappings, parse, reassemble};
 use crate::secrets::{get_rest_key, SecretsError};
 use crate::settings::{Settings, SettingsError};
 use reqwest::blocking::Client;
@@ -140,9 +140,30 @@ pub fn export_obsidian_with_frontmatter(
     settings: &Settings,
     rest_port: u16,
 ) -> Result<ExportResult, ObsidianError> {
-    let (base_fm, body) = parse(markdown);
-    let merged_fm = merge(&base_fm, extra_frontmatter);
-    let merged_doc = render(&merged_fm, &body);
+    // Convert HashMap<String, serde_json::Value> → serde_yaml::Mapping for the frontmatter API.
+    let overlay: serde_yaml::Mapping = extra_frontmatter
+        .iter()
+        .filter_map(|(k, v)| {
+            // Convert the JSON value to a YAML value via round-trip through string.
+            let yaml_val: serde_yaml::Value = serde_json::from_value(v.clone())
+                .ok()
+                .and_then(|j: serde_json::Value| {
+                    serde_yaml::to_string(&j).ok().and_then(|s| serde_yaml::from_str(&s).ok())
+                })?;
+            Some((serde_yaml::Value::String(k.clone()), yaml_val))
+        })
+        .collect();
+
+    let parsed = parse(markdown).map_err(|e| {
+        ObsidianError::Http(format!("frontmatter parse error: {e}"))
+    })?;
+    let merged_mapping = match &parsed.mapping {
+        Some(base) => merge_mappings(base, &overlay),
+        None => overlay,
+    };
+    let merged_doc = reassemble(Some(&merged_mapping), &parsed.body).map_err(|e| {
+        ObsidianError::Http(format!("frontmatter reassemble error: {e}"))
+    })?;
     export_obsidian(&merged_doc, vault_relative_path, settings, rest_port)
 }
 
