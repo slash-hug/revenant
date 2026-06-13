@@ -7,6 +7,9 @@
 //   - "file_changed"       { path: string }      — emitted by file_io watcher
 
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter, State};
 
 // ---------------------------------------------------------------------------
 // Shared types — mirrored in src/lib/types/ipc.ts
@@ -279,6 +282,76 @@ fn obsidian_err(e: crate::obsidian::ObsidianError) -> IpcError {
 }
 
 // ---------------------------------------------------------------------------
+// File-change watcher wiring (A5/C12)
+// ---------------------------------------------------------------------------
+
+/// Payload emitted on the `file_changed` event. `external` is `true` when the
+/// change did NOT originate from this process's own `save_file` (i.e. an
+/// outside editor touched the file); the frontend opens the conflict modal only
+/// for external changes.
+#[derive(Clone, Serialize)]
+struct FileChangedPayload {
+    path: String,
+    external: bool,
+}
+
+/// Start (or refresh) a live watcher for `canonical`, emitting `file_changed`
+/// when the file is modified. Idempotent per path: opening a file twice, or
+/// saving it, just refreshes the "last written" hash so our own writes are
+/// recognized as internal (`external == false`).
+fn watch_file(
+    app: &AppHandle,
+    watchers: &State<crate::FileWatchers>,
+    canonical: &Path,
+    current_hash: &str,
+) {
+    let mut map = watchers
+        .inner
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    if let Some(handle) = map.get(canonical) {
+        // Already watching — record the hash we just read/wrote so the
+        // resulting notify event is treated as internal.
+        if let Ok(mut lw) = handle.last_written.lock() {
+            *lw = Some(current_hash.to_string());
+        }
+        return;
+    }
+
+    let last_written = Arc::new(Mutex::new(Some(current_hash.to_string())));
+    let app_for_cb = app.clone();
+    let path_string = canonical.to_string_lossy().into_owned();
+
+    match crate::file_io::spawn_watcher(
+        canonical.to_path_buf(),
+        last_written.clone(),
+        move |ev| {
+            let _ = app_for_cb.emit(
+                "file_changed",
+                FileChangedPayload {
+                    path: path_string.clone(),
+                    external: ev.external,
+                },
+            );
+        },
+    ) {
+        Ok(watcher) => {
+            map.insert(
+                canonical.to_path_buf(),
+                crate::WatchHandle {
+                    _watcher: watcher,
+                    last_written,
+                },
+            );
+        }
+        // A watcher that fails to start is non-fatal: file I/O still works, the
+        // app simply won't auto-detect external edits for this file.
+        Err(_) => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
 // IPC Commands — delegating to WS-B/D modules.
 // ---------------------------------------------------------------------------
 
@@ -289,7 +362,11 @@ fn obsidian_err(e: crate::obsidian::ObsidianError) -> IpcError {
 /// dir.  For the initial open (before any vaults are configured) we allow any
 /// `.md` file; once settings exist the vault list is used as the allowed-dirs set.
 #[tauri::command]
-pub fn open_file(path: String) -> IpcResult<FileResult> {
+pub fn open_file(
+    app: AppHandle,
+    watchers: State<crate::FileWatchers>,
+    path: String,
+) -> IpcResult<FileResult> {
     let p = std::path::Path::new(&path);
     let opened = crate::file_io::open_file(p).map_err(file_io_err)?;
 
@@ -314,6 +391,10 @@ pub fn open_file(path: String) -> IpcResult<FileResult> {
         }
     }
 
+    // Start watching this file for external changes so the frontend can surface
+    // a conflict prompt instead of silently clobbering (A5/C12).
+    watch_file(&app, &watchers, &opened.path, &opened.content_hash);
+
     Ok(FileResult {
         path: opened.path.to_string_lossy().into_owned(),
         content_hash: opened.content_hash,
@@ -332,7 +413,11 @@ pub fn open_file(path: String) -> IpcResult<FileResult> {
 /// Write confinement fails *closed*: if vault list cannot be loaded we reject
 /// the write rather than falling back to "allow all".
 #[tauri::command]
-pub fn save_file(request: SaveFileRequest) -> IpcResult<FileResult> {
+pub fn save_file(
+    app: AppHandle,
+    watchers: State<crate::FileWatchers>,
+    request: SaveFileRequest,
+) -> IpcResult<FileResult> {
     let p = std::path::Path::new(&request.path);
 
     // Confinement check before any write.
@@ -360,6 +445,11 @@ pub fn save_file(request: SaveFileRequest) -> IpcResult<FileResult> {
 
     let new_hash = crate::file_io::save_file(p, &request.content, &request.expected_hash)
         .map_err(file_io_err)?;
+
+    // Record our own write so the watcher's resulting event is recognized as
+    // internal (external == false) and does NOT trigger a false conflict prompt.
+    watch_file(&app, &watchers, &canon, &new_hash);
+
     Ok(FileResult {
         path: request.path,
         content_hash: new_hash,
@@ -404,10 +494,29 @@ pub fn save_annotations(doc_path: String, sidecar: Sidecar) -> IpcResult<()> {
 #[tauri::command]
 pub fn generate_review(payload: ReviewPayload) -> IpcResult<ReviewResult> {
     let doc_p = std::path::Path::new(&payload.doc_path);
-    // Derive review path: <doc>.review.md
-    let mut review_path = doc_p.as_os_str().to_owned();
-    review_path.push(".review.md");
-    let review_path = std::path::PathBuf::from(review_path);
+
+    // Path confinement (A7/C16): the review file is written next to its source
+    // document, so the only legitimate target is "<canonical doc>.review.md".
+    // doc_path is frontend-supplied and therefore untrusted — require it to be
+    // an existing .md file, canonicalize it, and assert the derived review path
+    // stays inside the document's own directory. (Previously this command was
+    // the one fs-writing path that bypassed confinement entirely.)
+    crate::paths::assert_markdown(doc_p)
+        .map_err(|e| IpcError { code: "NOT_MARKDOWN".into(), message: e.to_string() })?;
+    let canon_doc = std::fs::canonicalize(doc_p)
+        .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
+
+    // Derive review path: <canonical doc>.review.md
+    let mut review_os = canon_doc.as_os_str().to_owned();
+    review_os.push(".review.md");
+    let review_path = std::path::PathBuf::from(review_os);
+
+    let doc_dir = canon_doc.parent().ok_or_else(|| IpcError {
+        code: "PATH_CONFINED".into(),
+        message: "document has no parent directory".into(),
+    })?;
+    crate::paths::assert_confined(&review_path, &[doc_dir.to_path_buf()])
+        .map_err(|e| IpcError { code: "PATH_CONFINED".into(), message: e.to_string() })?;
 
     std::fs::write(&review_path, payload.markdown.as_bytes())
         .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;

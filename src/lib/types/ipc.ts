@@ -6,7 +6,8 @@
  *
  * Events (subscribed via listen()):
  *   - "open_file_request"  payload: string (file path)
- *   - "file_changed"       payload: { path: string }
+ *   - "file_changed"       payload: { path: string; external: boolean }
+ *                          external=false for this process's own save_file writes.
  */
 
 import { invoke } from "@tauri-apps/api/core";

@@ -15,9 +15,9 @@
   import { EditorState } from '@codemirror/state';
   import { defaultKeymap, historyKeymap, history, indentWithTab } from '@codemirror/commands';
   import { markdown } from '@codemirror/lang-markdown';
-  import { invoke } from '@tauri-apps/api/core';
   import { tabsStore } from './stores/tabs';
-  import type { SourceAnchor, AnchorV1 } from './types/ipc';
+  import { saveFile } from './types/ipc';
+  import type { SourceAnchor, AnchorV1, IpcError } from './types/ipc';
 
   /** The active tab id we are editing. */
   export let tabId: string;
@@ -31,6 +31,14 @@
     change: { content: string };
     /** Fired after a successful save; payload is the new content hash. */
     saved: { newHash: string };
+    /**
+     * Fired when a save was rejected because the file changed on disk since we
+     * last read it (HASH_MISMATCH). The parent opens the conflict modal — the
+     * save is NOT applied, so nothing is silently clobbered (A5/C12).
+     */
+    conflict: { filePath: string };
+    /** Fired when a save failed for a non-conflict reason (I/O, permissions). */
+    saveError: { message: string };
     /** Fired when user triggers "Add comment" from a selection. */
     addAnnotation: { anchor: AnchorV1 };
   }>();
@@ -130,23 +138,28 @@
     if (!tab) return;
 
     try {
-      const result = await invoke<{ new_hash: string } | { conflict: true; disk_hash: string }>(
-        'save_file',
-        {
-          path: filePath,
-          content: tab.content,
-          expected_hash: tab.contentHash,
-        }
-      );
-
-      if ('new_hash' in result) {
-        tabsStore.markSaved(tabId, result.new_hash);
-        dispatch('saved', { newHash: result.new_hash });
-      }
-      // Conflict case: the ConflictModal component handles file_changed events;
-      // save_file returning a conflict is surfaced there.
+      // The Rust save_file returns a FileResult (with content_hash) on success
+      // and THROWS IpcError{code:"HASH_MISMATCH"} on an optimistic-concurrency
+      // conflict — it never returns a {conflict} object. Use the typed wrapper
+      // and read content_hash (not new_hash).
+      const result = await saveFile({
+        path: filePath,
+        content: tab.content,
+        expected_hash: tab.contentHash,
+      });
+      tabsStore.markSaved(tabId, result.content_hash);
+      dispatch('saved', { newHash: result.content_hash });
     } catch (err) {
-      console.error('[EditorPane] save failed:', err);
+      const code = (err as IpcError)?.code;
+      if (code === 'HASH_MISMATCH') {
+        // The file changed on disk since we opened it. Do NOT clobber — hand off
+        // to the conflict modal so the user picks Reload vs Keep mine (A5/C12).
+        dispatch('conflict', { filePath });
+      } else {
+        const message = (err as IpcError)?.message ?? String(err);
+        console.error('[EditorPane] save failed:', err);
+        dispatch('saveError', { message });
+      }
     }
   }
 

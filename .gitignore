@@ -26,3 +26,6 @@ src-tauri/gen/
 # Revenant sidecars — auto-added by Revenant on first annotation
 *.annotations.json
 *.review.md
+
+# Workflow agent worktrees (transient)
+.claude/worktrees/

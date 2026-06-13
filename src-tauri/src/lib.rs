@@ -21,35 +21,66 @@ pub mod settings;
 pub mod secrets;
 pub mod obsidian;
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
 use tauri::Emitter;
-use tauri_plugin_cli::CliExt;
+
+/// Live, per-path file watchers. Held in Tauri-managed state so a single watcher
+/// per open document stays alive for the app's lifetime and `open_file` /
+/// `save_file` can refresh it. Wired in `ipc::watch_file`.
+#[derive(Default)]
+pub struct FileWatchers {
+    pub inner: Mutex<HashMap<PathBuf, WatchHandle>>,
+}
+
+/// A single document's watcher plus the hash of the last content this process
+/// wrote, used to distinguish our own saves from external edits.
+pub struct WatchHandle {
+    /// Kept alive to keep the OS watch registered; dropping it stops watching.
+    pub _watcher: notify::RecommendedWatcher,
+    /// Shared with the watcher callback; refreshed on each save_file.
+    pub last_written: Arc<Mutex<Option<String>>>,
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(FileWatchers::default())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_cli::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_single_instance::init(|app, argv, _cwd| {
                 // When a second instance is launched (e.g., `revenant another.md`),
                 // forward the file path argument to the already-running instance via
                 // the `open_file_request` event so the frontend can open a new tab.
+                // The webview is already loaded here, so emit immediately.
                 if let Some(path) = argv.get(1) {
-                    let _ = app.emit("open_file_request", path);
+                    if !path.starts_with('-') {
+                        let _ = app.emit("open_file_request", path);
+                    }
                 }
             }),
         )
         .setup(|app| {
-            // Handle CLI argument on first launch
-            match app.cli().matches() {
-                Ok(matches) => {
-                    if let Some(path_arg) = matches.args.get("file") {
-                        if let serde_json::Value::String(path) = &path_arg.value {
-                            let _ = app.emit("open_file_request", path);
-                        }
-                    }
+            // Cold-start CLI argument: `revenant <file.md>`.
+            //
+            // We read argv directly (rather than via the cli plugin's parsed
+            // matches) so a positional path works without extra config. The emit
+            // is deferred briefly because `setup` runs before the webview has
+            // registered its `open_file_request` listener — emitting synchronously
+            // here would be missed. The single-instance path above does not need
+            // this delay (its window already exists).
+            if let Some(path) = std::env::args().nth(1) {
+                if !path.starts_with('-') {
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(700));
+                        let _ = handle.emit("open_file_request", path);
+                    });
                 }
-                Err(_) => {}
             }
             Ok(())
         })

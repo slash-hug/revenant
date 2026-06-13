@@ -6,6 +6,7 @@
    * The store holds all tab state; this component just renders + dispatches.
    */
   import { tabsStore, tabList, activeTab } from './stores/tabs';
+  import { basename } from './util/path';
 
   // Close a tab, guarding dirty state.
   function handleClose(e: MouseEvent, id: string) {
@@ -23,7 +24,7 @@
   }
 
   function fileName(path: string): string {
-    return path.split('/').pop() ?? path;
+    return basename(path);
   }
 </script>
 

@@ -14,6 +14,7 @@
 
 import type { Annotation, Sidecar } from './types/ipc';
 import { generateReview as ipcGenerateReview } from './types/ipc';
+import { basename } from './util/path';
 
 // ---------------------------------------------------------------------------
 // Format helpers
@@ -108,7 +109,7 @@ export interface ReviewPayload {
  *   <general_notes text>
  */
 export function formatReview(sidecar: Sidecar, docPath: string): ReviewPayload {
-  const filename = docPath.split('/').pop() ?? docPath;
+  const filename = basename(docPath);
 
   // "Open" = anchored + block_level (active anchors that the reviewer cares about).
   const openAnnotations = sidecar.annotations.filter(

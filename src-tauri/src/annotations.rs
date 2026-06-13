@@ -212,6 +212,28 @@ pub fn load_annotations_from_path(
             let sidecar: Sidecar = serde_json::from_str(&raw)?;
             Ok(LoadResult::Loaded(sidecar))
         }
+        Some(v) if v < CURRENT_SCHEMA_VERSION => {
+            // Known *older* version — migrate in-place (C5), mirroring the
+            // settings store's policy. Missing fields are filled by serde
+            // defaults; we bump the version and write the upgrade back so the
+            // sidecar is self-healing. If the older payload cannot be parsed at
+            // all we quarantine rather than discard (never lose data).
+            match serde_json::from_str::<Sidecar>(&raw) {
+                Ok(mut sidecar) => {
+                    sidecar.schema_version = CURRENT_SCHEMA_VERSION;
+                    save_annotations_to_path(sidecar_path, &sidecar)?;
+                    Ok(LoadResult::Loaded(sidecar))
+                }
+                Err(_) => quarantine(
+                    sidecar_path,
+                    current_doc_hash,
+                    &format!(
+                        "sidecar with schema_version {} could not be migrated to {}",
+                        v, CURRENT_SCHEMA_VERSION
+                    ),
+                ),
+            }
+        }
         Some(v) => {
             // Unknown/future version — quarantine.
             quarantine(
@@ -241,7 +263,17 @@ pub fn save_annotations_to_path(
     sidecar: &Sidecar,
 ) -> Result<(), AnnotationError> {
     let json = serde_json::to_string_pretty(sidecar)?;
-    fs::write(sidecar_path, json)?;
+
+    // Atomic write: serialize to a sibling temp file, then rename over the
+    // target. A crash mid-write leaves the previous sidecar intact instead of a
+    // half-written (corrupt) file — honoring the "never lose annotations"
+    // guarantee even on power loss.
+    let mut tmp = sidecar_path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp_path = PathBuf::from(tmp);
+
+    fs::write(&tmp_path, json)?;
+    fs::rename(&tmp_path, sidecar_path)?;
     Ok(())
 }
 
@@ -387,6 +419,38 @@ mod tests {
             }
             other => panic!("expected Quarantined, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn older_schema_version_migrates_in_place() {
+        // A v0 sidecar (predating some field additions) must migrate in-place
+        // and be rewritten at the current version — NOT quarantined (C5 parity
+        // with the settings store).
+        let dir = TempDir::new().unwrap();
+        let v0_json = r#"{
+            "schema_version": 0,
+            "doc_content_hash": "abc",
+            "general_notes": "keep me",
+            "annotations": []
+        }"#;
+        let sidecar_path = write_sidecar_json(&dir, "doc.md.annotations.json", v0_json);
+
+        let result = load_annotations_from_path(&sidecar_path, "current_hash").unwrap();
+
+        match result {
+            LoadResult::Loaded(s) => {
+                assert_eq!(s.schema_version, CURRENT_SCHEMA_VERSION);
+                assert_eq!(s.general_notes, "keep me");
+            }
+            other => panic!("expected Loaded (migrated), got {:?}", other),
+        }
+
+        // The on-disk file must have been rewritten at the current version.
+        let on_disk = fs::read_to_string(&sidecar_path).unwrap();
+        assert!(on_disk.contains("\"schema_version\": 1"));
+        // No .bak — migration, not quarantine.
+        let bak = dir.path().join("doc.md.annotations.json.bak");
+        assert!(!bak.exists(), "migration must not create a .bak");
     }
 
     #[test]

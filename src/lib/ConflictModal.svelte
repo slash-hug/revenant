@@ -17,6 +17,7 @@
    *  - keepMine : void — user chose "Keep mine" (or dismissed the modal).
    */
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import { basename } from './util/path';
 
   export let open: boolean = false;
   export let filePath: string = '';
@@ -51,7 +52,7 @@
     window.removeEventListener('keydown', handleKeydown);
   });
 
-  $: fileName = filePath.split('/').pop() ?? filePath;
+  $: fileName = basename(filePath);
 </script>
 
 {#if open}
