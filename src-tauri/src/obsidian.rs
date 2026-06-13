@@ -235,15 +235,50 @@ pub fn rest_put(
 }
 
 /// Write content directly to the filesystem inside the vault directory.
+///
+/// Security (A7/C16): canonicalizes the vault dir and the derived target path
+/// and calls `crate::paths::assert_confined` before any write.  A
+/// `vault_relative_path` containing `../` segments is rejected, preventing
+/// path-traversal escapes from the vault directory.
 fn filesystem_copy(
     content: &str,
     vault_dir: &PathBuf,
     vault_relative_path: &str,
 ) -> Result<(), std::io::Error> {
-    let target = vault_dir.join(vault_relative_path);
-    if let Some(parent) = target.parent() {
+    // Canonicalize the vault directory so we get a stable base for confinement.
+    let canon_vault = std::fs::canonicalize(vault_dir)?;
+
+    // Join the relative path and resolve it *before* any mkdir, so we can
+    // detect traversal attempts on a path that doesn't exist yet.
+    // We construct the absolute path ourselves first:
+    let naive_target = canon_vault.join(vault_relative_path);
+    // Normalize without requiring the path to exist (resolve `..` manually).
+    let normalized = normalize_path(&naive_target);
+
+    // Confinement check: the resolved path must stay inside the vault.
+    crate::paths::assert_confined(&normalized, &[canon_vault])
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e.to_string()))?;
+
+    // Safe to create parent directories and write.
+    if let Some(parent) = normalized.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&target, content)?;
+    std::fs::write(&normalized, content)?;
     Ok(())
+}
+
+/// Normalize a `PathBuf` by resolving `.` and `..` components lexically
+/// without requiring the path to exist on disk.  Used for pre-write
+/// confinement checks where the target dir may not yet exist.
+fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => { out.pop(); }
+            Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
 }
