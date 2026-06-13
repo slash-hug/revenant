@@ -133,6 +133,17 @@
 
   async function handleSave() {
     if (!view || !filePath) return;
+
+    // Flush any pending debounced change first: Mod-s can fire within DEBOUNCE_MS
+    // of a keystroke, before scheduleChange() has pushed the latest buffer into
+    // the store. Without this we'd persist stale content and briefly mark the
+    // tab clean against the wrong hash.
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    tabsStore.updateContent(tabId, view.state.doc.toString());
+
     const snapshot = tabsStore.snapshot;
     const tab = snapshot.tabs.find((t) => t.id === tabId);
     if (!tab) return;
