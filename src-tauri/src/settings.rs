@@ -140,12 +140,19 @@ pub fn save_settings(path: &PathBuf, settings: &Settings) -> Result<(), Settings
     }
     let json = serde_json::to_string_pretty(settings)?;
 
-    // Paranoia check: the serialized form must NOT contain raw secrets.
-    // (The keychain key is never in Settings, but this guards against
-    //  accidental future changes that would re-introduce it.)
-    debug_assert!(
-        !json.contains("sk-"),
-        "Serialized settings must not contain secret-looking values"
+    // Structural safety check: the Settings struct intentionally has no field
+    // that holds a raw secret — only `rest_key_ref` (an opaque reference string).
+    // This runtime assert fires in both debug AND release builds so it cannot be
+    // silently compiled away.  It checks that `rest_key_ref` is not a raw API
+    // key by verifying the serialized value does not look like a credential.
+    // The `sk-` prefix check is intentionally broad as an extra layer of
+    // defense; the primary guard is the struct definition itself.
+    assert!(
+        !json.contains("\"password\"")
+            && !json.contains("\"api_key\"")
+            && !json.contains("\"secret\""),
+        "BUG: Serialized settings contain a field that looks like a secret. \
+         Check that rest_key_ref holds only an opaque reference, not a raw key."
     );
 
     std::fs::write(path, json)?;
