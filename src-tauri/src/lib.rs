@@ -4,6 +4,11 @@
 
 pub mod ipc;
 
+// Integration tests (all workstreams). Compiled only in test builds so they
+// never ship in the production binary.
+#[cfg(test)]
+mod tests;
+
 // Data-layer modules (WS-B implements these)
 pub mod file_io;
 pub mod annotations;
@@ -23,7 +28,6 @@ use tauri_plugin_cli::CliExt;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_cli::init())
         .plugin(
             tauri_plugin_single_instance::init(|app, argv, _cwd| {

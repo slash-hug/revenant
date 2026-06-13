@@ -1,11 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability granted to the main window. No blanket fs ACL — all file I/O is routed through Rust IPC commands (A7/C16).",
+  "description": "Capability granted to the main window. No blanket fs ACL — all file I/O is routed through Rust IPC commands (A7/C16). No shell permissions — the app never spawns OS processes from the webview.",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "shell:allow-execute",
-    "shell:allow-open"
+    "core:default"
   ]
 }
