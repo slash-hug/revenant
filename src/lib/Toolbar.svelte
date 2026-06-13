@@ -14,7 +14,7 @@
    */
   import { createEventDispatcher } from 'svelte';
 
-  export type ViewMode = 'source' | 'preview' | 'split';
+  type ViewMode = 'source' | 'preview' | 'split';
 
   export let viewMode: ViewMode = 'split';
 

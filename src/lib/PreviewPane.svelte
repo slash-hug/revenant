@@ -293,12 +293,12 @@
   {/if}
 
   <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div
     class="preview-content"
     bind:this={previewEl}
     on:mouseup={handlePreviewMouseUp}
-    {@html html}
-  ></div>
+  >{@html html}</div>
 </div>
 
 <style>

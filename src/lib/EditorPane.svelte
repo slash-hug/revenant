@@ -170,10 +170,11 @@
     const startLine = doc.lineAt(from);
     const endLine = doc.lineAt(to);
 
+    // CodeMirror line.number is 1-based; the IPC contract stores 0-indexed lines.
     const anchor: SourceAnchor = {
-      start_line: startLine.number,
+      start_line: startLine.number - 1,
       start_char: from - startLine.from,
-      end_line: endLine.number,
+      end_line: endLine.number - 1,
       end_char: to - endLine.from,
       quoted_text: doc.sliceString(from, to),
       context_before: startLine.number > 1

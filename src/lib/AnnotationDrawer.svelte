@@ -6,6 +6,11 @@
    *  - C9  Right-side drawer with annotation list and detached badge.
    *  - C10 General Notes persistent textarea at top of drawer, persisted as
    *        general_notes in the sidecar via the annotations store.
+   *
+   * Status model (frozen IPC contract v1):
+   *  - "anchored"    — anchor is valid; annotation is active.
+   *  - "block_level" — anchor is a transformed block (Mermaid/table); active.
+   *  - "detached"    — anchor lost after a document edit; shown with warning badge.
    */
   import { createEventDispatcher } from 'svelte';
   import { annotationsStore } from './stores/annotations';
@@ -30,40 +35,38 @@
     }, NOTES_DEBOUNCE_MS);
   }
 
-  async function handleResolve(id: string) {
-    await annotationsStore.resolveAnnotation(id);
-  }
-
-  async function handleReopen(id: string) {
-    await annotationsStore.reopenAnnotation(id);
-  }
-
   async function handleDelete(id: string) {
     if (confirm('Delete this annotation permanently?')) {
       await annotationsStore.deleteAnnotation(id);
     }
   }
 
+  /**
+   * Build a display label for an annotation's anchor.
+   * Line numbers stored as 0-indexed per IPC contract; display as 1-based.
+   */
   function anchorLabel(ann: Annotation): string {
-    if (ann.anchor.type === 'source') {
-      const { start_line, end_line } = ann.anchor.anchor;
-      return start_line === end_line ? `L${start_line}` : `L${start_line}–L${end_line}`;
+    const startDisplay = ann.line_start + 1;
+    const endDisplay = ann.line_end + 1;
+    if (ann.status === 'block_level') {
+      return `block:L${startDisplay}`;
     }
-    const { block_type, block_id } = ann.anchor.anchor;
-    return `block:${block_type}:${block_id}`;
+    return startDisplay === endDisplay ? `L${startDisplay}` : `L${startDisplay}–L${endDisplay}`;
   }
 
   function statusLabel(status: Annotation['status']): string {
     switch (status) {
-      case 'open': return 'Open';
-      case 'resolved': return 'Resolved';
+      case 'anchored': return 'Anchored';
+      case 'block_level': return 'Block';
       case 'detached': return 'Detached';
     }
   }
 
-  $: openAnnotations = $annotationsStore.annotations.filter((a) => a.status === 'open');
+  // "Active" annotations are those with a valid anchor (anchored or block_level).
+  $: activeAnnotations = $annotationsStore.annotations.filter(
+    (a) => a.status === 'anchored' || a.status === 'block_level'
+  );
   $: detachedAnnotations = $annotationsStore.annotations.filter((a) => a.status === 'detached');
-  $: resolvedAnnotations = $annotationsStore.annotations.filter((a) => a.status === 'resolved');
 </script>
 
 {#if open}
@@ -91,27 +94,26 @@
       ></textarea>
     </section>
 
-    <!-- Open annotations -->
-    <section class="annotation-section" aria-labelledby="open-label">
+    <!-- Active annotations (anchored or block_level) -->
+    <section class="annotation-section" aria-labelledby="active-label">
       <div class="section-header">
-        <span id="open-label" class="section-label">Open ({openAnnotations.length})</span>
+        <span id="active-label" class="section-label">Comments ({activeAnnotations.length})</span>
       </div>
-      {#if openAnnotations.length === 0}
-        <p class="empty-state">No open comments. Select text in the editor or preview to add one.</p>
+      {#if activeAnnotations.length === 0}
+        <p class="empty-state">No comments yet. Select text in the editor or preview to add one.</p>
       {:else}
         <ul class="annotation-list" role="list">
-          {#each openAnnotations as ann (ann.id)}
-            <li class="annotation-item" data-status="open">
+          {#each activeAnnotations as ann (ann.id)}
+            <li class="annotation-item" data-status="anchored">
               <div class="ann-meta">
                 <span class="ann-anchor" title="Source anchor">{anchorLabel(ann)}</span>
-                <span class="ann-status open">Open</span>
+                <span class="ann-status anchored">{statusLabel(ann.status)}</span>
               </div>
-              {#if ann.anchor.type === 'source' && ann.anchor.anchor.quoted_text}
-                <blockquote class="ann-quote">{ann.anchor.anchor.quoted_text}</blockquote>
+              {#if ann.quoted_text}
+                <blockquote class="ann-quote">{ann.quoted_text}</blockquote>
               {/if}
               <p class="ann-body">{ann.body}</p>
               <div class="ann-actions">
-                <button class="btn-resolve" on:click={() => handleResolve(ann.id)}>Resolve</button>
                 <button class="btn-delete" on:click={() => handleDelete(ann.id)}>Delete</button>
               </div>
             </li>
@@ -134,11 +136,11 @@
             <li class="annotation-item" data-status="detached">
               <div class="ann-meta">
                 <span class="ann-anchor detached" title="Detached anchor">
-                  {anchorLabel(ann)} <span class="detached-label">⚠ detached</span>
+                  {anchorLabel(ann)} <span class="detached-label">detached</span>
                 </span>
               </div>
-              {#if ann.anchor.type === 'source' && ann.anchor.anchor.quoted_text}
-                <blockquote class="ann-quote detached-quote">{ann.anchor.anchor.quoted_text}</blockquote>
+              {#if ann.quoted_text}
+                <blockquote class="ann-quote detached-quote">{ann.quoted_text}</blockquote>
               {/if}
               <p class="ann-body">{ann.body}</p>
               <div class="ann-actions">
@@ -148,28 +150,6 @@
           {/each}
         </ul>
       </section>
-    {/if}
-
-    <!-- Resolved annotations (collapsed by default) -->
-    {#if resolvedAnnotations.length > 0}
-      <details class="resolved-section">
-        <summary class="section-label">Resolved ({resolvedAnnotations.length})</summary>
-        <ul class="annotation-list resolved" role="list">
-          {#each resolvedAnnotations as ann (ann.id)}
-            <li class="annotation-item" data-status="resolved">
-              <div class="ann-meta">
-                <span class="ann-anchor">{anchorLabel(ann)}</span>
-                <span class="ann-status resolved">Resolved</span>
-              </div>
-              <p class="ann-body resolved-body">{ann.body}</p>
-              <div class="ann-actions">
-                <button class="btn-reopen" on:click={() => handleReopen(ann.id)}>Reopen</button>
-                <button class="btn-delete" on:click={() => handleDelete(ann.id)}>Delete</button>
-              </div>
-            </li>
-          {/each}
-        </ul>
-      </details>
     {/if}
 
     {#if $annotationsStore.error}
@@ -308,10 +288,6 @@
     background: var(--detached-bg, #fffbf0);
   }
 
-  .annotation-item[data-status="resolved"] {
-    opacity: 0.65;
-  }
-
   .ann-meta {
     display: flex;
     align-items: center;
@@ -343,14 +319,9 @@
     font-weight: 600;
   }
 
-  .ann-status.open {
+  .ann-status.anchored {
     background: var(--open-bg, #e8f4ff);
     color: var(--open-fg, #0055aa);
-  }
-
-  .ann-status.resolved {
-    background: var(--resolved-bg, #e8f8e8);
-    color: var(--resolved-fg, #2a7a2a);
   }
 
   .ann-quote {
@@ -378,17 +349,12 @@
     white-space: pre-wrap;
   }
 
-  .resolved-body {
-    text-decoration: line-through;
-    color: var(--muted, #888);
-  }
-
   .ann-actions {
     display: flex;
     gap: 6px;
   }
 
-  .btn-resolve, .btn-delete, .btn-reopen {
+  .btn-delete {
     border: 1px solid var(--border-color, #ccc);
     border-radius: 4px;
     padding: 2px 10px;
@@ -398,19 +364,7 @@
     color: var(--btn-fg, #444);
   }
 
-  .btn-resolve:hover { background: var(--resolved-bg, #e8f8e8); }
   .btn-delete:hover { background: var(--error-bg, #fff0f0); color: var(--error-fg, #c00); }
-  .btn-reopen:hover { background: var(--open-bg, #e8f4ff); }
-
-  .resolved-section {
-    padding: 12px;
-    border-bottom: 1px solid var(--border-color, #ddd);
-  }
-
-  .resolved-section summary {
-    cursor: pointer;
-    list-style: revert;
-  }
 
   .error-banner {
     margin: 12px;

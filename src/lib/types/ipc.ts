@@ -128,6 +128,53 @@ export interface ExportObsidianResult {
 }
 
 // ---------------------------------------------------------------------------
+// Anchor types — used by the annotation UI (C8 / A10)
+// ---------------------------------------------------------------------------
+
+/**
+ * A source-level anchor produced by the editor (EditorPane / source selection).
+ * Line numbers are 0-indexed to match the frozen IPC Annotation contract.
+ */
+export interface SourceAnchor {
+  /** 0-indexed starting line. */
+  start_line: number;
+  /** Character offset within start_line. */
+  start_char: number;
+  /** 0-indexed ending line (inclusive). */
+  end_line: number;
+  /** Character offset within end_line. */
+  end_char: number;
+  /** The exact selected text. */
+  quoted_text: string;
+  /** Line of context immediately before the selection (for re-anchoring). */
+  context_before: string;
+  /** Line of context immediately after the selection (for re-anchoring). */
+  context_after: string;
+}
+
+/**
+ * A block-level anchor produced by the preview for transformed blocks
+ * (Mermaid diagrams, tables, footnotes) where source character offsets
+ * are unavailable (C8 degradation rule).
+ */
+export interface BlockAnchor {
+  /** Block ID from the data-block-id attribute emitted by markdown.ts. */
+  block_id: string;
+  /** Type of the transformed block. */
+  block_type: "mermaid" | "table" | "footnote";
+  /** Selected text within the block (best-effort). */
+  quoted_text: string;
+}
+
+/**
+ * Discriminated union over the two anchor varieties.
+ * PreviewPane and EditorPane dispatch this upward on selection.
+ */
+export type AnchorV1 =
+  | { type: "source"; anchor: SourceAnchor }
+  | { type: "block"; anchor: BlockAnchor };
+
+// ---------------------------------------------------------------------------
 // Typed IPC wrappers — use these instead of raw invoke() calls
 // ---------------------------------------------------------------------------
 
