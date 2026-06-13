@@ -9,6 +9,19 @@
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
+  "plugins": {
+    "cli": {
+      "description": "Revenant — markdown viewer & review companion",
+      "args": [
+        {
+          "name": "file",
+          "index": 1,
+          "takesValue": true,
+          "description": "Path to a markdown file to open"
+        }
+      ]
+    }
+  },
   "app": {
     "windows": [
       {
