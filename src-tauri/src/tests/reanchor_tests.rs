@@ -22,25 +22,31 @@ mod integration {
             id: id.to_string(),
             line_start,
             line_end,
+            char_start: 0,
+            char_end: 0,
             quoted_text: quoted.to_string(),
             context_before: before.to_string(),
             context_after: after.to_string(),
             body: String::new(),
             status: AnchorStatus::Anchored,
+            created_at: "2025-01-01T00:00:00Z".to_string(),
+            updated_at: "2025-01-01T00:00:00Z".to_string(),
         }
     }
 
     // ── Spec §7 case 1: exact match (hash short-circuit) ─────────────────────
+    // All line_start/line_end values are 0-indexed per the frozen IPC contract.
 
     #[test]
     fn spec_case1_exact_match_no_reanchor_needed() {
         let doc = "## Section\nThe key insight is here.\nFurther details.\n";
         let hash = sha256_hex(doc.as_bytes());
-        let a = ann("c1", 2, 2, "The key insight is here.", "## Section", "Further details.");
+        // "The key insight is here." is at index 1 (0-indexed).
+        let a = ann("c1", 1, 1, "The key insight is here.", "## Section", "Further details.");
 
         let r = reanchor(&a, doc, &hash, &hash);
         assert_eq!(r.annotation.status, AnchorStatus::Anchored);
-        assert_eq!(r.annotation.line_start, 2);
+        assert_eq!(r.annotation.line_start, 1);
     }
 
     // ── Spec §7 case 2: fuzzy match after light edit ──────────────────────────
@@ -56,10 +62,11 @@ mod integration {
             "## Overview\nThis feature greatly improves performance.\nBenchmark results below.\n";
         let new_hash = sha256_hex(edited.as_bytes());
 
+        // "This feature improves performance." is at index 1 (0-indexed).
         let a = ann(
             "c2",
-            2,
-            2,
+            1,
+            1,
             "This feature improves performance.",
             "## Overview",
             "Benchmark results below.",
@@ -67,7 +74,8 @@ mod integration {
 
         let r = reanchor(&a, edited, &new_hash, &old_hash);
         assert_eq!(r.annotation.status, AnchorStatus::Anchored);
-        assert_eq!(r.annotation.line_start, 2);
+        // After edit, still at index 1 (same line position).
+        assert_eq!(r.annotation.line_start, 1);
     }
 
     // ── Spec §7 case 3: detached after heavy edit ─────────────────────────────
@@ -81,7 +89,8 @@ mod integration {
         let edited = "All previous content removed. New approach: O(1).\n";
         let new_hash = sha256_hex(edited.as_bytes());
 
-        let a = ann("c3", 1, 1, "The algorithm runs in O(n log n) time.", "", "");
+        // Only line, 0-indexed = 0.
+        let a = ann("c3", 0, 0, "The algorithm runs in O(n log n) time.", "", "");
 
         let r = reanchor(&a, edited, &new_hash, &old_hash);
         assert_eq!(r.annotation.status, AnchorStatus::Detached);
@@ -95,10 +104,11 @@ mod integration {
         let old_hash = sha256_hex(original.as_bytes());
         let new_hash = sha256_hex(b"");
 
+        // 0-indexed: Line 1=0, Line 2=1, Line 3=2.
         let annotations = vec![
-            ann("e1", 1, 1, "Line 1", "", "Line 2"),
-            ann("e2", 2, 2, "Line 2", "Line 1", "Line 3"),
-            ann("e3", 3, 3, "Line 3", "Line 2", ""),
+            ann("e1", 0, 0, "Line 1", "", "Line 2"),
+            ann("e2", 1, 1, "Line 2", "Line 1", "Line 3"),
+            ann("e3", 2, 2, "Line 3", "Line 2", ""),
         ];
 
         let results = reanchor_all(&annotations, "", &new_hash, &old_hash);
@@ -120,38 +130,33 @@ mod integration {
     // ≥0.75 similar to a window in the edited document.
     // The volatile annotation ("Volatile section…") has no similar text in the
     // edited doc and must detach.
-    //
-    // Design note: context_before/after for the stable annotation use lines that
-    // do NOT change across the edit, so the needle similarity stays high.
 
     #[test]
     fn spec_case5_multi_annotation_mixed() {
-        // 6-line document: only lines 2 and 5 change.
+        // 5-line document (indices 0-4).
         let original =
             "Preamble\nStable text that stays.\nMiddle constant\nVolatile section to be replaced.\nEpilogue\n";
         let old_hash = sha256_hex(original.as_bytes());
 
-        // Line 4 ("Volatile…") rewritten; rest unchanged.
+        // Index 3 ("Volatile…") rewritten; rest unchanged.
         let edited =
             "Preamble\nStable text that stays.\nMiddle constant\nCompletely new content here.\nEpilogue\n";
         let new_hash = sha256_hex(edited.as_bytes());
 
-        // Stable annotation at line 2 — context uses "Preamble" and "Middle constant"
-        // (both stable), so needle stays ≥0.75 similar.
+        // Stable annotation at index 1 (0-indexed).
         let stable_ann = ann(
             "stable",
-            2,
-            2,
+            1,
+            1,
             "Stable text that stays.",
             "Preamble",
             "Middle constant",
         );
-        // Volatile annotation at line 4 — context "Volatile section to be replaced."
-        // has no similar text in the edited doc → detach.
+        // Volatile annotation at index 3 (0-indexed).
         let volatile_ann = ann(
             "volatile",
-            4,
-            4,
+            3,
+            3,
             "Volatile section to be replaced.",
             "Middle constant",
             "Epilogue",
@@ -161,7 +166,7 @@ mod integration {
             reanchor_all(&[stable_ann, volatile_ann], &edited, &new_hash, &old_hash);
 
         assert_eq!(results[0].annotation.status, AnchorStatus::Anchored);
-        assert_eq!(results[0].annotation.line_start, 2);
+        assert_eq!(results[0].annotation.line_start, 1);
         assert_eq!(results[1].annotation.status, AnchorStatus::Detached);
     }
 
@@ -169,54 +174,54 @@ mod integration {
 
     #[test]
     fn trap9_tie_break_prefers_closest_line() {
-        // "target" appears at lines 3, 7, and 11. Stored anchor was line 7.
-        // Re-anchor should pick line 7 (distance 0).
+        // "target line content" appears at indices 2, 6, 10 (0-indexed).
+        // Stored anchor was index 6. Re-anchor should pick index 6 (distance 0).
         let doc = vec![
             "other",
             "other",
-            "target line content",
+            "target line content", // index 2
             "other",
             "other",
             "other",
-            "target line content", // line 7
+            "target line content", // index 6
             "other",
             "other",
             "other",
-            "target line content", // line 11
+            "target line content", // index 10
         ];
         let content = doc.join("\n") + "\n";
         let old_hash = sha256_hex(b"old_different");
         let new_hash = sha256_hex(content.as_bytes());
 
-        let a = ann("t9", 7, 7, "target line content", "other", "other");
+        let a = ann("t9", 6, 6, "target line content", "other", "other");
         let r = reanchor(&a, &content, &new_hash, &old_hash);
         assert_eq!(r.annotation.status, AnchorStatus::Anchored);
-        assert_eq!(r.annotation.line_start, 7, "should prefer closest line (7)");
+        assert_eq!(r.annotation.line_start, 6, "should prefer closest line (index 6)");
     }
 
     // ── TRAP 9: earliest position when same distance ──────────────────────────
 
     #[test]
     fn trap9_tie_break_same_distance_picks_earliest() {
-        // Two occurrences equidistant from stored anchor line 4.
-        // Lines: 2 (dist=2), 6 (dist=2). Earliest (2) should win.
+        // Two occurrences equidistant from stored anchor index 3 (0-indexed).
+        // Indices: 1 (dist=2), 5 (dist=2). Earliest (1) should win.
         let doc = vec![
             "x",
-            "match me here",  // line 2 — dist 2
+            "match me here",  // index 1 — dist 2 from stored anchor (3)
             "x",
-            "x",              // stored anchor line 4
+            "x",              // stored anchor index 3
             "x",
-            "match me here",  // line 6 — dist 2
+            "match me here",  // index 5 — dist 2 from stored anchor (3)
             "x",
         ];
         let content = doc.join("\n") + "\n";
         let old_hash = sha256_hex(b"old");
         let new_hash = sha256_hex(content.as_bytes());
 
-        let a = ann("eq", 4, 4, "match me here", "x", "x");
+        let a = ann("eq", 3, 3, "match me here", "x", "x");
         let r = reanchor(&a, &content, &new_hash, &old_hash);
         assert_eq!(r.annotation.status, AnchorStatus::Anchored);
-        assert_eq!(r.annotation.line_start, 2, "earliest at equal distance should win");
+        assert_eq!(r.annotation.line_start, 1, "earliest at equal distance should win");
     }
 
     // ── Threshold boundary test ───────────────────────────────────────────────

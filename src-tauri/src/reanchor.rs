@@ -149,10 +149,10 @@ fn build_needle(ann: &Annotation) -> String {
     parts.join("\n")
 }
 
-/// Probe the stored line range (and a small buffer around it) for a verbatim
-/// match of `ann.quoted_text`.
+/// Probe the document for a verbatim match of `ann.quoted_text`.
 ///
-/// Returns `(new_start, new_end)` (1-based) if found, else `None`.
+/// Returns `(new_start, new_end)` **(0-indexed)** if found, else `None`.
+/// Prefers the match closest to the stored 0-indexed anchor line.
 fn probe_verbatim(ann: &Annotation, lines: &[&str]) -> Option<(u32, u32)> {
     let quoted = &ann.quoted_text;
     if quoted.is_empty() {
@@ -162,7 +162,7 @@ fn probe_verbatim(ann: &Annotation, lines: &[&str]) -> Option<(u32, u32)> {
     let span = quoted_lines.len();
 
     // Search the whole document for verbatim match; prefer closest to stored anchor.
-    let stored_start = ann.line_start as usize;
+    let stored_start = ann.line_start as usize; // 0-indexed
     let mut best: Option<(u32, u32, usize)> = None; // (start, end, distance)
 
     for i in 0..lines.len() {
@@ -170,12 +170,12 @@ fn probe_verbatim(ann: &Annotation, lines: &[&str]) -> Option<(u32, u32)> {
             break;
         }
         if lines[i..i + span] == quoted_lines[..] {
-            let dist = (i + 1).abs_diff(stored_start);
+            let dist = i.abs_diff(stored_start);
             let better = best.map_or(true, |(_, _, d)| dist < d);
             if better {
                 best = Some((
-                    (i + 1) as u32,
-                    (i + span) as u32,
+                    i as u32,
+                    (i + span - 1) as u32,
                     dist,
                 ));
             }
@@ -188,15 +188,16 @@ fn probe_verbatim(ann: &Annotation, lines: &[&str]) -> Option<(u32, u32)> {
 /// Slide a window of `needle_line_count` lines over `lines` and compute
 /// normalized similarity between `needle` and each window using `similar`.
 ///
-/// Returns the 1-based line number of the **start of the best window** (i.e.,
-/// the first line of the context window, before any context_before offset)
-/// with similarity ≥ `SIMILARITY_THRESHOLD`, or `None` if no window qualifies.
+/// Returns the **0-indexed** line number of the **start of the best window**
+/// (i.e., the first line of the context window, before any context_before
+/// offset) with similarity ≥ `SIMILARITY_THRESHOLD`, or `None` if no window
+/// qualifies.
 ///
 /// The caller is responsible for offsetting by `context_before` line count to
 /// arrive at the actual anchor line for the `quoted_text`.
 ///
-/// Tie-break: smallest line-distance from `stored_anchor_line`, then earliest
-/// position.
+/// Tie-break: smallest line-distance from `stored_anchor_line` (0-indexed),
+/// then earliest position.
 fn best_fuzzy_match(
     needle: &str,
     lines: &[&str],
@@ -215,8 +216,8 @@ fn best_fuzzy_match(
         let window = lines[i..i + window_size].join("\n");
         let sim = normalized_similarity(needle, &window);
         if sim >= SIMILARITY_THRESHOLD {
-            // Distance is measured from stored anchor to the window-start.
-            let dist = (i + 1).abs_diff(stored_anchor_line as usize);
+            // Distance is measured from stored 0-indexed anchor to the window-start.
+            let dist = i.abs_diff(stored_anchor_line as usize);
             candidates
                 .entry((dist, i))
                 .and_modify(|s| {
@@ -232,7 +233,7 @@ fn best_fuzzy_match(
     candidates
         .into_iter()
         .next()
-        .map(|((_, start_idx), _)| (start_idx + 1) as u32)
+        .map(|((_, start_idx), _)| start_idx as u32)
 }
 
 /// Compute a normalized similarity score in [0.0, 1.0] between `a` and `b`
@@ -300,17 +301,19 @@ mod tests {
     }
 
     // ── 1. Exact match (hash short-circuit) ───────────────────────────────────
+    // All line numbers are 0-indexed per the frozen IPC contract.
 
     #[test]
     fn exact_match_hash_short_circuit() {
         let content = "line 1\nline 2\nline 3\n";
         let hash = sha256_hex(content.as_bytes());
-        let ann = make_ann("a1", 2, 2, "line 2", "line 1", "line 3");
+        // "line 2" is at index 1 (0-indexed).
+        let ann = make_ann("a1", 1, 1, "line 2", "line 1", "line 3");
 
         let result = reanchor(&ann, content, &hash, &hash);
         assert_eq!(result.annotation.status, AnchorStatus::Anchored);
-        assert_eq!(result.annotation.line_start, 2);
-        assert_eq!(result.annotation.line_end, 2);
+        assert_eq!(result.annotation.line_start, 1);
+        assert_eq!(result.annotation.line_end, 1);
     }
 
     // ── 2. Fuzzy match after a light edit ─────────────────────────────────────
@@ -328,17 +331,17 @@ mod tests {
 
         let ann = make_ann(
             "a2",
-            2, // "This is the key finding." was on line 2
-            2,
+            1, // "This is the key finding." was at index 1 (0-indexed)
+            1,
             "This is the key finding.",
             "Introduction",
             "Conclusion",
         );
 
         let result = reanchor(&ann, edited, &new_hash, &old_hash);
-        // Should have found "This is the key finding!" (≥0.75 similar) on line 3.
+        // Should have found "This is the key finding!" (≥0.75 similar) at index 2 (0-indexed).
         assert_eq!(result.annotation.status, AnchorStatus::Anchored);
-        assert_eq!(result.annotation.line_start, 3);
+        assert_eq!(result.annotation.line_start, 2);
     }
 
     // ── 3. Detached after heavy edit ──────────────────────────────────────────
@@ -354,8 +357,8 @@ mod tests {
 
         let ann = make_ann(
             "a3",
-            1,
-            1,
+            0, // first line, 0-indexed
+            0,
             "Alpha beta gamma delta epsilon.",
             "",
             "",
@@ -373,7 +376,7 @@ mod tests {
         let old_hash = sha256_hex(original.as_bytes());
         let new_hash = sha256_hex(b"");
 
-        let ann = make_ann("a4", 1, 1, "Some content here.", "", "");
+        let ann = make_ann("a4", 0, 0, "Some content here.", "", "");
 
         let result = reanchor(&ann, "", &new_hash, &old_hash);
         assert_eq!(result.annotation.status, AnchorStatus::Detached);
@@ -387,28 +390,25 @@ mod tests {
 
     #[test]
     fn multi_annotation_one_anchors_one_detaches() {
-        // Original: 5 lines
+        // Original: 5 lines (indices 0-4)
         let original = "Header\nImportant note here.\nSeparator line\nVolatile section xyz.\nFooter\n";
         let old_hash = sha256_hex(original.as_bytes());
 
-        // Edit: single word in line 2 ("note" → "notes"); line 4 completely rewritten.
+        // Edit: single word in index 1 ("note" → "notes"); index 3 completely rewritten.
         let edited = "Header\nImportant notes here.\nSeparator line\nQwerty uiop asdf.\nFooter\n";
         let new_hash = sha256_hex(edited.as_bytes());
 
-        // Stable annotation: needle = "Header\nImportant note here.\nSeparator line"
-        // Edited window  at pos 0: "Header\nImportant notes here.\nSeparator line"
-        // Similarity ≥ 0.75 (only "notes" vs "note" differs by 1 char in ~42 chars).
+        // Stable annotation at index 1 (0-indexed).
         let ann_anchored = make_ann(
-            "keep", 2, 2,
+            "keep", 1, 1,
             "Important note here.",
             "Header",
             "Separator line",
         );
 
-        // Volatile annotation: needle = "Separator line\nVolatile section xyz.\nFooter"
-        // No window in edited doc with sim ≥ 0.75 (line 4 is completely different).
+        // Volatile annotation at index 3 (0-indexed).
         let ann_detached = make_ann(
-            "lose", 4, 4,
+            "lose", 3, 3,
             "Volatile section xyz.",
             "Separator line",
             "Footer",
@@ -428,18 +428,18 @@ mod tests {
 
     #[test]
     fn tie_break_by_line_distance_then_earliest() {
-        // Document where "match" appears at lines 2 and 8; stored anchor was
-        // line 2, so line 2 should win.
+        // Document where "match text" appears at indices 1 and 7 (0-indexed).
+        // Stored anchor was index 1, so index 1 should win.
         let content = "ctx\nmatch text\nother\nother\nother\nother\nctx\nmatch text\nfin\n";
         let old_hash = sha256_hex(b"old");
         let new_hash = sha256_hex(content.as_bytes());
 
-        let ann = make_ann("tie", 2, 2, "match text", "ctx", "other");
+        let ann = make_ann("tie", 1, 1, "match text", "ctx", "other");
 
         let result = reanchor(&ann, content, &new_hash, &old_hash);
         assert_eq!(result.annotation.status, AnchorStatus::Anchored);
-        // Should pick line 2 (distance 0) over line 8 (distance 6).
-        assert_eq!(result.annotation.line_start, 2);
+        // Should pick index 1 (distance 0) over index 7 (distance 6).
+        assert_eq!(result.annotation.line_start, 1);
     }
 
     // ── 7. Regression: transformed-block fallback field ───────────────────────
@@ -452,7 +452,8 @@ mod tests {
     fn block_level_fallback_is_always_false_in_rust_module() {
         let content = "# Heading\nSome text.\n";
         let hash = sha256_hex(content.as_bytes());
-        let ann = make_ann("blk", 2, 2, "Some text.", "# Heading", "");
+        // "Some text." is at index 1 (0-indexed).
+        let ann = make_ann("blk", 1, 1, "Some text.", "# Heading", "");
 
         let result = reanchor(&ann, content, &hash, &hash);
         assert!(!result.block_level_fallback);
