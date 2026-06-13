@@ -1,0 +1,22 @@
+[package]
+name = "revenant"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "revenant_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.10"
+similar = "2"
+notify = "6"
+hex = "0.4"
+thiserror = "1"
+tempfile = "3"
+
+[dev-dependencies]
+tempfile = "3"
