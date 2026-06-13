@@ -43,8 +43,8 @@ jobs:
       - name: Run frontend tests
         run: npm test
 
-      - name: TypeScript type check
-        run: npx tsc --noEmit
+      - name: TypeScript + Svelte type check (svelte-check catches .svelte errors tsc misses)
+        run: npm run check
 
       - name: Frontend build (produces dist/)
         run: npm run build
