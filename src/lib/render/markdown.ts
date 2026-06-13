@@ -47,6 +47,9 @@ const PURIFY_CONFIG = {
   ],
   ALLOWED_ATTR: [
     'href', 'src', 'alt', 'title', 'class', 'id',
+    // rel is explicitly allowed so the after-sanitize hook can inject
+    // rel="noopener noreferrer" on external links (see DOMPurify.addHook below).
+    'rel',
     // Data attributes used for scroll-sync and source mapping (C7/C8)
     'data-block-id', 'data-source-line', 'data-block-type',
     // SVG attributes
@@ -56,9 +59,24 @@ const PURIFY_CONFIG = {
     'marker-end', 'marker-start', 'clip-path', 'font-size', 'font-family',
     'text-anchor', 'dominant-baseline',
   ],
-  ADD_ATTR: ['target'], // allow target on <a> for external links
+  // target="_blank" is kept to render links in the default browser rather than
+  // the Tauri webview (the Tauri CSP prevents navigation anyway).  rel is
+  // enforced via the afterSanitizeAttributes hook below to prevent
+  // reverse-tabnapping on any link that carries a target attribute.
+  ADD_ATTR: ['target'],
   FORCE_BODY: false,
 } as const;
+
+// ---------------------------------------------------------------------------
+// DOMPurify hook: enforce rel="noopener noreferrer" on all anchors that carry
+// a target attribute. This prevents reverse-tabnapping regardless of whether
+// the markdown source included rel.
+// ---------------------------------------------------------------------------
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A' && node.hasAttribute('target')) {
+    node.setAttribute('rel', 'noopener noreferrer');
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Frontmatter stripping
