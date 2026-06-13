@@ -1,0 +1,35 @@
+[package]
+name = "revenant"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "revenant_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "revenant"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+keyring = "3"
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] }
+thiserror = "2"
+sha2 = "0.10"
+hex = "0.4"
+percent-encoding = "2"
+
+[dev-dependencies]
+tempfile = "3"
+mockito = "1"
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
