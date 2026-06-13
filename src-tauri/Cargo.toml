@@ -37,6 +37,10 @@ similar = { version = "2", features = ["text"] }
 notify = "6"
 thiserror = "1"
 hex = "0.4"
+tempfile = "3"
+
+[dev-dependencies]
+tempfile = "3"
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
