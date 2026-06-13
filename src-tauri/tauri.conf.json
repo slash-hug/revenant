@@ -37,12 +37,13 @@
     ],
     "windows": {
       "webviewInstallMode": {
-        "type": "downloadBootstrapper",
-        "silent": true
+        "type": "fixedRuntime",
+        "path": "Microsoft.WebView2.FixedVersionRuntime.130.0.2849.80.x64"
       },
       "nsis": {
         "displayLanguageSelector": false,
-        "installMode": "perMachine"
+        "installMode": "perMachine",
+        "installerHooks": "nsis-hooks.nsh"
       }
     }
   }
