@@ -287,11 +287,15 @@ mod tests {
             id: id.to_string(),
             line_start,
             line_end,
+            char_start: 0,
+            char_end: 0,
             quoted_text: quoted.to_string(),
             context_before: before.to_string(),
             context_after: after.to_string(),
             body: "comment".to_string(),
             status: AnchorStatus::Anchored,
+            created_at: "2025-01-01T00:00:00Z".to_string(),
+            updated_at: "2025-01-01T00:00:00Z".to_string(),
         }
     }
 

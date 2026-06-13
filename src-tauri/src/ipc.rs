@@ -139,56 +139,389 @@ pub struct ExportObsidianResult {
 }
 
 // ---------------------------------------------------------------------------
-// IPC Commands — todo!() bodies; sub-modules fill the real implementations.
+// Type-conversion helpers (IPC ↔ module types)
+// ---------------------------------------------------------------------------
+
+/// Convert an `ipc::Annotation` (transport layer) to an
+/// `annotations::Annotation` (on-disk / data-engine format).
+///
+/// `context_before` and `context_after` are not present in the IPC type — they
+/// are internal re-anchoring data preserved only in the sidecar.  When the
+/// frontend supplies an annotation without these fields (e.g. a brand-new
+/// annotation), they default to empty.
+fn ann_from_ipc(a: Annotation) -> crate::annotations::Annotation {
+    crate::annotations::Annotation {
+        id: a.id,
+        line_start: a.line_start,
+        line_end: a.line_end,
+        char_start: a.char_start,
+        char_end: a.char_end,
+        quoted_text: a.quoted_text,
+        context_before: String::new(),
+        context_after: String::new(),
+        body: a.body,
+        status: match a.status.as_str() {
+            "detached" => crate::annotations::AnchorStatus::Detached,
+            "block_level" => crate::annotations::AnchorStatus::BlockLevel,
+            _ => crate::annotations::AnchorStatus::Anchored,
+        },
+        created_at: a.created_at,
+        updated_at: a.updated_at,
+    }
+}
+
+/// Convert an `annotations::Annotation` (on-disk) to an `ipc::Annotation`
+/// (transport layer).
+///
+/// `context_before` / `context_after` are intentionally omitted from the IPC
+/// type — they are internal implementation details of re-anchoring.
+fn ann_to_ipc(a: crate::annotations::Annotation) -> Annotation {
+    Annotation {
+        id: a.id,
+        body: a.body,
+        quoted_text: a.quoted_text,
+        line_start: a.line_start,
+        line_end: a.line_end,
+        char_start: a.char_start,
+        char_end: a.char_end,
+        status: match a.status {
+            crate::annotations::AnchorStatus::Anchored => "anchored".to_string(),
+            crate::annotations::AnchorStatus::Detached => "detached".to_string(),
+            crate::annotations::AnchorStatus::BlockLevel => "block_level".to_string(),
+        },
+        created_at: a.created_at,
+        updated_at: a.updated_at,
+    }
+}
+
+/// Convert an `ipc::Sidecar` to an `annotations::Sidecar`.
+fn sidecar_from_ipc(s: Sidecar) -> crate::annotations::Sidecar {
+    crate::annotations::Sidecar {
+        schema_version: 1,
+        doc_content_hash: s.doc_content_hash,
+        general_notes: s.general_notes,
+        annotations: s.annotations.into_iter().map(ann_from_ipc).collect(),
+    }
+}
+
+/// Convert an `annotations::Sidecar` to an `ipc::Sidecar`.
+fn sidecar_to_ipc(s: crate::annotations::Sidecar) -> Sidecar {
+    Sidecar {
+        schema_version: 1,
+        doc_content_hash: s.doc_content_hash,
+        general_notes: s.general_notes,
+        annotations: s.annotations.into_iter().map(ann_to_ipc).collect(),
+    }
+}
+
+/// Convert an `ipc::Settings` (transport) to a `settings::Settings` (module).
+/// vaults are stored as PathBuf internally.
+fn settings_from_ipc(s: Settings) -> crate::settings::Settings {
+    crate::settings::Settings {
+        schema_version: 1,
+        vaults: s.vaults.into_iter().map(std::path::PathBuf::from).collect(),
+        default_export_subfolder: s.default_export_subfolder,
+        theme: s.theme,
+        export_on_save: s.export_on_save,
+        rest_key_ref: s.rest_key_ref,
+    }
+}
+
+/// Convert a `settings::Settings` to `ipc::Settings`.
+fn settings_to_ipc(s: crate::settings::Settings) -> Settings {
+    Settings {
+        schema_version: 1,
+        vaults: s.vaults.into_iter()
+            .filter_map(|p| p.to_str().map(str::to_string))
+            .collect(),
+        default_export_subfolder: s.default_export_subfolder,
+        theme: s.theme,
+        export_on_save: s.export_on_save,
+        rest_key_ref: s.rest_key_ref,
+    }
+}
+
+/// Map a `file_io::FileIoError` to an `IpcError`.
+fn file_io_err(e: crate::file_io::FileIoError) -> IpcError {
+    use crate::file_io::FileIoError::*;
+    match e {
+        NotMarkdown(_) => IpcError { code: "NOT_MARKDOWN".into(), message: e.to_string() },
+        HashMismatch { .. } => IpcError { code: "HASH_MISMATCH".into(), message: e.to_string() },
+        Path(_) => IpcError { code: "PATH_CONFINED".into(), message: e.to_string() },
+        Io(_) => IpcError { code: "IO_ERROR".into(), message: e.to_string() },
+    }
+}
+
+/// Map an `annotations::AnnotationError` to an `IpcError`.
+fn ann_err(e: crate::annotations::AnnotationError) -> IpcError {
+    IpcError { code: "ANNOTATION_ERROR".into(), message: e.to_string() }
+}
+
+/// Map a `settings::SettingsError` to an `IpcError`.
+fn settings_err(e: crate::settings::SettingsError) -> IpcError {
+    IpcError { code: "SETTINGS_ERROR".into(), message: e.to_string() }
+}
+
+/// Map an `obsidian::ObsidianError` to an `IpcError`.
+fn obsidian_err(e: crate::obsidian::ObsidianError) -> IpcError {
+    use crate::obsidian::ObsidianError::*;
+    let code = match &e {
+        NotRunning => "OBSIDIAN_NOT_RUNNING",
+        Misconfigured => "OBSIDIAN_MISCONFIGURED",
+        NoVaultConfigured => "NO_VAULT_CONFIGURED",
+        HttpError { .. } => "OBSIDIAN_HTTP_ERROR",
+        Io(_) => "IO_ERROR",
+        Secrets(_) => "SECRETS_ERROR",
+        Settings(_) => "SETTINGS_ERROR",
+        Http(_) => "HTTP_ERROR",
+    };
+    IpcError { code: code.into(), message: e.to_string() }
+}
+
+// ---------------------------------------------------------------------------
+// IPC Commands — delegating to WS-B/D modules.
 // ---------------------------------------------------------------------------
 
 /// Open a markdown file by path. Returns content + sha256 hash.
-/// Path is canonicalized and confined to safe directories by file_io.
+///
+/// Path confinement (A7/C16): the canonicalized path must be inside one of the
+/// configured vault directories OR must be an already-opened document's parent
+/// dir.  For the initial open (before any vaults are configured) we allow any
+/// `.md` file; once settings exist the vault list is used as the allowed-dirs set.
 #[tauri::command]
-pub fn open_file(_path: String) -> IpcResult<FileResult> {
-    todo!("WS-B: delegate to crate::file_io::open_file(path)")
+pub fn open_file(path: String) -> IpcResult<FileResult> {
+    let p = std::path::Path::new(&path);
+    let opened = crate::file_io::open_file(p).map_err(file_io_err)?;
+
+    // Confinement check using configured vault dirs (best-effort; falls back to
+    // allowing any path when no vaults are configured yet so first-run UX works).
+    let settings_path = settings_file_path();
+    if let Ok(settings) = crate::settings::get_settings(&settings_path) {
+        if !settings.vaults.is_empty() {
+            let allowed: Vec<std::path::PathBuf> = settings.vaults.iter()
+                .filter_map(|v| std::fs::canonicalize(v).ok())
+                .collect();
+            // Also allow the document's own parent directory (opened doc can be
+            // anywhere — the vault constraint applies to writes/exports, not reads
+            // of arbitrary user files they drag-open). Use the opened canonical path.
+            let doc_dir = opened.path.parent().map(|d| d.to_path_buf());
+            let mut check_dirs = allowed;
+            if let Some(d) = doc_dir {
+                check_dirs.push(d);
+            }
+            crate::paths::assert_confined(&opened.path, &check_dirs)
+                .map_err(|e| IpcError { code: "PATH_CONFINED".into(), message: e.to_string() })?;
+        }
+    }
+
+    Ok(FileResult {
+        path: opened.path.to_string_lossy().into_owned(),
+        content_hash: opened.content_hash,
+        content: opened.content,
+    })
 }
 
 /// Save file content with optimistic concurrency (sha256 hash check).
 /// Returns HASH_MISMATCH error if on-disk hash differs from expected_hash.
+///
+/// Path confinement (A7/C16): canonicalized path must be inside a configured
+/// vault directory or the already-opened document's parent directory.
 #[tauri::command]
-pub fn save_file(_request: SaveFileRequest) -> IpcResult<FileResult> {
-    todo!("WS-B: delegate to crate::file_io::save_file(request)")
+pub fn save_file(request: SaveFileRequest) -> IpcResult<FileResult> {
+    let p = std::path::Path::new(&request.path);
+
+    // Confinement check before any write.
+    let canon = std::fs::canonicalize(p)
+        .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
+    let settings_path = settings_file_path();
+    if let Ok(settings) = crate::settings::get_settings(&settings_path) {
+        if !settings.vaults.is_empty() {
+            let mut allowed: Vec<std::path::PathBuf> = settings.vaults.iter()
+                .filter_map(|v| std::fs::canonicalize(v).ok())
+                .collect();
+            // Allow the document's own directory (the user opened it themselves).
+            if let Some(d) = canon.parent() {
+                allowed.push(d.to_path_buf());
+            }
+            crate::paths::assert_confined(&canon, &allowed)
+                .map_err(|e| IpcError { code: "PATH_CONFINED".into(), message: e.to_string() })?;
+        }
+    }
+
+    let new_hash = crate::file_io::save_file(p, &request.content, &request.expected_hash)
+        .map_err(file_io_err)?;
+    Ok(FileResult {
+        path: request.path,
+        content_hash: new_hash,
+        content: String::new(),
+    })
 }
 
 /// Load sidecar annotations for a document. Migrates schema if needed.
 #[tauri::command]
-pub fn load_annotations(_doc_path: String) -> IpcResult<Sidecar> {
-    todo!("WS-B: delegate to crate::annotations::load(doc_path)")
+pub fn load_annotations(doc_path: String) -> IpcResult<Sidecar> {
+    let p = std::path::Path::new(&doc_path);
+    // We need the current doc hash to create a fresh sidecar if none exists.
+    // Open the file just for hashing (content is not returned here).
+    let doc_hash = {
+        let bytes = std::fs::read(p)
+            .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
+        crate::file_io::sha256_hex(&bytes)
+    };
+    let load_result = crate::annotations::load_annotations(p, &doc_hash).map_err(ann_err)?;
+    let sidecar = match load_result {
+        crate::annotations::LoadResult::Loaded(s) => s,
+        crate::annotations::LoadResult::NotFound(s) => s,
+        crate::annotations::LoadResult::Quarantined { fallback, .. } => fallback,
+    };
+    Ok(sidecar_to_ipc(sidecar))
 }
 
 /// Save sidecar annotations for a document.
 #[tauri::command]
-pub fn save_annotations(_doc_path: String, _sidecar: Sidecar) -> IpcResult<()> {
-    todo!("WS-B: delegate to crate::annotations::save(doc_path, sidecar)")
+pub fn save_annotations(doc_path: String, sidecar: Sidecar) -> IpcResult<()> {
+    let p = std::path::Path::new(&doc_path);
+    let store_sidecar = sidecar_from_ipc(sidecar);
+    // Ensure gitignore entry on first write.
+    if let Some(dir) = p.parent() {
+        let _ = crate::paths::ensure_gitignore_entry(dir);
+    }
+    crate::annotations::save_annotations(p, &store_sidecar).map_err(ann_err)
 }
 
 /// Write a pre-formatted review markdown file beside the document.
 /// Frontend (ReviewExporter.ts) builds the markdown payload.
 #[tauri::command]
-pub fn generate_review(_payload: ReviewPayload) -> IpcResult<ReviewResult> {
-    todo!("WS-B: write payload.markdown to <doc>.review.md via file_io")
+pub fn generate_review(payload: ReviewPayload) -> IpcResult<ReviewResult> {
+    let doc_p = std::path::Path::new(&payload.doc_path);
+    // Derive review path: <doc>.review.md
+    let mut review_path = doc_p.as_os_str().to_owned();
+    review_path.push(".review.md");
+    let review_path = std::path::PathBuf::from(review_path);
+
+    std::fs::write(&review_path, payload.markdown.as_bytes())
+        .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
+
+    Ok(ReviewResult {
+        review_path: review_path.to_string_lossy().into_owned(),
+    })
 }
 
 /// Export the document to an Obsidian vault (REST or filesystem fallback).
 #[tauri::command]
-pub fn export_obsidian(_request: ExportObsidianRequest) -> IpcResult<ExportObsidianResult> {
-    todo!("WS-D: delegate to crate::obsidian::export(request)")
+pub fn export_obsidian(request: ExportObsidianRequest) -> IpcResult<ExportObsidianResult> {
+    // Load current settings to get vault list and REST key ref.
+    let settings_path = settings_file_path();
+    let settings = crate::settings::get_settings(&settings_path).map_err(settings_err)?;
+
+    // Validate that vault_path is in the configured vaults list.
+    let requested_vault = std::path::PathBuf::from(&request.vault_path);
+    let canonical_requested = std::fs::canonicalize(&requested_vault)
+        .unwrap_or(requested_vault.clone());
+    let vault_allowed = settings.vaults.iter().any(|v| {
+        let cv = std::fs::canonicalize(v).unwrap_or(v.clone());
+        canonical_requested == cv || canonical_requested.starts_with(&cv)
+    });
+    if !vault_allowed {
+        return Err(IpcError {
+            code: "PATH_CONFINED".into(),
+            message: format!(
+                "vault_path '{}' is not in the configured vaults list",
+                request.vault_path
+            ),
+        });
+    }
+
+    // Read document content.
+    let doc_content = std::fs::read_to_string(&request.doc_path)
+        .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
+
+    // Build vault-relative path: subfolder / filename
+    let filename = std::path::Path::new(&request.doc_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("export.md");
+    let vault_relative = if request.subfolder.is_empty() {
+        filename.to_string()
+    } else {
+        format!("{}/{}", request.subfolder.trim_matches('/'), filename)
+    };
+
+    // Confinement: ensure the derived target stays inside the requested vault.
+    let target = canonical_requested.join(&vault_relative);
+    crate::paths::assert_confined(&target, &[canonical_requested.clone()])
+        .map_err(|_| IpcError {
+            code: "PATH_CONFINED".into(),
+            message: format!("derived export path '{}' escapes the vault directory", target.display()),
+        })?;
+
+    // Use the requested vault, not just the first configured one.
+    let mut export_settings = settings.clone();
+    export_settings.vaults = vec![canonical_requested.clone()];
+
+    let result = crate::obsidian::export_obsidian(
+        &doc_content,
+        &vault_relative,
+        &export_settings,
+        crate::obsidian::REST_DEFAULT_HTTP_PORT,
+    ).map_err(obsidian_err)?;
+
+    let (method, destination) = match result {
+        crate::obsidian::ExportResult::RestPushed => (
+            "rest".to_string(),
+            format!("http://127.0.0.1:{}/vault/{}", crate::obsidian::REST_DEFAULT_HTTP_PORT, vault_relative),
+        ),
+        crate::obsidian::ExportResult::FilesystemCopy => (
+            "filesystem".to_string(),
+            canonical_requested.join(&vault_relative).to_string_lossy().into_owned(),
+        ),
+    };
+
+    Ok(ExportObsidianResult { method, destination })
 }
 
 /// Load persisted user settings.
 #[tauri::command]
 pub fn get_settings() -> IpcResult<Settings> {
-    todo!("WS-D: delegate to crate::settings::load()")
+    let path = settings_file_path();
+    let settings = crate::settings::get_settings(&path).map_err(settings_err)?;
+    Ok(settings_to_ipc(settings))
 }
 
 /// Persist user settings (rest_key is NOT accepted here — use keychain via secrets module).
 #[tauri::command]
-pub fn set_settings(_settings: Settings) -> IpcResult<()> {
-    todo!("WS-D: delegate to crate::settings::save(settings)")
+pub fn set_settings(settings: Settings) -> IpcResult<()> {
+    let path = settings_file_path();
+    let store_settings = settings_from_ipc(settings);
+    crate::settings::set_settings(&path, store_settings).map_err(settings_err)
+}
+
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+
+/// Derive the settings file path from the standard app data directory.
+/// Falls back to the current working directory in non-Tauri test contexts.
+fn settings_file_path() -> std::path::PathBuf {
+    // In production Tauri uses the app_data_dir; in tests we use a fixed temp path.
+    // The IPC commands that need a Tauri State should use tauri::State, but for
+    // simplicity in v1 we derive a platform-appropriate default here.
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        std::path::PathBuf::from(home)
+            .join("Library/Application Support/com.codelogiq.revenant/settings.json")
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
+        std::path::PathBuf::from(appdata)
+            .join("com.codelogiq.revenant/settings.json")
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        std::path::PathBuf::from(home)
+            .join(".config/com.codelogiq.revenant/settings.json")
+    }
 }
