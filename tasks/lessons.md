@@ -131,3 +131,32 @@ under the real runtime — not just in unit tests — before declaring the round
 dependencies (fd-lock, keyring, etc.), or touches the Tauri plugin list, run
 `cargo tauri dev` and confirm the window opens before marking the round complete.
 Flag this explicitly in the review so it is not silently deferred.
+
+## The launch smoke caught what 88 green tests missed (2026-06-14)
+
+WS-1 "made re-anchoring real" and shipped with 88 passing Rust tests — yet the
+first real annotation (`"Randy"`, a word inside a longer line) **detached** on
+reload. Cause: `probe_verbatim` matched **whole-line equality** (`lines[i] ==
+quoted`), and *every* unit + integration test used whole-line quoted text
+(`"line 2"`, `"match text"`). Real selections are sub-line words/phrases →
+whole-line match fails → fuzzy scores the short needle against the long line
+below 0.75 → detached. Fixed by matching single-line selections via **substring
+containment**.
+
+**Rules:**
+- **Test fixtures must mirror real data.** Re-anchoring tests used whole-line
+  selections; the common case (a word in a line) was never exercised. When a
+  feature's tests all share an unrealistic shape, that shape is an untested gap.
+- A green test matrix is not a substitute for the launch smoke on a real doc —
+  this round it caught the re-anchor sub-line bug, the open-transition start
+  flash, and two Mermaid rendering bugs, none visible to CI.
+- **Sanitize Mermaid/SVG with DOMPurify's built-in profiles**
+  (`USE_PROFILES: { svg: true, svgFilters: true, html: true }` + explicit
+  `<style>`/`<foreignObject>`), not a hand-rolled tag/attr allowlist — a partial
+  list silently strips the `<style>` theming (→ black nodes) and `foreignObject`
+  labels. Keep that permissive config **scoped to Mermaid output only**; general
+  markdown stays on the stricter config so a doc can't inject CSS/HTML.
+- Mermaid bakes theme colors into the SVG at render time, so a cached diagram
+  keeps its theme. Re-render on `<html data-theme>` change (MutationObserver) to
+  follow light/dark; the stock 'dark' node fill (#1f2020) needs `mainBkg` lifted
+  off the app's dark card for contrast.
