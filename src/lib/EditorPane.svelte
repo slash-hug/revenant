@@ -396,12 +396,12 @@
           '.cm-seal-active .s-ring': { opacity: '1' },
           '.cm-seal-active .s-drop': { fill: 'var(--seal-on)', opacity: '1' },
           '.cm-annotation-wash': {
-            // Bottom-weighted ink brush (a real CM6 span, so a gradient is allowed
-            // here — unlike the preview's Highlight-API wash). Ink fills the lower
-            // ~45% of the line behind the text, fading to clear above.
-            backgroundImage:
-              'linear-gradient(to bottom, transparent 55%, color-mix(in srgb, var(--seal-ink, #4A453B) 30%, transparent) 55%)',
-            borderRadius: '1px',
+            // Source view: a clean teal underline in the annotation color (a brush
+            // stroke isn't practical inside CodeMirror; the preview carries that).
+            textDecorationLine: 'underline',
+            textDecorationColor: 'var(--ann-underline)',
+            textDecorationThickness: '2px',
+            textUnderlineOffset: '3px',
           },
         }),
       ],

@@ -129,6 +129,8 @@
   /* Seal / annotation marker (light: sumi-ink brown) */
   --seal-ink: #4A453B;
   --seal-on: #FFFFFF;
+  /* Annotation brush underline — muted teal-cyan (distinct from accent/success). */
+  --ann-underline: #3C8893;
 }
 
 /* ============ DARK · GRAPHITE ============ */
@@ -186,6 +188,8 @@
   /* Seal / annotation marker (dark: warm ash) */
   --seal-ink: #C2BBAA;
   --seal-on: #232427;
+  /* Annotation brush underline — lifted teal-cyan for contrast on Graphite. */
+  --ann-underline: #5FB6C4;
 }
 
 @media (prefers-reduced-motion: reduce) {

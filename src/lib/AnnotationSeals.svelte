@@ -234,15 +234,21 @@
   });
 </script>
 
-<!-- Ink wash layer — gradient rects behind the prose (z-index below .prose).
-     The Highlight API can't do gradients, so the brush stroke is drawn here. -->
+<!-- Ink brush underline — one SVG stroke per line-fragment of the span, drawn just
+     below the words in the layer behind the prose. A hand-inked, tapered stroke
+     (not a box); active = full, hover = faint. -->
 <div class="wash-layer" aria-hidden="true">
   {#each washRects as w (w.left + ':' + w.top + ':' + w.active)}
-    <div
-      class="wash-rect"
-      class:wash-rect--active={w.active}
-      style="left: {w.left}px; top: {w.top}px; width: {w.width}px; height: {w.height}px;"
-    ></div>
+    <svg
+      class="brush"
+      class:brush--active={w.active}
+      style="left: {w.left}px; top: {w.top + w.height - 5}px; width: {w.width}px;"
+      viewBox="0 0 110 11"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <path d="M2 6 C 22 2, 46 2.4, 60 4 C 78 6, 92 5, 108 4.2 C 92 8.4, 60 9.2, 36 8 C 20 7.2, 8 7.6, 2 6 Z" />
+    </svg>
   {/each}
 </div>
 
@@ -306,25 +312,14 @@
     overflow: visible;
     z-index: 0;
   }
-  .wash-rect {
+  .brush {
     position: absolute;
+    height: 10px;
     pointer-events: none;
-    border-radius: 1px;
-    /* Faint (hover) brush: ink fills the lower part of the line, fading up. */
-    background: linear-gradient(
-      to bottom,
-      transparent 52%,
-      color-mix(in srgb, var(--seal-ink, #4A453B) 16%, transparent) 52%
-    );
+    overflow: visible;
   }
-  .wash-rect--active {
-    /* Full (active) brush. */
-    background: linear-gradient(
-      to bottom,
-      transparent 46%,
-      color-mix(in srgb, var(--seal-ink, #4A453B) 32%, transparent) 46%
-    );
-  }
+  .brush path { fill: var(--ann-underline, #3C8893); opacity: 0.42; } /* hover */
+  .brush--active path { opacity: 0.92; }                              /* active */
 
   .seal {
     position: absolute;
