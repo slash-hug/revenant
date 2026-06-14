@@ -44,6 +44,7 @@
   } from './annotationHighlight';
   import { annotationsStore } from './stores/annotations';
   import { resolveBlock } from './annotationResolve';
+  import { nearestLineIndex } from './scrollSync';
 
   export let content: string = '';
   export let scrollLine: number = 1;
@@ -137,6 +138,7 @@
     await tick();
     await hydrateDynamicBlocks();
     emitBlockMap();
+    rebuildScrollIndex(); // sorted line→block index for binary-search scroll-sync (#3)
     // Recompute seal positions after render (D2/D10: stays on afterUpdate).
     triggerSealRecompute();
   });
@@ -370,6 +372,7 @@
   onDestroy(() => {
     resizeObserver?.disconnect();
     resizeObserver = null;
+    if (scrollSyncRaf) cancelAnimationFrame(scrollSyncRaf);
     unsubFocus();
     clearHighlights();
     clearFocus();
@@ -401,33 +404,40 @@
     syncDegraded = lineCount > LARGE_FILE_THRESHOLD;
   }
 
+  // Parallel sorted arrays (lines + elements), rebuilt once per render
+  // (rebuildScrollIndex) so scroll-sync is a binary search instead of an
+  // O(blocks) linear scan on every editor scroll/cursor move (perf #3).
+  let scrollLines: number[] = [];
+  let scrollEls: HTMLElement[] = [];
+  let scrollSyncRaf = 0;
+  let pendingScrollLine = 0;
+
+  function rebuildScrollIndex() {
+    if (!previewEl) { scrollLines = []; scrollEls = []; return; }
+    const sorted = Array.from(previewEl.querySelectorAll<HTMLElement>('[data-source-line]'))
+      .map((el) => ({ line: parseInt(el.dataset.sourceLine ?? '0', 10), el }))
+      .filter((b) => b.line > 0)
+      .sort((a, b) => a.line - b.line);
+    scrollLines = sorted.map((b) => b.line);
+    scrollEls = sorted.map((b) => b.el);
+  }
+
+  // rAF-throttle the sync: editor scroll fires scrollLine changes continuously, so
+  // coalesce to one scrollIntoView per frame (perf #3).
   $: if (previewEl && scrollLine > 0 && !syncDegraded) {
-    syncScrollToLine(scrollLine);
+    pendingScrollLine = scrollLine;
+    if (!scrollSyncRaf) {
+      scrollSyncRaf = requestAnimationFrame(() => {
+        scrollSyncRaf = 0;
+        syncScrollToLine(pendingScrollLine);
+      });
+    }
   }
 
   function syncScrollToLine(line: number) {
     if (!previewEl) return;
-    // Find the block closest to the target line.
-    const blocks = Array.from(
-      previewEl.querySelectorAll<HTMLElement>('[data-source-line]')
-    );
-    if (blocks.length === 0) return;
-
-    let best: HTMLElement | null = null;
-    let bestDist = Infinity;
-
-    for (const el of blocks) {
-      const elLine = parseInt(el.dataset.sourceLine ?? '0', 10);
-      const dist = Math.abs(elLine - line);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = el;
-      }
-    }
-
-    if (best) {
-      best.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }
+    const idx = nearestLineIndex(scrollLines, line);
+    if (idx >= 0) scrollEls[idx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
   // -------------------------------------------------------------------------
