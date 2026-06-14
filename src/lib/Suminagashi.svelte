@@ -79,7 +79,12 @@
   });
 
   async function run() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    // Render at the native device-pixel-ratio so the snapshot shown on the canvas
+    // is exactly as crisp as the live DOM underneath — otherwise the hard cut
+    // "pops" as the page sharpens by the cap's worth of resolution. The per-frame
+    // fluid sim runs at its own fixed internal resolution (simRes/dyeRes), so this
+    // only enlarges the final display blit. Capped at 2 to bound cost on 3x panels.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = window.innerWidth, h = window.innerHeight;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
