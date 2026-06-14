@@ -50,6 +50,15 @@
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   }
 
+  /** Resolve after `n` animation frames (lets the DOM lay out and paint). */
+  function nextPaint(n = 1): Promise<void> {
+    return new Promise((resolve) => {
+      const tick = (left: number) =>
+        left <= 0 ? resolve() : requestAnimationFrame(() => tick(left - 1));
+      tick(n);
+    });
+  }
+
   function finish() {
     if (raf) cancelAnimationFrame(raf);
     if (backstop) clearTimeout(backstop);
@@ -101,9 +110,12 @@
     const wsEl = document.querySelector('.ws') as HTMLElement | null;
     let docSource: TexImageSource | null = null;
 
-    // Let the just-opened workspace lay out + paint before capturing it.
+    // Let the just-opened workspace fully lay out + paint before capturing it.
+    // This matters for a clean hand-off: the snapshot must match the FINAL live
+    // layout, or the end cut visibly settles (the preview's prose reflows as
+    // Literata applies, drifting the lower lines).
     if (document.fonts?.ready) { try { await document.fonts.ready; } catch { /* ignore */ } }
-    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+    await nextPaint(4);
     if (!sim) return; // disposed/finished while awaiting
 
     const htmlToImageCapture = async (): Promise<TexImageSource | null> => {
@@ -154,17 +166,24 @@
     const aAng = Math.random() * Math.PI * 2;
     sim!.splat(cx, cy, Math.cos(aAng) * FORCE * 0.5, Math.sin(aAng) * FORCE * 0.5, cssColor('--text'), 0.009);
 
-    const SIM_MS = 760, FADE_MS = 560; // soft reveal, then a long dissolve to the crisp live DOM
+    // The snapshot is a faithful capture of the live render, so we DON'T cross-fade
+    // the canvas out over the live DOM — that overlaps two layers and ghosts
+    // wherever they aren't pixel-aligned. Instead the canvas stays fully opaque
+    // through the whole reveal, then we hard-cut to the live DOM (unmount). Because
+    // the pixels match, the cut is seamless.
+    const SIM_MS = 820;  // ink blooms + draws the page into focus
+    const HOLD_MS = 90;  // hold the fully-focused page a beat, then cut
     const start = performance.now();
     const frame = (now: number) => {
       if (!sim) return;
       const t = now - start;
       sim.step(0.016);
-      // strokes draw focus first; a global ramp brings any unreached areas in by the end.
-      const globalFocus = hold ? 0 : Math.max(0, Math.min(1, (t - SIM_MS * 0.58) / (SIM_MS * 0.42)));
-      const fade = hold ? 1 : t < SIM_MS ? 1 : Math.max(0, 1 - (t - SIM_MS) / FADE_MS);
-      sim.render(fade, globalFocus, 0.8);
-      if (!hold && t > SIM_MS + FADE_MS) { finish(); return; }
+      // Strokes draw focus first; a global ramp brings any unreached areas in by SIM_MS.
+      const globalFocus = hold ? 0 : Math.max(0, Math.min(1, (t - SIM_MS * 0.5) / (SIM_MS * 0.5)));
+      // Ink blooms, then trails off so the page is clean by the time it's focused.
+      const ink = hold ? 0.85 : 0.85 * (1 - Math.max(0, Math.min(1, (t - SIM_MS * 0.45) / (SIM_MS * 0.5))));
+      sim.render(1, globalFocus, ink); // fade=1: canvas opaque until the hard cut
+      if (!hold && t > SIM_MS + HOLD_MS) { finish(); return; }
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
