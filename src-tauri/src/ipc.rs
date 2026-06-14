@@ -644,14 +644,25 @@ pub fn export_obsidian(request: ExportObsidianRequest) -> IpcResult<ExportObsidi
     let settings_path = settings_file_path();
     let settings = crate::settings::get_settings(&settings_path).map_err(settings_err)?;
 
-    // Validate that vault_path is in the configured vaults list.
+    // Validate that vault_path is in the configured vaults list. This fails
+    // CLOSED (like save_file): if the requested vault cannot be canonicalized we
+    // reject, because comparing a non-canonical path lets `..`/symlink variants
+    // slip the starts_with guard (security #12).
     let requested_vault = std::path::PathBuf::from(&request.vault_path);
-    let canonical_requested = std::fs::canonicalize(&requested_vault)
-        .unwrap_or(requested_vault.clone());
-    let vault_allowed = settings.vaults.iter().any(|v| {
-        let cv = std::fs::canonicalize(v).unwrap_or(v.clone());
-        canonical_requested == cv || canonical_requested.starts_with(&cv)
-    });
+    let canonical_requested = std::fs::canonicalize(&requested_vault).map_err(|e| IpcError {
+        code: "PATH_CONFINED".into(),
+        message: format!("vault_path '{}' could not be resolved: {e}", request.vault_path),
+    })?;
+    // Allowed vaults are only those that themselves canonicalize — we never
+    // compare against a non-canonical configured path.
+    let allowed_vaults: Vec<std::path::PathBuf> = settings
+        .vaults
+        .iter()
+        .filter_map(|v| std::fs::canonicalize(v).ok())
+        .collect();
+    let vault_allowed = allowed_vaults
+        .iter()
+        .any(|cv| canonical_requested == *cv || canonical_requested.starts_with(cv));
     if !vault_allowed {
         return Err(IpcError {
             code: "PATH_CONFINED".into(),
@@ -676,6 +687,16 @@ pub fn export_obsidian(request: ExportObsidianRequest) -> IpcResult<ExportObsidi
     } else {
         format!("{}/{}", request.subfolder.trim_matches('/'), filename)
     };
+
+    // Reject path-traversal in the derived target: a `..` component in the
+    // subfolder would otherwise satisfy the lexical starts_with check below while
+    // escaping the vault on disk (security #12).
+    if crate::paths::has_parent_traversal(std::path::Path::new(&vault_relative)) {
+        return Err(IpcError {
+            code: "PATH_CONFINED".into(),
+            message: format!("export path '{vault_relative}' contains a parent-directory traversal"),
+        });
+    }
 
     // Confinement: ensure the derived target stays inside the requested vault.
     let target = canonical_requested.join(&vault_relative);

@@ -80,10 +80,14 @@ const PURIFY_CONFIG = {
     'a', 'img',
     'table', 'thead', 'tbody', 'tr', 'th', 'td',
     'div', 'span',
-    // SVG subset needed for Mermaid output
+    // SVG subset for raw SVG embedded in document markdown (Mermaid output is
+    // sanitized separately with MERMAID_PURIFY_CONFIG). `foreignObject` is
+    // deliberately EXCLUDED here — it embeds HTML-namespace content inside SVG and
+    // is a classic sanitizer-bypass surface with no use in plain document SVG
+    // (security #12). Mermaid's own config re-adds it for its HTML labels.
     'svg', 'g', 'path', 'text', 'rect', 'circle', 'line', 'polygon',
     'polyline', 'ellipse', 'use', 'defs', 'marker', 'clipPath',
-    'foreignObject', 'tspan',
+    'tspan',
   ],
   ALLOWED_ATTR: [
     'href', 'src', 'alt', 'title', 'class', 'id',
@@ -95,7 +99,11 @@ const PURIFY_CONFIG = {
     // SVG attributes
     'viewBox', 'width', 'height', 'fill', 'stroke', 'stroke-width',
     'x', 'y', 'x1', 'y1', 'x2', 'y2', 'rx', 'ry', 'r', 'cx', 'cy',
-    'd', 'points', 'transform', 'style', 'xmlns',
+    // `style` is deliberately EXCLUDED — an inline style attribute on embedded
+    // raw HTML/SVG is a CSS-injection / UI-redress surface with no use in
+    // document markdown (markdown-it/hljs emit none). Mermaid keeps it via its
+    // own profile-based config (security #12).
+    'd', 'points', 'transform', 'xmlns',
     'marker-end', 'marker-start', 'clip-path', 'font-size', 'font-family',
     'text-anchor', 'dominant-baseline',
   ],
