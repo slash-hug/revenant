@@ -181,19 +181,41 @@ void main () {
   fragColor = sum;
 }`;
 
-// Display: a translucent ink wash composited OVER the live (blurring) workspace
-// beneath the canvas. Dye is premultiplied (RGB = color*amount, A = amount);
-// alpha is the ink density scaled by uStrength so even the densest ink stays
-// see-through — a layer of ink in front of the focusing document, not an opaque
-// cloud. The whole canvas is faded out via CSS to "arrive" in the doc.
-const DISPLAY = F_HEADER + `
+// Coverage: a monotonic record of where the ink has ever reached (max-accumulate
+// of the dye amount). Drives the focus reveal so the document stays sharp once a
+// stroke has passed, even after the ink there dissolves.
+const COVER = F_HEADER + `
+uniform sampler2D uPrev;
 uniform sampler2D uDye;
-uniform float uStrength;
 void main () {
+  float prev = texture(uPrev, vUv).r;
+  float cur = clamp(texture(uDye, vUv).a, 0.0, 1.0);
+  fragColor = vec4(max(prev, cur), 0.0, 0.0, 1.0);
+}`;
+
+// Display: render a SNAPSHOT of the document — blurred by default, sharp wherever
+// the ink coverage (or the end-of-transition global ramp) has reached — so the
+// strokes literally "draw" the page into focus. The live ink is painted on top
+// as a translucent wash that trails off, leaving the focused page behind. The
+// canvas is opaque (it IS the document) and cross-faded to the live DOM at the end.
+const DISPLAY = F_HEADER + `
+uniform sampler2D uDoc;
+uniform sampler2D uDocBlur;
+uniform sampler2D uCoverage;
+uniform sampler2D uDye;
+uniform float uGlobalFocus;
+uniform float uInk;
+void main () {
+  float cov = texture(uCoverage, vUv).r;
+  float focus = smoothstep(0.04, 0.55, max(cov, uGlobalFocus));
+  vec3 sharp = texture(uDoc, vUv).rgb;
+  vec3 soft = texture(uDocBlur, vUv).rgb;
+  vec3 docCol = mix(soft, sharp, focus);
   vec4 d = texture(uDye, vUv);
-  float ink = clamp(d.a, 0.0, 1.0) * uStrength;
-  vec3 inkColor = d.rgb / max(d.a, 0.0015);   // un-premultiply
-  fragColor = vec4(inkColor, ink);
+  float ink = clamp(d.a, 0.0, 1.0) * uInk;
+  vec3 inkColor = d.rgb / max(d.a, 0.0015);
+  vec3 col = mix(docCol, inkColor, ink);
+  fragColor = vec4(col, 1.0);
 }`;
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
@@ -247,6 +269,9 @@ export class FluidSim {
   private divergence!: FBO;
   private curlFbo!: FBO;
   private pressure!: DoubleFBO;
+  private coverage!: DoubleFBO;
+  private docTex: WebGLTexture | null = null;
+  private docBlur: DoubleFBO | null = null;
   private opts: Required<FluidOptions>;
   private texHalf: number;
 
@@ -284,7 +309,7 @@ export class FluidSim {
       splat: mk(SPLAT), advection: mk(ADVECTION), divergence: mk(DIVERGENCE),
       curl: mk(CURL), vorticity: mk(VORTICITY), pressure: mk(PRESSURE),
       gradient: mk(GRADIENT_SUBTRACT), clear: mk(CLEAR), display: mk(DISPLAY),
-      blur: mk(BLUR),
+      blur: mk(BLUR), cover: mk(COVER),
     };
 
     this.filter = linear ? gl.LINEAR : gl.NEAREST;
@@ -342,6 +367,46 @@ export class FluidSim {
     this.divergence = this.createFBO(simW, simH, r, gl.RED, t);
     this.curlFbo = this.createFBO(simW, simH, r, gl.RED, t);
     this.pressure = this.createDouble(simW, simH, r, gl.RED, t);
+    this.coverage = this.createDouble(dyeW, dyeH, r, gl.RED, t);
+  }
+
+  /**
+   * Provide the document snapshot the transition reveals: upload it as the sharp
+   * texture and build a blurred copy. Call once before stepping.
+   */
+  setDocument(source: TexImageSource, w: number, h: number, blurRadius = 7) {
+    const gl = this.gl;
+    if (this.docTex) gl.deleteTexture(this.docTex);
+    this.docTex = gl.createTexture()!;
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.docTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); // match the fluid's bottom-left origin
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+
+    this.docBlur = this.createDouble(w, h, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE);
+    const B = this.programs.blur;
+    B.bind();
+    const passes = 7;
+    for (let i = 0; i < passes; i++) {
+      // first horizontal pass reads the sharp docTex; later passes ping-pong.
+      if (i === 0) {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.docTex);
+        gl.uniform1i(B.uniforms['uTex'], 0);
+      } else {
+        gl.uniform1i(B.uniforms['uTex'], this.docBlur.read.attach(0));
+      }
+      gl.uniform2f(B.uniforms['dir'], blurRadius / w, 0);
+      this.blit(this.docBlur.write); this.docBlur.swap();
+      gl.uniform1i(B.uniforms['uTex'], this.docBlur.read.attach(0));
+      gl.uniform2f(B.uniforms['dir'], 0, blurRadius / h);
+      this.blit(this.docBlur.write); this.docBlur.swap();
+    }
   }
 
   private blit(target: FBO | null) {
@@ -433,6 +498,13 @@ export class FluidSim {
     // Diffuse the dye so the ink bleeds and feathers instead of keeping hard
     // advection fronts (the "opaque cloud cutout" look).
     this.blurDye(this.opts.dyeDiffuse);
+
+    // Accumulate monotonic ink coverage for the focus reveal.
+    const C = this.programs.cover;
+    C.bind();
+    gl.uniform1i(C.uniforms['uPrev'], this.coverage.read.attach(0));
+    gl.uniform1i(C.uniforms['uDye'], this.dye.read.attach(1));
+    this.blit(this.coverage.write); this.coverage.swap();
   }
 
   private blurDye(radius: number) {
@@ -448,17 +520,28 @@ export class FluidSim {
     this.blit(this.dye.write); this.dye.swap();
   }
 
+  /** True once a document snapshot has been provided. */
+  get hasDocument() { return !!this.docTex && !!this.docBlur; }
+
   /**
-   * Composite the translucent ink over the transparent canvas (workspace shows
-   * through). strength = ink opacity ceiling (0..1); fade = global CSS opacity
-   * (1 → 0 dissolves the whole overlay).
+   * Render the document snapshot — blurred, sharpened along the ink coverage and
+   * the global-focus ramp — with the live ink painted on top.
+   * globalFocus: 0..1 end ramp that brings any unreached areas into focus;
+   * ink: opacity of the visible ink strokes; fade: canvas CSS opacity.
    */
-  render(fade: number, strength = 0.6) {
+  render(fade: number, globalFocus: number, ink: number) {
     const gl = this.gl;
+    if (!this.docTex || !this.docBlur) { this.canvas.style.opacity = String(fade); return; }
     const D = this.programs.display;
     D.bind();
-    gl.uniform1i(D.uniforms['uDye'], this.dye.read.attach(0));
-    gl.uniform1f(D.uniforms['uStrength'], strength);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.docTex);
+    gl.uniform1i(D.uniforms['uDoc'], 0);
+    gl.uniform1i(D.uniforms['uDocBlur'], this.docBlur.read.attach(1));
+    gl.uniform1i(D.uniforms['uCoverage'], this.coverage.read.attach(2));
+    gl.uniform1i(D.uniforms['uDye'], this.dye.read.attach(3));
+    gl.uniform1f(D.uniforms['uGlobalFocus'], globalFocus);
+    gl.uniform1f(D.uniforms['uInk'], ink);
     this.blit(null);
     this.canvas.style.opacity = String(fade);
   }

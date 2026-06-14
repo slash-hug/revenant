@@ -325,7 +325,7 @@
       </div>
     </div>
   {:else}
-    <div class="ws" class:entering={bloom}>
+    <div class="ws">
       <Toolbar
         {viewMode}
         on:viewMode={(e) => (viewMode = e.detail.mode)}
@@ -510,22 +510,6 @@
 
   /* ============ Workspace ============ */
   .ws { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-
-  /* On open, the document arrives out of focus and racks into focus in sync
-     with the ink-dissolution overlay (which renders sharp, on top). */
-  .ws.entering {
-    animation: ws-arrive 1.15s var(--ease-out) both;
-    transform-origin: center 42%;
-    will-change: filter, opacity, transform;
-  }
-  @keyframes ws-arrive {
-    from { filter: blur(9px); opacity: 0.86; transform: scale(1.008); }
-    55%  { opacity: 1; }
-    to   { filter: blur(0); opacity: 1; transform: none; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .ws.entering { animation: none; }
-  }
 
   .ws-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
 

@@ -10,6 +10,7 @@
    */
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
   import { FluidSim } from './fx/fluid';
+  import { toCanvas } from 'html-to-image';
 
   /** Preview mode: keep simulating, no fade / no `done`. */
   export let hold = false;
@@ -35,6 +36,9 @@
     const m = v.match(/(\d+\.?\d*)/g);
     return m ? [(+m[0]) / 255, (+m[1]) / 255, (+m[2]) / 255] : [0, 0, 0];
   }
+  function cssRaw(name: string): string {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
 
   function finish() {
     if (raf) cancelAnimationFrame(raf);
@@ -46,8 +50,8 @@
 
   onMount(() => {
     if (reduce && !hold) { finish(); return; }
-    run();
-    if (!hold) backstop = setTimeout(finish, 1500);
+    void run();
+    if (!hold) backstop = setTimeout(finish, 3200); // generous: snapshot latency + transition
   });
   onDestroy(() => {
     if (raf) cancelAnimationFrame(raf);
@@ -55,20 +59,14 @@
     sim?.dispose();
   });
 
-  function run() {
+  async function run() {
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     const w = window.innerWidth, h = window.innerHeight;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
 
-    // Blend the ink INTO the document beneath: multiply stains the light page,
-    // screen makes the ink glow into the dark one.
-    const dark = document.documentElement.dataset.theme === 'dark';
-    canvas.style.mixBlendMode = dark ? 'screen' : 'multiply';
-
-    // Randomize how the ink dissolves so no two opens look quite the same.
-    const densityDissipation = 0.45 + Math.random() * 0.55; // 0.45–1.0
-    const velocityDissipation = 0.88 + Math.random() * 0.28; // 0.88–1.16
+    const densityDissipation = 0.5 + Math.random() * 0.4;
+    const velocityDissipation = 0.9 + Math.random() * 0.25;
     try {
       sim = new FluidSim(canvas, {
         simRes: 160, dyeRes: 640, curl: 44, pressureIters: 20,
@@ -79,40 +77,50 @@
       return;
     }
 
+    // Snapshot the freshly-opened workspace — the transition reveals THIS, sharp,
+    // along the ink's path. The fluid canvas is a sibling, so it isn't captured.
+    const wsEl = document.querySelector('.ws') as HTMLElement | null;
+    let docCanvas: HTMLCanvasElement | null = null;
+    if (wsEl) {
+      try {
+        docCanvas = await toCanvas(wsEl, { pixelRatio: dpr, backgroundColor: cssRaw('--bg') || undefined, cacheBust: false });
+      } catch { docCanvas = null; }
+    }
+    if (!sim) return; // disposed/finished while awaiting the snapshot
+    if (!docCanvas) { finish(); return; }
+    sim.setDocument(docCanvas, canvas.width, canvas.height);
+
     const inks: RGB[] = [
-      cssColor('--text'),
-      cssColor('--accent'),
-      cssColor('--detached'),
-      cssColor('--success'),
-      cssColor('--text'),
-      cssColor('--accent'),
+      cssColor('--text'), cssColor('--accent'), cssColor('--detached'),
+      cssColor('--success'), cssColor('--text'), cssColor('--accent'),
     ];
 
-    // Seed a tight cluster of ink drops near the center, each flung in its own
-    // randomized direction so the brushstrokes feather out non-uniformly.
+    // Seed ink drops spread around the center, each flung in its own randomized
+    // direction so the brushstrokes feather out non-uniformly.
     const FORCE = 740;
     const cx = 0.5, cy = 0.46;
     inks.forEach((c) => {
       const pAng = Math.random() * Math.PI * 2;
-      const rad = 0.15 + 0.11 * Math.random(); // spread: 0.15–0.26 from center
+      const rad = 0.15 + 0.11 * Math.random();
       const x = cx + Math.cos(pAng) * rad;
       const y = cy + Math.sin(pAng) * rad * 0.85;
-      // each stroke flies a different direction + magnitude → no uniform swirl
       const vAng = Math.random() * Math.PI * 2;
       const vMag = FORCE * (0.55 + 0.75 * Math.random());
       sim!.splat(x, y, Math.cos(vAng) * vMag, Math.sin(vAng) * vMag, c, 0.0065);
     });
-    // one anchor drop near the heart of the bloom
     const aAng = Math.random() * Math.PI * 2;
     sim!.splat(cx, cy, Math.cos(aAng) * FORCE * 0.5, Math.sin(aAng) * FORCE * 0.5, cssColor('--text'), 0.009);
 
-    const SIM_MS = 770, FADE_MS = 330;
+    const SIM_MS = 950, FADE_MS = 260;
     const start = performance.now();
     const frame = (now: number) => {
+      if (!sim) return;
       const t = now - start;
-      sim!.step(0.016);
+      sim.step(0.016);
+      // strokes draw focus first; a global ramp brings any unreached areas in by the end.
+      const globalFocus = hold ? 0 : Math.max(0, Math.min(1, (t - SIM_MS * 0.58) / (SIM_MS * 0.42)));
       const fade = hold ? 1 : t < SIM_MS ? 1 : Math.max(0, 1 - (t - SIM_MS) / FADE_MS);
-      sim!.render(fade, 0.85); // ink blends (multiply/screen) into the doc; blur racks into focus
+      sim.render(fade, globalFocus, 0.8);
       if (!hold && t > SIM_MS + FADE_MS) { finish(); return; }
       raf = requestAnimationFrame(frame);
     };
