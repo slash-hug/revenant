@@ -60,6 +60,17 @@ pub fn assert_confined(path: &Path, allowed_dirs: &[PathBuf]) -> Result<(), Path
     Err(PathError::Confined(path.to_path_buf()))
 }
 
+/// True if `rel` contains a parent-directory (`..`) component.
+///
+/// Used to reject path-traversal in a user-supplied export subfolder *before* it
+/// is joined onto a vault directory: `assert_confined` is a lexical
+/// `starts_with` check, so `vault/../escape` would otherwise satisfy it (the
+/// vault's own components are a prefix) while escaping the vault on disk.
+pub fn has_parent_traversal(rel: &Path) -> bool {
+    rel.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
 /// Check that `path` has a `.md` extension.
 pub fn assert_markdown(path: &Path) -> Result<(), PathError> {
     match path.extension().and_then(|e| e.to_str()) {
@@ -193,6 +204,26 @@ mod tests {
         let allowed = vec![PathBuf::from("/home/user/docs")];
         let path = PathBuf::from("/home/other/file.md");
         assert!(assert_confined(&path, &allowed).is_err());
+    }
+
+    #[test]
+    fn has_parent_traversal_detects_dotdot() {
+        assert!(has_parent_traversal(Path::new("../escape/file.md")));
+        assert!(has_parent_traversal(Path::new("sub/../../escape.md")));
+        assert!(!has_parent_traversal(Path::new("sub/folder/file.md")));
+        assert!(!has_parent_traversal(Path::new("file.md")));
+    }
+
+    #[test]
+    fn assert_confined_is_fooled_by_dotdot_so_callers_must_guard() {
+        // assert_confined is a lexical starts_with check: a `..` escape still
+        // shares the vault's leading components, so it passes here. This is
+        // exactly why export_obsidian pre-checks has_parent_traversal — this test
+        // documents the contract so the guard is never removed.
+        let vault = PathBuf::from("/home/user/vault");
+        let escaping = vault.join("../secret/file.md");
+        assert!(assert_confined(&escaping, &[vault]).is_ok());
+        assert!(has_parent_traversal(Path::new("../secret/file.md")));
     }
 
     #[test]
