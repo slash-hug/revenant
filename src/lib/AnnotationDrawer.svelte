@@ -5,8 +5,9 @@
    *  - C10 General Notes textarea persisted as general_notes in the sidecar.
    */
   import { annotationsStore } from './stores/annotations';
+  import { tick } from 'svelte';
   import { annotationFocus, focusAnnotation } from './stores/annotationFocus';
-  import { deleteAnnotationWithUndo } from './annotationActions';
+  import { deleteAnnotationWithUndo, saveAnnotationEdit } from './annotationActions';
   import type { Annotation } from './types/ipc';
 
   export let open: boolean = true;
@@ -25,6 +26,27 @@
   function handleDelete(e: MouseEvent, id: string) {
     e.stopPropagation();
     deleteAnnotationWithUndo(id);
+  }
+
+  // Inline body editing (UX #17). Empty saves are disallowed (saveAnnotationEdit).
+  let editingId: string | null = null;
+  let draft = '';
+  let editEl: HTMLTextAreaElement | undefined;
+
+  function startEdit(e: MouseEvent, ann: Annotation) {
+    e.stopPropagation();
+    editingId = ann.id;
+    draft = ann.body;
+    tick().then(() => { editEl?.focus(); editEl?.select(); });
+  }
+  function cancelEdit() { editingId = null; }
+  function commitEdit() {
+    if (editingId && saveAnnotationEdit(editingId, draft)) editingId = null;
+  }
+  function handleEditKeydown(e: KeyboardEvent) {
+    e.stopPropagation(); // don't bubble to the card's Enter/Space navigate handler
+    if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+    else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commitEdit(); }
   }
 
   /** Allow keyboard activation of the card body (Enter / Space). */
@@ -100,7 +122,14 @@
                     <span class="badge badge-open">Anchored</span>
                   {/if}
                   <span class="spacer"></span>
-                  <button class="cmt-del" type="button" on:click={(e) => handleDelete(e, ann.id)} aria-label="Delete comment" title="Delete">
+                  {#if editingId !== ann.id}
+                    <button class="cmt-icon" type="button" on:click={(e) => startEdit(e, ann)} aria-label="Edit comment" title="Edit">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                      </svg>
+                    </button>
+                  {/if}
+                  <button class="cmt-icon cmt-del" type="button" on:click={(e) => handleDelete(e, ann.id)} aria-label="Delete comment" title="Delete">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                       <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12" />
                     </svg>
@@ -109,7 +138,23 @@
                 {#if ann.quoted_text}
                   <blockquote class="cmt-snippet">{ann.quoted_text}</blockquote>
                 {/if}
-                <p class="cmt-note">{ann.body}</p>
+                {#if editingId === ann.id}
+                  <textarea
+                    bind:this={editEl}
+                    class="cmt-edit-field"
+                    bind:value={draft}
+                    rows="3"
+                    aria-label="Edit comment"
+                    on:click|stopPropagation
+                    on:keydown={handleEditKeydown}
+                  ></textarea>
+                  <div class="cmt-edit-actions">
+                    <button class="edit-cancel" type="button" on:click|stopPropagation={cancelEdit}>Cancel</button>
+                    <button class="edit-save" type="button" disabled={!draft.trim()} on:click|stopPropagation={commitEdit}>Save</button>
+                  </div>
+                {:else}
+                  <p class="cmt-note">{ann.body}</p>
+                {/if}
               </li>
             {/each}
           </ul>
@@ -131,7 +176,14 @@
                   <span class="chip chip-detached">{anchorLabel(ann)}</span>
                   <span class="badge badge-detached">Anchor lost</span>
                   <span class="spacer"></span>
-                  <button class="cmt-del" type="button" on:click={(e) => handleDelete(e, ann.id)} aria-label="Delete comment" title="Delete">
+                  {#if editingId !== ann.id}
+                    <button class="cmt-icon" type="button" on:click={(e) => startEdit(e, ann)} aria-label="Edit comment" title="Edit">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                      </svg>
+                    </button>
+                  {/if}
+                  <button class="cmt-icon cmt-del" type="button" on:click={(e) => handleDelete(e, ann.id)} aria-label="Delete comment" title="Delete">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                       <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12" />
                     </svg>
@@ -140,7 +192,22 @@
                 {#if ann.quoted_text}
                   <blockquote class="cmt-snippet">{ann.quoted_text}</blockquote>
                 {/if}
-                <p class="cmt-note">{ann.body}</p>
+                {#if editingId === ann.id}
+                  <textarea
+                    bind:this={editEl}
+                    class="cmt-edit-field"
+                    bind:value={draft}
+                    rows="3"
+                    aria-label="Edit comment"
+                    on:keydown={handleEditKeydown}
+                  ></textarea>
+                  <div class="cmt-edit-actions">
+                    <button class="edit-cancel" type="button" on:click={cancelEdit}>Cancel</button>
+                    <button class="edit-save" type="button" disabled={!draft.trim()} on:click={commitEdit}>Save</button>
+                  </div>
+                {:else}
+                  <p class="cmt-note">{ann.body}</p>
+                {/if}
               </li>
             {/each}
           </ul>
@@ -290,7 +357,7 @@
     padding: 1px 7px;
   }
 
-  .cmt-del {
+  .cmt-icon {
     color: var(--text-faint);
     display: inline-flex;
     padding: 3px;
@@ -300,8 +367,40 @@
     cursor: pointer;
     transition: color var(--dur-fast), background var(--dur-fast);
   }
-  .cmt-del svg { width: 14px; height: 14px; }
+  .cmt-icon svg { width: 14px; height: 14px; }
+  .cmt-icon:hover { color: var(--text); background: var(--surface-2); }
   .cmt-del:hover { color: var(--danger-text); background: var(--danger-soft); }
+
+  .cmt-edit-field {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    line-height: var(--lh-snug);
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 8px 10px;
+    width: 100%;
+    resize: vertical;
+    min-height: 54px;
+  }
+  .cmt-edit-field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+  .cmt-edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+  .edit-cancel, .edit-save {
+    font: inherit;
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-medium);
+    line-height: 1;
+    cursor: pointer;
+    padding: 5px 11px;
+    border-radius: var(--r-sm);
+    border: 1px solid transparent;
+  }
+  .edit-cancel { background: transparent; color: var(--text-muted); border-color: var(--border); }
+  .edit-cancel:hover { color: var(--text); border-color: var(--border-strong); }
+  .edit-save { background: var(--accent); color: var(--text-on-accent); }
+  .edit-save:hover:not(:disabled) { background: var(--accent-hover); }
+  .edit-save:disabled { opacity: .5; cursor: default; }
 
   .cmt-snippet {
     margin: 0;

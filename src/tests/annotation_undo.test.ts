@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
 import { annotationsStore } from '../lib/stores/annotations';
+import { saveAnnotationEdit } from '../lib/annotationActions';
 import { toast } from '../lib/stores/toast';
 
 function seed() {
@@ -42,6 +43,24 @@ describe('annotationsStore delete/restore (undo)', () => {
     annotationsStore.restoreAnnotation(removed);
     annotationsStore.restoreAnnotation(removed); // second undo must not duplicate
     expect(get(annotationsStore).annotations.filter((a) => a.id === ids[0])).toHaveLength(1);
+  });
+});
+
+describe('saveAnnotationEdit (UX #17)', () => {
+  beforeEach(seed);
+
+  it('updates the body for a non-empty edit and returns true', () => {
+    const id = get(annotationsStore).annotations[0].id;
+    expect(saveAnnotationEdit(id, '  revised text  ')).toBe(true);
+    const ann = get(annotationsStore).annotations.find((a) => a.id === id);
+    expect(ann?.body).toBe('revised text'); // trimmed
+  });
+
+  it('rejects an empty / whitespace-only edit and leaves the body unchanged', () => {
+    const id = get(annotationsStore).annotations[0].id;
+    const original = get(annotationsStore).annotations[0].body;
+    expect(saveAnnotationEdit(id, '   ')).toBe(false);
+    expect(get(annotationsStore).annotations.find((a) => a.id === id)?.body).toBe(original);
   });
 });
 

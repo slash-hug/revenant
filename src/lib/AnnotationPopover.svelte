@@ -28,6 +28,7 @@
   import type { Annotation } from './types/ipc';
   import { clearFocus } from './stores/annotationFocus';
   import type { AnchorRect } from './stores/annotationFocus';
+  import { saveAnnotationEdit } from './annotationActions';
 
   /** The annotation to display. If null, the popover is hidden. */
   export let annotation: Annotation | null = null;
@@ -53,6 +54,34 @@
   let top = 0;
   let placement: 'below' | 'above' = 'below';
   let caretLeft = 24; // px from the popover's left edge — points at the span center
+
+  // Inline body editing (UX #17). Disallows empty saves (see saveAnnotationEdit).
+  let editing = false;
+  let editingId: string | null = null;
+  let draft = '';
+  let editEl: HTMLTextAreaElement | undefined;
+
+  function startEdit(ann: Annotation) {
+    draft = ann.body;
+    editing = true;
+    editingId = ann.id;
+    tick().then(() => { editEl?.focus(); editEl?.select(); computePlacement(); });
+  }
+  function cancelEdit() {
+    editing = false;
+    tick().then(computePlacement);
+  }
+  function commitEdit() {
+    if (!annotation) return;
+    if (saveAnnotationEdit(annotation.id, draft)) {
+      editing = false;
+      tick().then(computePlacement);
+    }
+  }
+  function handleEditKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelEdit(); }
+    else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commitEdit(); }
+  }
 
 
   const dispatch = createEventDispatcher<{ delete: { id: string } }>();
@@ -154,12 +183,15 @@
 
   // Recompute placement whenever the annotation or its anchor rect changes.
   $: if (annotation) {
+    // Switching to a different annotation exits any in-progress edit.
+    if (editing && annotation.id !== editingId) editing = false;
     // Attach outside-click listener (deferred first time).
     tick().then(() => {
       computePlacement();
       attachOutsideListener();
     });
   } else {
+    editing = false;
     detachOutsideListener();
   }
 
@@ -190,18 +222,32 @@
         <span class="badge badge-open">Anchored</span>
       {/if}
       <span class="spacer"></span>
+      {#if !editing}
         <button
-          class="pop-del"
+          class="pop-icon"
           type="button"
-          on:click={() => dispatch('delete', { id: annotation!.id })}
-          aria-label="Delete annotation"
-          title="Delete"
+          on:click={() => startEdit(annotation)}
+          aria-label="Edit comment"
+          title="Edit"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12" />
+            <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
           </svg>
         </button>
+      {/if}
+      <button
+        class="pop-icon pop-del"
+        type="button"
+        on:click={() => dispatch('delete', { id: annotation!.id })}
+        aria-label="Delete annotation"
+        title="Delete"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12" />
+        </svg>
+      </button>
     </div>
 
     <!-- Quoted snippet (italic Literata, ink-left-border) -->
@@ -209,8 +255,23 @@
       <blockquote class="pop-snippet">{annotation.quoted_text}</blockquote>
     {/if}
 
-    <!-- Comment body -->
-    <p class="pop-body">{annotation.body}</p>
+    <!-- Comment body — read or edit -->
+    {#if editing}
+      <textarea
+        bind:this={editEl}
+        class="pop-edit"
+        bind:value={draft}
+        rows="3"
+        aria-label="Edit comment"
+        on:keydown={handleEditKeydown}
+      ></textarea>
+      <div class="pop-edit-actions">
+        <button class="edit-cancel" type="button" on:click={cancelEdit}>Cancel</button>
+        <button class="edit-save" type="button" disabled={!draft.trim()} on:click={commitEdit}>Save</button>
+      </div>
+    {:else}
+      <p class="pop-body">{annotation.body}</p>
+    {/if}
   </div>
 {/if}
 
@@ -284,7 +345,7 @@
   .badge-open    { color: var(--success-text); background: var(--success-soft); }
   .badge-neutral { color: var(--text-muted);   background: var(--surface-2); }
 
-  .pop-del {
+  .pop-icon {
     color: var(--text-faint);
     display: inline-flex;
     padding: 3px;
@@ -295,8 +356,40 @@
     transition: color var(--dur-fast), background var(--dur-fast);
     flex: none;
   }
-  .pop-del svg { width: 14px; height: 14px; }
+  .pop-icon svg { width: 14px; height: 14px; }
+  .pop-icon:hover { color: var(--text); background: var(--surface-2); }
   .pop-del:hover { color: var(--danger-text); background: var(--danger-soft); }
+
+  .pop-edit {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    line-height: var(--lh-snug);
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 8px 10px;
+    width: 100%;
+    resize: vertical;
+    min-height: 56px;
+  }
+  .pop-edit:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+  .pop-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .edit-cancel, .edit-save {
+    font: inherit;
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-medium);
+    line-height: 1;
+    cursor: pointer;
+    padding: 5px 11px;
+    border-radius: var(--r-sm);
+    border: 1px solid transparent;
+  }
+  .edit-cancel { background: transparent; color: var(--text-muted); border-color: var(--border); }
+  .edit-cancel:hover { color: var(--text); border-color: var(--border-strong); }
+  .edit-save { background: var(--accent); color: var(--text-on-accent); }
+  .edit-save:hover:not(:disabled) { background: var(--accent-hover); }
+  .edit-save:disabled { opacity: .5; cursor: default; }
 
   .pop-snippet {
     margin: 0;
