@@ -14,6 +14,7 @@ use crate::secrets::{get_rest_key, SecretsError};
 use crate::settings::{Settings, SettingsError};
 use reqwest::blocking::Client;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 /// Default HTTP port for the Obsidian Local REST API plugin.
@@ -26,6 +27,20 @@ pub const REST_DEFAULT_HTTPS_PORT: u16 = 27124;
 
 /// Connection timeout for REST reachability probes.
 const PROBE_TIMEOUT_SECS: u64 = 3;
+
+/// A process-wide reqwest client, built once and reused (perf #4). The probe
+/// timeout bounds how long an unreachable Obsidian blocks before we fall back to
+/// a filesystem copy. Build is effectively infallible; on the off chance it
+/// fails we fall back to a default client (no custom timeout).
+fn rest_client() -> &'static Client {
+    static REST_CLIENT: OnceLock<Client> = OnceLock::new();
+    REST_CLIENT.get_or_init(|| {
+        Client::builder()
+            .timeout(Duration::from_secs(PROBE_TIMEOUT_SECS))
+            .build()
+            .unwrap_or_else(|_| Client::new())
+    })
+}
 
 /// Error type for Obsidian export operations.
 #[derive(Debug, thiserror::Error)]
@@ -203,10 +218,9 @@ pub fn rest_put(
     api_key: &str,
     port: u16,
 ) -> Result<(), ObsidianError> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(PROBE_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| ObsidianError::Http(e.to_string()))?;
+    // Reuse one Client across calls so TLS/connection-pool setup isn't rebuilt
+    // every export (perf #4).
+    let client = rest_client();
 
     // Encode the vault path segments safely.
     let encoded_path = vault_relative_path

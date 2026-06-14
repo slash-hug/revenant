@@ -638,8 +638,23 @@ pub fn generate_review(payload: ReviewPayload) -> IpcResult<ReviewResult> {
 }
 
 /// Export the document to an Obsidian vault (REST or filesystem fallback).
+///
+/// Async + `spawn_blocking`: the work (settings read, path canonicalize, REST/fs
+/// I/O) is blocking and can take up to the 3s REST probe timeout when Obsidian is
+/// unreachable. Running it off a command-worker thread keeps the command pool /
+/// UI responsive (perf #4).
 #[tauri::command]
-pub fn export_obsidian(request: ExportObsidianRequest) -> IpcResult<ExportObsidianResult> {
+pub async fn export_obsidian(request: ExportObsidianRequest) -> IpcResult<ExportObsidianResult> {
+    tauri::async_runtime::spawn_blocking(move || export_obsidian_blocking(request))
+        .await
+        .map_err(|e| IpcError {
+            code: "INTERNAL".into(),
+            message: format!("export task failed: {e}"),
+        })?
+}
+
+/// The blocking body of `export_obsidian` (runs on a blocking thread).
+fn export_obsidian_blocking(request: ExportObsidianRequest) -> IpcResult<ExportObsidianResult> {
     // Load current settings to get vault list and REST key ref.
     let settings_path = settings_file_path();
     let settings = crate::settings::get_settings(&settings_path).map_err(settings_err)?;
