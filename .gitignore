@@ -35,3 +35,4 @@ src-tauri/Microsoft.WebView2.FixedVersionRuntime.*/
 
 # Impeccable critique snapshots (local design-review cache)
 .impeccable/
+.superpowers/
