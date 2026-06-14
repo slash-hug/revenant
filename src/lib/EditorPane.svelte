@@ -220,15 +220,17 @@
       return buildGutterMarkers(view.state.doc, annotations, activeId);
     },
     domEventHandlers: {
-      click(view, line, event) {
-        const { annotations, activeId: _active } = view.state.field(annotationCmField);
-        // Find the annotation whose line_start maps to this gutter line.
-        const lineNum = view.state.doc.lineAt(line.from).number; // 1-indexed
-        const ann = annotations.find(
-          (a) =>
-            (a.status === 'anchored' || a.status === 'block_level') &&
-            a.line_start + 1 === lineNum,
-        );
+      click(view, line, _event) {
+        const { annotations } = view.state.field(annotationCmField);
+        // Match by the seal's RESOLVED line (the quoted-text line), the same way
+        // buildGutterMarkers places it — not the raw line_start, which can differ
+        // for preview-created anchors.
+        const clickedLine = view.state.doc.lineAt(line.from).number; // 1-indexed
+        const ann = annotations.find((a) => {
+          if (a.status !== 'anchored' && a.status !== 'block_level') return false;
+          const range = resolveAnnotationDocRange(view.state.doc, a);
+          return range != null && view.state.doc.lineAt(range.from).number === clickedLine;
+        });
         if (!ann) return false;
         // Just set focus. In split/preview view the PreviewPane measures the span
         // and anchors the popover (avoids a distracting jump from gutter→preview);
@@ -394,10 +396,12 @@
           '.cm-seal-active .s-ring': { opacity: '1' },
           '.cm-seal-active .s-drop': { fill: 'var(--seal-on)', opacity: '1' },
           '.cm-annotation-wash': {
-            textDecoration: 'underline',
-            textDecorationColor: 'color-mix(in srgb, var(--seal-ink, #4A453B) 34%, transparent)',
-            textDecorationThickness: '0.5em',
-            textUnderlineOffset: '-0.16em',
+            // Bottom-weighted ink brush (a real CM6 span, so a gradient is allowed
+            // here — unlike the preview's Highlight-API wash). Ink fills the lower
+            // ~45% of the line behind the text, fading to clear above.
+            backgroundImage:
+              'linear-gradient(to bottom, transparent 55%, color-mix(in srgb, var(--seal-ink, #4A453B) 30%, transparent) 55%)',
+            borderRadius: '1px',
           },
         }),
       ],

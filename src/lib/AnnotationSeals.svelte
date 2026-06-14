@@ -24,6 +24,7 @@
     hoverAnnotation,
   } from './stores/annotationFocus';
   import { resolveBlock } from './annotationResolve';
+  import { buildRange } from './annotationHighlight';
 
   /**
    * The scroll container element (.pv-scroll) — passed from PreviewPane.
@@ -161,6 +162,49 @@
     }
   }
 
+  // ── Inline ink wash (bottom-weighted brush, behind the text) ─────────────────
+  //
+  // The CSS Custom Highlight API can't paint a gradient, so the brush stroke is
+  // drawn as gradient rects positioned over the quoted span's client rects, in a
+  // layer BEHIND the prose (see .wash-layer z-index + .prose z-index in
+  // PreviewPane). Only the active (full) and hovered (faint) spans are painted —
+  // clean prose at rest. Recomputed reactively whenever focus or seal layout
+  // changes (same coordinate basis as the seals, so it scrolls with content).
+
+  interface WashRect { left: number; top: number; width: number; height: number; active: boolean; }
+
+  function rectsForAnnotation(id: string | null, active: boolean, sealList: SealEntry[]): WashRect[] {
+    if (!id || !scrollContainer) return [];
+    const entry = sealList.find((s) => s.annotation.id === id);
+    // block-level annotations use the full-block tint, not an inline wash.
+    if (!entry || entry.annotation.status === 'block_level' || !entry.annotation.quoted_text) return [];
+    const range = buildRange(entry.blockEl, entry.annotation.quoted_text);
+    if (!range) return [];
+    const cRect = scrollContainer.getBoundingClientRect();
+    const sTop = scrollContainer.scrollTop;
+    const sLeft = scrollContainer.scrollLeft;
+    return Array.from(range.getClientRects()).map((r) => ({
+      left: r.left - cRect.left + sLeft,
+      top: r.top - cRect.top + sTop,
+      width: r.width,
+      height: r.height,
+      active,
+    }));
+  }
+
+  // Recompute on focus change AND when seals re-layout (recompute() reassigns `seals`).
+  function buildWashRects(
+    focus: { activeId: string | null; hoverId: string | null },
+    sealList: SealEntry[],
+  ): WashRect[] {
+    const hoverId = focus.hoverId && focus.hoverId !== focus.activeId ? focus.hoverId : null;
+    return [
+      ...rectsForAnnotation(hoverId, false, sealList),
+      ...rectsForAnnotation(focus.activeId, true, sealList),
+    ];
+  }
+  $: washRects = buildWashRects($annotationFocus, seals);
+
   // ── Seal click/hover handlers ────────────────────────────────────────────
 
   function handleSealClick(e: MouseEvent, ann: Annotation) {
@@ -189,6 +233,18 @@
     seals = [];
   });
 </script>
+
+<!-- Ink wash layer — gradient rects behind the prose (z-index below .prose).
+     The Highlight API can't do gradients, so the brush stroke is drawn here. -->
+<div class="wash-layer" aria-hidden="true">
+  {#each washRects as w (w.left + ':' + w.top + ':' + w.active)}
+    <div
+      class="wash-rect"
+      class:wash-rect--active={w.active}
+      style="left: {w.left}px; top: {w.top}px; width: {w.width}px; height: {w.height}px;"
+    ></div>
+  {/each}
+</div>
 
 <!-- Seal markers — absolutely positioned relative to .pv-scroll -->
 <!-- Block tint (D6) is applied via a direct inline style on the resolved block
@@ -237,6 +293,37 @@
     pointer-events: none;
     overflow: visible;
     z-index: 2;
+  }
+
+  /* Wash sits BEHIND the prose text (PreviewPane gives .prose z-index: 1). */
+  .wash-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    overflow: visible;
+    z-index: 0;
+  }
+  .wash-rect {
+    position: absolute;
+    pointer-events: none;
+    border-radius: 1px;
+    /* Faint (hover) brush: ink fills the lower part of the line, fading up. */
+    background: linear-gradient(
+      to bottom,
+      transparent 52%,
+      color-mix(in srgb, var(--seal-ink, #4A453B) 16%, transparent) 52%
+    );
+  }
+  .wash-rect--active {
+    /* Full (active) brush. */
+    background: linear-gradient(
+      to bottom,
+      transparent 46%,
+      color-mix(in srgb, var(--seal-ink, #4A453B) 32%, transparent) 46%
+    );
   }
 
   .seal {

@@ -578,23 +578,6 @@
      relative to this scroll container (seals scroll with content). */
   .pv-scroll { overflow: auto; flex: 1; min-height: 0; position: relative; }
 
-  /* Inline ink wash painted by the CSS Custom Highlight API (annotationHighlight.ts).
-     ::highlight() is document-global, so these must be :global rules; it also only
-     accepts a limited property set (no gradients) — the brush-stroke read comes from
-     a translucent ink fill plus an ink underline on the exact quoted words.
-     active = full ink; hover = a faint preview. */
-  :global(::highlight(annotation-wash-active)) {
-    text-decoration-line: underline;
-    text-decoration-color: color-mix(in srgb, var(--seal-ink) 34%, transparent);
-    text-decoration-thickness: 0.5em;
-    text-underline-offset: -0.16em;
-  }
-  :global(::highlight(annotation-wash-hover)) {
-    text-decoration-line: underline;
-    text-decoration-color: color-mix(in srgb, var(--seal-ink) 18%, transparent);
-    text-decoration-thickness: 0.5em;
-    text-underline-offset: -0.16em;
-  }
 
   /* "+ Add comment" affordance at the selection (viewport-fixed; preview scrolls) */
   .add-comment-affordance { position: fixed; z-index: var(--z-pop); pointer-events: auto; }
@@ -648,6 +631,10 @@
     font-family: var(--font-prose);
     max-width: 760px;
     color: var(--text);
+    /* Sit above the wash layer (z-index: 0) and below the seals (z-index: 2) so the
+       ink brush paints behind the text (AnnotationSeals .wash-layer / .seals-layer). */
+    position: relative;
+    z-index: 1;
   }
 
   .pv-header { margin-bottom: 28px; }
