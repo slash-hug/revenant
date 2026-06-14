@@ -148,6 +148,37 @@
 
     if (!sim) return; // disposed/finished while awaiting the snapshot
     if (!docSource) { finish(); return; }
+
+    // The native WKWebView snapshot captures the full webview bounds, which on a
+    // decorated macOS window include the title-bar strip ABOVE the CSS layout
+    // viewport (the viewport is inset below the title bar). Left as-is, the
+    // shader squashes that taller image into the viewport, vertically compressing
+    // the page so the hand-off to the live DOM shifts. Crop the strip off the top
+    // so the texture maps 1:1 onto the live viewport.
+    //
+    // The inset is derived from the snapshot's own backing scale (its px per CSS
+    // px), so this stays correct even when the canvas DPR is capped below the
+    // real devicePixelRatio (e.g. on 3x panels).
+    if (docSource instanceof HTMLImageElement && w > 0 && h > 0) {
+      const backScale = docSource.naturalWidth / w; // snapshot device px per CSS px
+      const contentH = Math.round(h * backScale);    // snapshot px the viewport occupies
+      const insetTop = docSource.naturalHeight - contentH; // title-bar strip (snapshot px)
+      if (insetTop > 1) {
+        const cropped = document.createElement('canvas');
+        cropped.width = canvas.width;
+        cropped.height = canvas.height;
+        const ctx = cropped.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(
+            docSource,
+            0, insetTop, docSource.naturalWidth, contentH, // src: skip the top strip
+            0, 0, canvas.width, canvas.height,             // dst: fill the viewport-sized canvas
+          );
+          docSource = cropped;
+        }
+      }
+    }
+
     sim.setDocument(docSource, canvas.width, canvas.height);
 
     const inks: RGB[] = [
