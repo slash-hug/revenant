@@ -212,13 +212,13 @@
     const aAng = Math.random() * Math.PI * 2;
     sim!.splat(cx, cy, Math.cos(aAng) * FORCE * 0.5, Math.sin(aAng) * FORCE * 0.5, cssColor('--text'), 0.009);
 
-    // Reveal, then a short dissolve to the live DOM. The canvas stays fully opaque
-    // through the reveal; at the end it fades out while the snapshot simultaneously
-    // softens (endSoften), so the dissolving layer has no sharp edges to ghost or
-    // jump against the live DOM if the captured texture is off by a sub-pixel.
+    // Reveal, then a short crossfade to the live DOM. The canvas stays fully opaque
+    // through the reveal, then its opacity fades out. Because the snapshot is a
+    // pixel-aligned copy of the live render, the crossfade is invisible (a·img +
+    // (1−a)·img = img) — no ghost, no jump, no brightening.
     const SIM_MS = 820;  // ink blooms + draws the page into focus
     const HOLD_MS = 60;  // hold the focused page a beat
-    const CUT_MS = 150;  // soft dissolve to the live DOM
+    const CUT_MS = 150;  // crossfade to the live DOM
     const start = performance.now();
     const frame = (now: number) => {
       if (!sim) return;
@@ -230,8 +230,7 @@
       const ink = hold ? 0.85 : 0.85 * (1 - Math.max(0, Math.min(1, (t - SIM_MS * 0.45) / (SIM_MS * 0.5))));
       const cutT = Math.max(0, t - (SIM_MS + HOLD_MS));
       const fade = hold ? 1 : Math.max(0, 1 - cutT / CUT_MS);
-      const endSoften = hold ? 0 : Math.min(1, cutT / CUT_MS);
-      sim.render(fade, globalFocus, ink, endSoften);
+      sim.render(fade, globalFocus, ink);
       if (!hold && t > SIM_MS + HOLD_MS + CUT_MS) { finish(); return; }
       raf = requestAnimationFrame(frame);
     };
