@@ -108,7 +108,7 @@
       const t = now - start;
       sim!.step(0.016);
       const fade = hold ? 1 : t < SIM_MS ? 1 : Math.max(0, 1 - (t - SIM_MS) / FADE_MS);
-      sim!.render(bg, fade);
+      sim!.render(bg, fade, 0); // no flat veil — the workspace blur carries the transition
       if (!hold && t > SIM_MS + FADE_MS) { finish(); return; }
       raf = requestAnimationFrame(frame);
     };
