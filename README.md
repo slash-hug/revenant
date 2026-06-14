@@ -46,7 +46,7 @@ strokes "draw" it into focus, then dissolve to reveal the live document.
 - **macOS / Windows** — v1 targets; Linux may work but is untested
 - **Rust** ≥ 1.77 — install via [rustup](https://rustup.rs/)
 - **Node.js** ≥ 20 + **npm** ≥ 10 — the Tauri CLI is bundled as an npm dev dependency; no separate `cargo install` is required
-- **Windows:** WebView2 fixed-runtime bundled in the installer (no IT policy dependency)
+- **Windows:** the installer uses the WebView2 **download bootstrapper** — WebView2 ships with Windows 11 and Windows 10 21H2+, and the bootstrapper fetches it on older builds. For locked-down or air-gapped machines, build the **fixed-version** variant instead (see [Locked-down Windows](#locked-down-windows-fixed-version-webview2))
 
 ## Install
 
@@ -73,6 +73,36 @@ npm run tauri:build
 > **Windows PATH note:** The NSIS installer registers `revenant` on the system PATH.
 > You must open a **new terminal session** after installation for the PATH change to take effect.
 > If `revenant` is still not found, run `revenant.exe` from its install directory once, or restart your terminal / IDE.
+
+### Locked-down Windows (fixed-version WebView2)
+
+The default installer relies on the WebView2 download bootstrapper. For machines
+with no internet access or where IT policy blocks the bootstrapper, build an
+installer that **bundles a fixed version** of the WebView2 runtime — no download
+at install time. This is opt-in (it adds ~180 MB to the installer), so it lives in
+a config overlay (`src-tauri/tauri.windows-fixed.conf.json`) rather than the
+default build.
+
+1. Download the **Fixed Version** runtime CAB (x64) from the
+   [WebView2 download page](https://developer.microsoft.com/microsoft-edge/webview2/#download-section).
+   The pinned version is `130.0.2849.80`; if you choose another, update the `path`
+   in the overlay to match.
+2. Expand it into `src-tauri/` so the folder name matches the overlay's `path`
+   (PowerShell, from the repo root):
+
+   ```powershell
+   expand "Microsoft.WebView2.FixedVersionRuntime.130.0.2849.80.x64.cab" -F:* `
+     "src-tauri\Microsoft.WebView2.FixedVersionRuntime.130.0.2849.80.x64"
+   ```
+
+3. Build with the overlay merged over the base config:
+
+   ```powershell
+   npm run tauri -- build --config src-tauri/tauri.windows-fixed.conf.json
+   ```
+
+The runtime folder is git-ignored (never committed). The base build and CI stay on
+the bootstrapper.
 
 ## Usage
 

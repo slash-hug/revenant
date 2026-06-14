@@ -29,3 +29,6 @@ src-tauri/gen/
 
 # Workflow agent worktrees (transient)
 .claude/worktrees/
+
+# Vendored WebView2 fixed-version runtime (downloaded for locked-down Windows builds)
+src-tauri/Microsoft.WebView2.FixedVersionRuntime.*/
