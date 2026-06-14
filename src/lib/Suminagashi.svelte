@@ -35,7 +35,6 @@
     const m = v.match(/(\d+\.?\d*)/g);
     return m ? [(+m[0]) / 255, (+m[1]) / 255, (+m[2]) / 255] : [0, 0, 0];
   }
-  const sub = (a: RGB, b: RGB, k = 0.78): RGB => [(a[0] - b[0]) * k, (a[1] - b[1]) * k, (a[2] - b[2]) * k];
 
   function finish() {
     if (raf) cancelAnimationFrame(raf);
@@ -75,14 +74,14 @@
       return;
     }
 
-    const bg = cssColor('--bg');
+    const bg = cssColor('--bg'); // used as the faint veil/scrim over the live doc
     const inks: RGB[] = [
-      sub(cssColor('--text'), bg),
-      sub(cssColor('--accent'), bg),
-      sub(cssColor('--detached'), bg),
-      sub(cssColor('--success'), bg),
-      sub(cssColor('--text'), bg),
-      sub(cssColor('--accent'), bg),
+      cssColor('--text'),
+      cssColor('--accent'),
+      cssColor('--detached'),
+      cssColor('--success'),
+      cssColor('--text'),
+      cssColor('--accent'),
     ];
 
     // Seed a tight cluster of ink drops near the center, each flung in its own
@@ -101,7 +100,7 @@
     });
     // one anchor drop near the heart of the bloom
     const aAng = Math.random() * Math.PI * 2;
-    sim!.splat(cx, cy, Math.cos(aAng) * FORCE * 0.5, Math.sin(aAng) * FORCE * 0.5, sub(cssColor('--text'), bg), 0.009);
+    sim!.splat(cx, cy, Math.cos(aAng) * FORCE * 0.5, Math.sin(aAng) * FORCE * 0.5, cssColor('--text'), 0.009);
 
     const SIM_MS = 770, FADE_MS = 330;
     const start = performance.now();

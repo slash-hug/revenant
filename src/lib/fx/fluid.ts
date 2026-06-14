@@ -63,12 +63,14 @@ uniform float aspectRatio;
 uniform vec3 color;
 uniform vec2 point;
 uniform float radius;
+uniform float amount;     // dye amount deposited into the alpha channel (0 for velocity)
 void main () {
   vec2 p = vUv - point.xy;
   p.x *= aspectRatio;
-  vec3 splat = exp(-dot(p, p) / radius) * color;
-  vec3 base = texture(uTarget, vUv).xyz;
-  fragColor = vec4(base + splat, 1.0);
+  float gauss = exp(-dot(p, p) / radius);
+  vec4 base = texture(uTarget, vUv);
+  // RGB accumulates color*amount (premultiplied), A accumulates the amount.
+  fragColor = vec4(base.rgb + gauss * color, base.a + gauss * amount);
 }`;
 
 const ADVECTION = F_HEADER + `
@@ -165,15 +167,21 @@ void main () {
   fragColor = value * texture(uTexture, vUv);
 }`;
 
-// Display: ink dye tinting the paper/water background. The overlay is opaque
-// (paper + ink) and the whole canvas is faded out via CSS to reveal the app —
-// "the document returns out of the ink."
+// Display: transparent ink composited OVER the live workspace beneath the
+// canvas. Alpha = ink density (premultiplied dye stored as RGB=color*amount,
+// A=amount), plus a faint full-screen scrim so the document reads as gently
+// veiled. The whole canvas is then faded out via CSS to "arrive" in the doc.
 const DISPLAY = F_HEADER + `
 uniform sampler2D uDye;
-uniform vec3 uBg;
+uniform vec3 uScrim;
+uniform float uDim;
 void main () {
-  vec3 ink = texture(uDye, vUv).rgb;
-  fragColor = vec4(uBg + ink, 1.0);
+  vec4 d = texture(uDye, vUv);
+  float ink = clamp(d.a, 0.0, 1.0);
+  vec3 inkColor = d.rgb / max(d.a, 0.0015);   // un-premultiply
+  vec3 col = mix(uScrim, inkColor, ink);
+  float alpha = max(uDim, ink);
+  fragColor = vec4(col, alpha);
 }`;
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
@@ -339,10 +347,12 @@ export class FluidSim {
     gl.uniform2f(sp.uniforms['point'], x, y);
     gl.uniform3f(sp.uniforms['color'], dx, dy, 0);
     gl.uniform1f(sp.uniforms['radius'], radius);
+    gl.uniform1f(sp.uniforms['amount'], 0); // velocity carries no dye amount
     this.blit(this.velocity.write); this.velocity.swap();
 
     gl.uniform1i(sp.uniforms['uTarget'], this.dye.read.attach(0));
     gl.uniform3f(sp.uniforms['color'], color[0], color[1], color[2]);
+    gl.uniform1f(sp.uniforms['amount'], 1); // deposit ink density into alpha
     this.blit(this.dye.write); this.dye.swap();
   }
 
@@ -405,15 +415,19 @@ export class FluidSim {
     this.blit(this.dye.write); this.dye.swap();
   }
 
-  /** Render dye over the bg. fade: 1 = fully opaque overlay, 0 = gone. */
-  render(bg: [number, number, number], fade: number) {
+  /**
+   * Composite the ink over the transparent canvas (workspace shows through).
+   * scrim = bg color for the faint veil; dim = veil strength (0 = none);
+   * fade = global CSS opacity (1 → 0 dissolves the whole overlay).
+   */
+  render(scrim: [number, number, number], fade: number, dim = 0.1) {
     const gl = this.gl;
     const D = this.programs.display;
     D.bind();
     gl.uniform1i(D.uniforms['uDye'], this.dye.read.attach(0));
-    gl.uniform3f(D.uniforms['uBg'], bg[0], bg[1], bg[2]);
+    gl.uniform3f(D.uniforms['uScrim'], scrim[0], scrim[1], scrim[2]);
+    gl.uniform1f(D.uniforms['uDim'], dim);
     this.blit(null);
-    // Drive canvas opacity with fade so the workspace shows through as it clears.
     this.canvas.style.opacity = String(fade);
   }
 
