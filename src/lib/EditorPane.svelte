@@ -396,12 +396,14 @@
           '.cm-seal-active .s-ring': { opacity: '1' },
           '.cm-seal-active .s-drop': { fill: 'var(--seal-on)', opacity: '1' },
           '.cm-annotation-wash': {
-            // Source view: a clean teal underline in the annotation color (a brush
-            // stroke isn't practical inside CodeMirror; the preview carries that).
-            textDecorationLine: 'underline',
-            textDecorationColor: 'var(--ann-underline)',
-            textDecorationThickness: '2px',
-            textUnderlineOffset: '3px',
+            // Source view: the same brush stroke as the preview, drawn as an SVG
+            // background image under the words (a real overlay isn't practical
+            // inside CodeMirror). Stretches to the span width; sits at the baseline.
+            backgroundImage: 'var(--ann-brush-img)',
+            backgroundRepeat: 'no-repeat',
+            backgroundSize: '100% 0.42em',
+            backgroundPosition: 'left bottom',
+            paddingBottom: '0.05em',
           },
         }),
       ],

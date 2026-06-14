@@ -131,6 +131,9 @@
   --seal-on: #FFFFFF;
   /* Annotation brush underline — muted teal-cyan (distinct from accent/success). */
   --ann-underline: #3C8893;
+  /* Same brush as an SVG image, for the CodeMirror source-view wash (it can't host
+     an SVG overlay like the preview). Color is baked per theme. */
+  --ann-brush-img: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 110 11' preserveAspectRatio='none'><path d='M2 6 C22 2 46 2.4 60 4 C78 6 92 5 108 4.2 C92 8.4 60 9.2 36 8 C20 7.2 8 7.6 2 6 Z' fill='%233C8893' opacity='0.9'/></svg>");
 }
 
 /* ============ DARK · GRAPHITE ============ */
@@ -190,6 +193,7 @@
   --seal-on: #232427;
   /* Annotation brush underline — lifted teal-cyan for contrast on Graphite. */
   --ann-underline: #5FB6C4;
+  --ann-brush-img: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 110 11' preserveAspectRatio='none'><path d='M2 6 C22 2 46 2.4 60 4 C78 6 92 5 108 4.2 C92 8.4 60 9.2 36 8 C20 7.2 8 7.6 2 6 Z' fill='%235FB6C4' opacity='0.95'/></svg>");
 }
 
 @media (prefers-reduced-motion: reduce) {
