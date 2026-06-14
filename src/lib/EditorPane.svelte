@@ -28,6 +28,7 @@
   import type { SourceAnchor, AnchorV1, IpcError, Annotation } from './types/ipc';
   import { annotationsStore } from './stores/annotations';
   import { annotationFocus, focusAnnotation, hoverAnnotation, setAnchorRect } from './stores/annotationFocus';
+  import { findSpan } from './annotationHighlight';
 
   // -------------------------------------------------------------------------
   // Annotation focus / gutter-seal CM6 integration (T3.1 / D12)
@@ -121,12 +122,12 @@
   ): { from: number; to: number } | null {
     const q = ann.quoted_text;
     if (q) {
-      const text = doc.toString();
-      const ln = ann.line_start + 1;
-      const searchFrom = ln >= 1 && ln <= doc.lines ? doc.line(ln).from : 0;
-      let idx = text.indexOf(q, searchFrom);
-      if (idx === -1) idx = text.indexOf(q); // wrap to the start
-      if (idx !== -1) return { from: idx, to: idx + q.length };
+      // Whitespace- AND markdown-tolerant search: the rendered quoted_text has
+      // spaces where the source has newlines, and no backticks/asterisks where the
+      // source has inline markdown. findSpan normalizes both so the source span is
+      // found even for multi-line / formatted selections.
+      const span = findSpan(doc.toString(), q, true);
+      if (span) return span;
     }
     // Fallback: stored line/char offsets.
     const startLineNum = ann.line_start + 1;

@@ -22,6 +22,7 @@ import {
   buildRange,
   refreshHighlights,
   clearHighlights,
+  findSpan,
 } from '../lib/annotationHighlight';
 
 // ── Helper: build a DOM element from an HTML string ──────────────────────────
@@ -31,6 +32,33 @@ function makeEl(html: string): HTMLElement {
   div.innerHTML = html;
   return div;
 }
+
+// ── findSpan (whitespace- / markdown-tolerant search) ───────────────────────
+
+describe('findSpan', () => {
+  it('matches across newline-vs-space differences (the multi-line bug)', () => {
+    // Rendered DOM keeps source newlines; selection.toString() has spaces.
+    const haystack = 'built to pair\nwith Superpowers. Whenever Superpowers\ngenerates a file.';
+    const needle = 'Whenever Superpowers generates a file.';
+    const span = findSpan(haystack, needle, false);
+    expect(span).not.toBeNull();
+    expect(haystack.slice(span!.from, span!.to).replace(/\s+/g, ' ')).toBe(needle);
+  });
+
+  it('ignores inline markdown delimiters when stripMarkdown is set', () => {
+    const source = 'it can run `revenant <file.md>` to open';
+    const rendered = 'it can run revenant <file.md> to open';
+    const span = findSpan(source, rendered, true);
+    expect(span).not.toBeNull();
+    // The matched source span spans the whole phrase including the backticks.
+    expect(source.slice(span!.from, span!.to)).toContain('revenant <file.md>');
+  });
+
+  it('returns null when the needle is absent', () => {
+    expect(findSpan('hello world', 'absent phrase', false)).toBeNull();
+    expect(findSpan('hello world', '', false)).toBeNull();
+  });
+});
 
 // ── isHighlightSupported ─────────────────────────────────────────────────────
 

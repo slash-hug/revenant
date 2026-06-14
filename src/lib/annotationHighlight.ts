@@ -18,6 +18,54 @@ export function isHighlightSupported(): boolean {
 }
 
 /**
+ * Build a whitespace-normalized projection of `text` plus a map from each
+ * normalized character back to its original index. Runs of whitespace collapse to
+ * a single space; when `stripMarkdown` is set, inline markdown delimiters
+ * (` * _ ~) are dropped entirely (so a rendered selection matches the raw source).
+ */
+function normalizeWithMap(text: string, stripMarkdown: boolean): { norm: string; map: number[] } {
+  let norm = '';
+  const map: number[] = [];
+  let prevSpace = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (stripMarkdown && (ch === '`' || ch === '*' || ch === '_' || ch === '~')) continue;
+    if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' || ch === '\v') {
+      if (prevSpace) continue;
+      norm += ' ';
+      map.push(i);
+      prevSpace = true;
+    } else {
+      norm += ch;
+      map.push(i);
+      prevSpace = false;
+    }
+  }
+  return { norm, map };
+}
+
+/**
+ * Find `needle` inside `haystack`, tolerant of whitespace differences (the
+ * rendered DOM keeps source newlines that selection.toString() turns into spaces)
+ * and — when `stripMarkdown` is set — of inline markdown syntax in the source.
+ * Returns original-offset {from, to} into `haystack`, or null.
+ */
+export function findSpan(
+  haystack: string,
+  needle: string,
+  stripMarkdown = false,
+): { from: number; to: number } | null {
+  if (!needle) return null;
+  const H = normalizeWithMap(haystack, stripMarkdown);
+  const needleNorm = normalizeWithMap(needle, stripMarkdown).norm.trim();
+  if (!needleNorm) return null;
+  const idx = H.norm.indexOf(needleNorm);
+  if (idx === -1) return null;
+  const lastIdx = idx + needleNorm.length - 1;
+  return { from: H.map[idx], to: H.map[lastIdx] + 1 };
+}
+
+/**
  * Find the first occurrence of quotedText within blockEl, spanning element
  * boundaries (handles inline <strong>, <em>, <code>, etc.).
  *
@@ -52,11 +100,13 @@ export function buildRange(blockEl: Element, quotedText: string): Range | null {
     virtualText += tn.textContent ?? '';
   }
 
-  // Find the first occurrence of quotedText (case-sensitive, exact).
-  const matchStart = virtualText.indexOf(quotedText);
-  if (matchStart === -1) return null;
-
-  const matchEnd = matchStart + quotedText.length;
+  // Whitespace-tolerant search: the rendered DOM keeps source newlines that the
+  // saved quoted_text (from selection.toString()) has as spaces, so a plain
+  // indexOf fails for any multi-line span. findSpan normalizes both sides.
+  const span = findSpan(virtualText, quotedText, false);
+  if (!span) return null;
+  const matchStart = span.from;
+  const matchEnd = span.to;
 
   // Map virtual string offsets back to text nodes.
   function resolvePoint(virtualOffset: number): { node: Text; offset: number } | null {
