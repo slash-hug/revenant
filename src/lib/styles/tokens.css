@@ -125,6 +125,10 @@
   --shadow-lg: 0 16px 40px -12px rgba(40,35,25,.24);
   --shadow-pop: 0 8px 24px -6px rgba(40,35,25,.30);
   --accent-shadow: 0 2px 8px -2px rgba(61,109,160,.35);
+
+  /* Seal / annotation marker (light: sumi-ink brown) */
+  --seal-ink: #4A453B;
+  --seal-on: #FFFFFF;
 }
 
 /* ============ DARK · GRAPHITE ============ */
@@ -178,8 +182,15 @@
   --shadow-lg: 0 20px 48px -14px rgba(0,0,0,.66);
   --shadow-pop: 0 10px 28px -6px rgba(0,0,0,.6);
   --accent-shadow: 0 2px 12px -3px rgba(127,166,204,.34);
+
+  /* Seal / annotation marker (dark: warm ash) */
+  --seal-ink: #C2BBAA;
+  --seal-on: #232427;
 }
 
 @media (prefers-reduced-motion: reduce) {
   :root { --dur-fast: 0ms; --dur-base: 0ms; --dur-slow: 0ms; }
+  /* Token-zeroing of --dur-* suppresses CSS transitions, NOT standalone
+     @keyframes (TRAP 3). Explicitly disable the ink-bloom seal pulse here. */
+  .seal { animation: none; }
 }
