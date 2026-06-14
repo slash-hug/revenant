@@ -431,15 +431,26 @@ async function loadMermaid() {
  * Returns sanitized HTML.
  * Errors are isolated — if hljs fails, returns the plain code block.
  */
+// Highlighted code is a pure function of (lang, code) — cache it so re-rendering
+// the preview while typing elsewhere doesn't re-highlight unchanged blocks (#2).
+const hljsCache = new Map<string, string>();
+const HLJS_CACHE_MAX = 256;
+
 export async function renderCodeBlock(code: string, lang: string): Promise<string> {
+  const key = `${lang} ${code}`;
+  const cached = hljsCache.get(key);
+  if (cached !== undefined) return cached;
   try {
     const hljs = await loadHljs();
     const validLang = hljs.getLanguage(lang) ? lang : 'plaintext';
     const result = hljs.highlight(code, { language: validLang });
     const highlighted = `<pre><code class="hljs language-${validLang}">${result.value}</code></pre>`;
-    return DOMPurify.sanitize(highlighted, PURIFY_CONFIG as unknown as DOMPurifyConfig) as unknown as string;
+    const sanitized = DOMPurify.sanitize(highlighted, PURIFY_CONFIG as unknown as DOMPurifyConfig) as unknown as string;
+    if (hljsCache.size >= HLJS_CACHE_MAX) hljsCache.clear(); // simple bound
+    hljsCache.set(key, sanitized);
+    return sanitized;
   } catch {
-    // Per-block error isolation: return plain code block, don't crash.
+    // Per-block error isolation: return plain code block, don't crash (not cached).
     return `<pre><code>${escapeHtml(code)}</code></pre>`;
   }
 }
@@ -449,14 +460,25 @@ export async function renderCodeBlock(code: string, lang: string): Promise<strin
  * If Mermaid fails (invalid diagram, CSP, etc.), returns an error block
  * so the surrounding preview continues rendering (per-block error isolation).
  */
+// One cache entry per Mermaid block (keyed by blockId → its last code+theme+svg).
+// Re-rendering the preview while typing elsewhere returns the cached SVG instead
+// of re-running mermaid.render for an unchanged diagram (#2). Keyed by blockId so
+// cached SVGs keep their own element ids — no cross-block id collisions. Theme is
+// part of the entry so a light/dark switch correctly invalidates.
+const mermaidCache = new Map<string, { code: string; theme: string; svg: string }>();
+
 export async function renderMermaid(code: string, blockId: string): Promise<string> {
   try {
     const mermaid = await loadMermaid();
+    const theme = _mermaidTheme ?? 'default';
+    const hit = mermaidCache.get(blockId);
+    if (hit && hit.code === code && hit.theme === theme) return hit.svg;
     const id = `mermaid-${blockId}`;
     const { svg } = await mermaid.render(id, code);
     // Sanitize with the Mermaid-scoped config so the embedded <style> theming
     // survives (C15 — Mermaid SVG is still sanitized; strict mode is on).
     const sanitized = DOMPurify.sanitize(svg, MERMAID_PURIFY_CONFIG as unknown as DOMPurifyConfig) as unknown as string;
+    mermaidCache.set(blockId, { code, theme, svg: sanitized });
     return sanitized;
   } catch (err) {
     const msg = err instanceof Error ? escapeHtml(err.message) : 'Diagram error';

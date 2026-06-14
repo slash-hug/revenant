@@ -133,12 +133,22 @@
     html = renderMarkdown(content);
   }
 
+  // afterUpdate fires on EVERY update (focus, scroll, annotations…), but the heavy
+  // post-render pipeline (hydrate Mermaid/hljs, rebuild the block-map + scroll
+  // index) only matters when the rendered HTML actually changed. Gate it on an
+  // html token so typing/focus updates don't re-query + re-hydrate every block
+  // (#2 — the dominant per-keystroke cost). Seal recompute still runs every update
+  // because annotations can change without the HTML changing.
+  let lastHydratedHtml = '';
   afterUpdate(async () => {
     if (!previewEl) return;
     await tick();
-    await hydrateDynamicBlocks();
-    emitBlockMap();
-    rebuildScrollIndex(); // sorted line→block index for binary-search scroll-sync (#3)
+    if (html !== lastHydratedHtml) {
+      lastHydratedHtml = html;
+      await hydrateDynamicBlocks();
+      emitBlockMap();
+      rebuildScrollIndex(); // sorted line→block index for binary-search scroll-sync (#3)
+    }
     // Recompute seal positions after render (D2/D10: stays on afterUpdate).
     triggerSealRecompute();
   });
