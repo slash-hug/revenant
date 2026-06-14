@@ -160,3 +160,90 @@ containment**.
   keeps its theme. Re-render on `<html data-theme>` change (MutationObserver) to
   follow light/dark; the stock 'dark' node fill (#1f2020) needs `mainBkg` lifted
   off the app's dark card for contrast.
+
+## `tsc --noEmit` + `vite build` + `npm test` all pass while the app is broken — run `svelte-check` (2026-06-14)
+
+**What happened:** The annotation-markers feature-implement round merged with a
+green `tsc --noEmit`, `vite build`, and 114 passing Vitest tests — yet
+`svelte-check` found 4 errors that would ship a broken feature:
+- `AnnotationSeals.svelte`: a JS comment in the `<script>` contained the literal
+  text `<style>` and `{@html <style>}`. `svelte2tsx`'s lightweight tag scanner
+  (which svelte-check uses, but the real `svelte/compiler` parser and Vite's
+  bundler do NOT) treated those literals as real tags, decided the `<script>`
+  was "left open," and reported the component as having **no default export** —
+  cascading into a `PreviewPane` import error. The component compiled and ran
+  fine under Vite; only svelte-check caught it.
+- `AnnotationDrawer.svelte`: the detached-section delete buttons still called the
+  old 1-arg `requestDelete(id)` after the active section was changed to
+  `(e, id)`. `tsc` doesn't typecheck the internals of `.svelte` files; svelte-check
+  does — so the arity mismatch was invisible to `tsc --noEmit`.
+- `import.meta.env.DEV` failed to typecheck because `tsconfig.types` is an
+  explicit allowlist (`["vitest/globals","node"]`) that excluded `vite/client`.
+
+**Rules:**
+- **`svelte-check` is a required gate, distinct from `tsc --noEmit`.** `tsc`
+  checks `.ts` files and the module graph but does NOT typecheck the contents of
+  `.svelte` `<script>`/markup (arity, prop types, store call signatures).
+  `vite build` doesn't typecheck at all. A round is not "green" until
+  `svelte-check` is clean. The feature-implement workflow ran tsc+build+test but
+  not svelte-check — add it to the verification set.
+- **Never put `<style>`, `</script>`, or `{@html ...}` literals in a Svelte
+  `<script>` comment.** `svelte2tsx`'s scanner mis-reads them as tags even though
+  the real compiler tolerates them. Rephrase ("a dynamic style rule", "sanitized
+  HTML injection") instead of writing the literal tag text.
+- When `tsconfig.compilerOptions.types` is set, it's an exhaustive allowlist —
+  using `import.meta.env` requires adding `"vite/client"` to it.
+
+## Rendered DOM keeps source newlines; selection.toString() turns them into spaces (2026-06-14)
+
+**What happened:** The annotation ink wash highlighted single-word selections
+fine but **multi-line selections didn't highlight at all** in the preview (and only
+partially in the editor). Cause: markdown-it keeps a paragraph's soft line-breaks
+as literal `\n` characters in the rendered HTML text nodes, but the `quoted_text`
+saved from `window.getSelection().toString()` has those breaks as **spaces**. So
+`renderedText.indexOf(quoted_text)` fails for any span crossing a soft-wrapped
+line. The editor had the same problem **plus** markdown delimiters: the source has
+`` `revenant <file.md>` `` (backticks) where the rendered selection has plain
+`revenant <file.md>`, so matching the rendered quote against the raw source fails
+on two axes (whitespace + syntax).
+
+**Rules:**
+- When matching a **rendered** selection back to either the rendered DOM or the
+  **source**, never use exact `indexOf`. Normalize whitespace (collapse all runs
+  to a single space) on BOTH sides, and when matching against source markdown,
+  also strip inline delimiters (`` ` `` `*` `_` `~`). Keep a normalized→original
+  offset map so you can map the match back to real positions. See
+  `annotationHighlight.findSpan(haystack, needle, stripMarkdown)`.
+- Preview-created anchors are **coarse**: `handlePreviewMouseUp` stores
+  `start_line` = the block's `data-source-line`, `char_start: 0`,
+  `char_end: quoted_text.length` — these char offsets do NOT point at the real
+  text. Treat `quoted_text` (via `findSpan`) as the source of truth for locating
+  the span; the stored line/char is only a last-resort fallback.
+- A green test suite can still miss this: every re-anchor/highlight test used
+  single-line fixtures. Multi-line + inline-formatted spans are a distinct case —
+  test them explicitly.
+
+## A rectangle is a box, no gradient rescues it — re-imagine, don't tune (2026-06-14)
+
+**What happened:** The annotation "wash" went through three failed visual rounds —
+a flat translucent background (read as a highlighter box), a thin text-decoration
+underline (`text-decoration-thickness` renders thin in WKWebView regardless of the
+value), and a bottom-weighted gradient rect behind the text (still read as a
+"misaligned highlight box"). Each was a *tuning* attempt on a fundamentally
+box-shaped mark. The fix was to **re-imagine** the effect: a hand-inked SVG
+**brush underline** (tapered, slightly irregular) — organic, on-brand (sumi ink),
+and unmistakably "annotated."
+
+**Rules:**
+- The CSS Custom Highlight API (`::highlight()`) accepts only a limited property
+  set — `color`, `background-color`, `text-decoration*`, `text-shadow`,
+  `-webkit-text-stroke`. **No gradients, no border-radius, no background-image.**
+  If the design needs an organic/gradient mark, the Highlight API can't do it;
+  draw an SVG overlay (preview) or use an SVG `background-image` data-URI on a real
+  element (the CodeMirror decoration span) instead.
+- When a user pushes back on the same visual twice, stop tuning parameters and
+  re-open the *concept* (a quick visual-companion comparison of 2-3 distinct
+  directions beats a fourth tweak of the wrong one).
+- One token drives a themed mark cleanly: `--ann-underline` (light/dark) for the
+  SVG fill, plus `--ann-brush-img` / `--ann-brush-img-faint` data-URIs (color
+  baked per theme) for the editor's background-image brush.

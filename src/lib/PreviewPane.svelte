@@ -22,7 +22,7 @@
    *  - blockMap   : Map<string, number>  — block-id → source-line mapping (C8).
    *  - addAnnotation : { anchor: AnchorV1 }  — preview-side "Add comment" (C8).
    */
-  import { onMount, afterUpdate, createEventDispatcher, tick } from 'svelte';
+  import { onMount, onDestroy, afterUpdate, createEventDispatcher, tick } from 'svelte';
   import {
     renderMarkdown,
     renderCodeBlock,
@@ -30,6 +30,20 @@
     stripFrontmatter,
   } from './render/markdown';
   import type { AnchorV1, BlockAnchor } from './types/ipc';
+  import AnnotationSeals from './AnnotationSeals.svelte';
+  import {
+    annotationFocus,
+    clearFocus,
+    setAnchorRect,
+  } from './stores/annotationFocus';
+  import {
+    buildRange,
+    refreshHighlights,
+    clearHighlights,
+    isHighlightSupported,
+  } from './annotationHighlight';
+  import { annotationsStore } from './stores/annotations';
+  import { resolveBlock } from './annotationResolve';
 
   export let content: string = '';
   export let scrollLine: number = 1;
@@ -49,9 +63,32 @@
   const LARGE_FILE_THRESHOLD = 2000; // lines
 
   let previewEl: HTMLDivElement | null = null;
+  let pvScrollEl: HTMLDivElement | null = null;
+  let sealsComponent: AnnotationSeals | null = null;
   let html = '';
   let syncDegraded = false;
   let isHydrating = false;
+
+  // ── ResizeObserver for seal recompute (TRAP 2) ──────────────────────────────
+  let resizeObserver: ResizeObserver | null = null;
+
+  // ── annotationFocus subscription (T2.6) ─────────────────────────────────────
+  // Repaint the wash whenever the active/hovered annotation changes, and scroll
+  // + re-anchor the popover whenever a navigation (scrollNonce bump) occurs.
+  let prevScrollNonce = -1;
+  let prevActiveId: string | null = null;
+  let prevHoverId: string | null = null;
+  const unsubFocus = annotationFocus.subscribe((state) => {
+    if (state.activeId !== prevActiveId || state.hoverId !== prevHoverId) {
+      prevActiveId = state.activeId;
+      prevHoverId = state.hoverId;
+      refreshAnnotationWash();
+    }
+    if (state.scrollNonce !== prevScrollNonce && prevScrollNonce !== -1) {
+      void scrollToActiveAndAnchor(state.activeId);
+    }
+    prevScrollNonce = state.scrollNonce;
+  });
 
   // -------------------------------------------------------------------------
   // Frontmatter header
@@ -100,6 +137,8 @@
     await tick();
     await hydrateDynamicBlocks();
     emitBlockMap();
+    // Recompute seal positions after render (D2/D10: stays on afterUpdate).
+    triggerSealRecompute();
   });
 
   /**
@@ -164,7 +203,120 @@
       );
     } finally {
       isHydrating = false;
+      // Recompute seals + refresh highlights at the tail of hydration (TRAP 2:
+      // Mermaid/hljs hydration is async; compute offsetTop only after SVGs inject).
+      triggerSealRecompute();
+      refreshAnnotationWash();
     }
+  }
+
+  /**
+   * Trigger a seal position recompute via the AnnotationSeals component.
+   * Safe to call any time; component guards against null containers.
+   */
+  function triggerSealRecompute() {
+    if (sealsComponent) {
+      sealsComponent.recompute();
+    }
+  }
+
+  /**
+   * Repaint the inline ink wash. The prose is clean at rest — only the active
+   * span (full wash) and the hovered span (faint wash) are painted, via the CSS
+   * Custom Highlight API. Feature-detected — no-op on unsupported environments.
+   */
+  function refreshAnnotationWash() {
+    if (!previewEl || !isHighlightSupported()) return;
+    const state = $annotationsStore;
+    const focusState = $annotationFocus;
+
+    const rangeForId = (id: string | null): Range | null => {
+      if (!id) return null;
+      const ann = state.annotations.find((a) => a.id === id);
+      if (!ann || !ann.quoted_text) return null;
+      const blockEl = findBlockForAnnotation(ann);
+      if (!blockEl) return null;
+      return buildRange(blockEl, ann.quoted_text);
+    };
+
+    refreshHighlights(rangeForId(focusState.activeId), rangeForId(focusState.hoverId));
+  }
+
+  /**
+   * Measure the active annotation's span (or block, for block-level / unfound
+   * spans) and publish its viewport rect so AnnotationPopover anchors under the
+   * actual words. Runs after a smooth scroll settles (scrollend, with a timeout
+   * fallback) so the rect reflects the final on-screen position.
+   */
+  function anchorPopoverToActive(activeId: string, reduced: boolean) {
+    const measure = () => {
+      if ($annotationFocus.activeId !== activeId || !previewEl) return; // focus moved on
+      const ann = $annotationsStore.annotations.find((a) => a.id === activeId);
+      if (!ann) return;
+      const blockEl = findBlockForAnnotation(ann);
+      if (!blockEl) return;
+      let rect: DOMRect | null = null;
+      if (ann.quoted_text) {
+        const range = buildRange(blockEl, ann.quoted_text);
+        if (range) rect = range.getBoundingClientRect();
+      }
+      if (!rect || rect.width === 0) rect = blockEl.getBoundingClientRect();
+      setAnchorRect({
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+        bottom: rect.bottom,
+      });
+    };
+
+    if (reduced || !pvScrollEl) { measure(); return; }
+    let settled = false;
+    const onEnd = () => {
+      if (settled) return;
+      settled = true;
+      pvScrollEl?.removeEventListener('scrollend', onEnd);
+      measure();
+    };
+    pvScrollEl.addEventListener('scrollend', onEnd);
+    // Fallback: 'scrollend' may not fire if the element was already in position.
+    setTimeout(onEnd, 500);
+  }
+
+  /**
+   * Find the block element for an annotation.
+   * Delegates to the shared resolveBlock helper (annotationResolve.ts) so this
+   * always uses the same algorithm as AnnotationSeals — seal and highlight can
+   * never disagree about which block an annotation resolves to.
+   */
+  function findBlockForAnnotation(ann: { status: string; line_start: number; quoted_text: string }): Element | null {
+    if (!previewEl) return null;
+    return resolveBlock(ann as Parameters<typeof resolveBlock>[0], previewEl);
+  }
+
+  /**
+   * Scroll the active annotation's block into view, repaint its wash, and anchor
+   * the popover under the span (T2.6). Reduced-motion-aware (D2 / §8); does NOT
+   * reuse syncScrollToLine's hardcoded smooth behavior.
+   */
+  async function scrollToActiveAndAnchor(activeId: string | null) {
+    if (!activeId || !previewEl) { setAnchorRect(null); return; }
+
+    // Wait one tick so seals/blocks have laid out.
+    await tick();
+
+    const ann = $annotationsStore.annotations.find((a) => a.id === activeId);
+    if (!ann) return;
+
+    const blockEl = findBlockForAnnotation(ann);
+    if (!blockEl) return;
+
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    blockEl.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' });
+
+    // Paint the active wash, then anchor the popover to the span once scroll settles.
+    refreshAnnotationWash();
+    anchorPopoverToActive(activeId, reduced);
   }
 
   /**
@@ -197,6 +349,30 @@
     const obs = new MutationObserver(() => void reRenderMermaidForTheme());
     obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     return () => obs.disconnect();
+  });
+
+  // ResizeObserver on .pv-scroll for seal recompute (TRAP 2 / risks).
+  // Cleaned up in onDestroy, not conflicting with the MutationObserver above.
+  onMount(() => {
+    if (!pvScrollEl) return;
+    resizeObserver = new ResizeObserver(() => {
+      triggerSealRecompute();
+    });
+    resizeObserver.observe(pvScrollEl);
+  });
+
+  // Initialize prevScrollNonce after mount so the subscription doesn't fire
+  // spuriously on first render.
+  onMount(() => {
+    prevScrollNonce = $annotationFocus.scrollNonce;
+  });
+
+  onDestroy(() => {
+    resizeObserver?.disconnect();
+    resizeObserver = null;
+    unsubFocus();
+    clearHighlights();
+    clearFocus();
   });
 
   /**
@@ -341,7 +517,14 @@
     </div>
   {/if}
 
-  <div class="pv-scroll">
+  <div class="pv-scroll" bind:this={pvScrollEl}>
+    <!-- AnnotationSeals overlay — first child of .pv-scroll (D3).
+         Absolutely positioned relative to .pv-scroll (position: relative added below). -->
+    <AnnotationSeals
+      bind:this={sealsComponent}
+      scrollContainer={pvScrollEl}
+      {previewEl}
+    />
     <article class="prose">
       {#if frontmatterHeader}
         <header class="pv-header" aria-label="Document metadata">
@@ -391,7 +574,10 @@
     background: var(--preview-bg);
     color: var(--text);
   }
-  .pv-scroll { overflow: auto; flex: 1; min-height: 0; }
+  /* D3: position:relative so AnnotationSeals overlay can use absolute positioning
+     relative to this scroll container (seals scroll with content). */
+  .pv-scroll { overflow: auto; flex: 1; min-height: 0; position: relative; }
+
 
   /* "+ Add comment" affordance at the selection (viewport-fixed; preview scrolls) */
   .add-comment-affordance { position: fixed; z-index: var(--z-pop); pointer-events: auto; }
@@ -445,6 +631,10 @@
     font-family: var(--font-prose);
     max-width: 760px;
     color: var(--text);
+    /* Sit above the wash layer (z-index: 0) and below the seals (z-index: 2) so the
+       ink brush paints behind the text (AnnotationSeals .wash-layer / .seals-layer). */
+    position: relative;
+    z-index: 1;
   }
 
   .pv-header { margin-bottom: 28px; }
