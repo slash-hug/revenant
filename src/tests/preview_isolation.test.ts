@@ -28,12 +28,37 @@ vi.mock('mermaid', () => ({
   },
 }));
 
-vi.mock('highlight.js', () => ({
+// markdown.ts now imports from 'highlight.js/lib/core' (curated bundle, T3.2).
+// The mock must match that path so Vitest intercepts the dynamic import.
+vi.mock('highlight.js/lib/core', () => ({
   default: {
     getLanguage: vi.fn(),
     highlight: vi.fn(),
+    registerLanguage: vi.fn(),
   },
 }));
+
+// Stub the individual language imports that loadHljs() pulls in.
+// They are only used for registerLanguage() which is mocked above.
+// Each factory must be inline (not a shared const) because vi.mock() calls
+// are hoisted by Vitest before any const declarations in the module scope.
+vi.mock('highlight.js/lib/languages/javascript', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/typescript', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/rust', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/python', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/go', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/json', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/yaml', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/bash', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/sql', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/xml', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/css', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/markdown', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/diff', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/dockerfile', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/c', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/cpp', () => ({ default: vi.fn() }));
+vi.mock('highlight.js/lib/languages/java', () => ({ default: vi.fn() }));
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -178,7 +203,7 @@ describe('renderMermaid — per-block isolation', () => {
 
 describe('renderCodeBlock — graceful degradation', () => {
   it('returns plain code block when hljs fails to load', async () => {
-    const hljs = (await import('highlight.js')).default;
+    const hljs = (await import('highlight.js/lib/core')).default;
     (hljs.getLanguage as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
       throw new Error('module load failed');
     });
@@ -190,7 +215,7 @@ describe('renderCodeBlock — graceful degradation', () => {
   });
 
   it('returns highlighted code on success', async () => {
-    const hljs = (await import('highlight.js')).default;
+    const hljs = (await import('highlight.js/lib/core')).default;
     (hljs.getLanguage as ReturnType<typeof vi.fn>).mockReturnValueOnce({ name: 'javascript' });
     (hljs.highlight as ReturnType<typeof vi.fn>).mockReturnValueOnce({
       value: '<span class="hljs-keyword">const</span> x = 1;',
@@ -202,7 +227,7 @@ describe('renderCodeBlock — graceful degradation', () => {
   });
 
   it('falls back gracefully for unknown language', async () => {
-    const hljs = (await import('highlight.js')).default;
+    const hljs = (await import('highlight.js/lib/core')).default;
     // getLanguage returns falsy for unknown lang → falls through.
     (hljs.getLanguage as ReturnType<typeof vi.fn>).mockReturnValueOnce(undefined);
     (hljs.highlight as ReturnType<typeof vi.fn>).mockReturnValueOnce({

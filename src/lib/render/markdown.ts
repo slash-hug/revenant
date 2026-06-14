@@ -12,6 +12,46 @@
  *               back to source line numbers. Degrades to block-level for
  *               Mermaid/table/footnote blocks.
  *
+ * T3.1 — Mermaid v11 exports & diagram set (R-MERMAID-EXPORTS / R-MERMAID-SET):
+ *   mermaid@11 exports a single entry `mermaid` → `dist/mermaid.core.mjs`.
+ *   There is no separate per-diagram registration API at the consumer level;
+ *   v11 uses `registerLazyLoadedDiagrams` internally at module init time to
+ *   declare ALL diagram types as on-demand dynamic imports. Each diagram type
+ *   only loads its chunk when `mermaid.render()` is called with that diagram
+ *   syntax. Consumers cannot selectively exclude diagram types without forking
+ *   the mermaid package.
+ *
+ *   Ratified diagram set (R-MERMAID-SET): flowchart, sequence, class, state,
+ *   er, gantt, pie, gitGraph — all present in the mermaid.core bundle and
+ *   available for on-demand rendering.
+ *
+ *   d3 transitive (R-D3-TRANSITIVE): d3 is an internal dependency of the
+ *   flowchart layout engine bundled inside mermaid.core. It cannot be separated
+ *   from flowchart support.
+ *
+ *   katex / cytoscape / roughjs (T3.4): These appear as separate Vite chunks
+ *   because they are dynamically imported by specific mermaid diagram lazy
+ *   chunks. They are NOT loaded at startup — only when a diagram of the
+ *   matching type is first rendered. They cannot be eliminated from the build
+ *   output without removing the diagram types that use them (architecture →
+ *   cytoscape+rough, non-flowchart equation blocks → katex). Keeping flowchart
+ *   and all ratified types means these remain as lazy-loaded separate chunks,
+ *   which is the achievable trim for v11. Human ratification required if the
+ *   architecture diagram type should be excluded to shed cytoscape+rough.
+ *
+ * T3.2 — highlight.js curated import (R-HLJS-CORE):
+ *   Import `highlight.js/lib/core` (not the full bundle) and register only the
+ *   languages needed for this app. This eliminates ~170 languages from the hljs
+ *   chunk. The curated set covers the most common code languages found in
+ *   markdown review documents and spec files.
+ *
+ *   Mermaid initialize order (C-MERMAID-INIT):
+ *   mermaid.initialize({startOnLoad:false, securityLevel:'strict'}) is called
+ *   once at module level after the dynamic import resolves (run-once guard via
+ *   _mermaidInitialized flag). In v11 the correct order is: import →
+ *   initialize → render. Calling initialize() per render() call is safe but
+ *   wasteful; the run-once guard avoids redundant re-initialization.
+ *
  * The module exports:
  *  - renderMarkdown(src)        → sanitized HTML string (sync, no Mermaid/hljs)
  *  - renderCodeBlock(code, lang) → sanitized HTML for a single code block
@@ -218,6 +258,98 @@ export function renderMarkdown(src: string): string {
   return DOMPurify.sanitize(rawHtml, PURIFY_CONFIG as unknown as DOMPurifyConfig) as unknown as string;
 }
 
+// ---------------------------------------------------------------------------
+// highlight.js run-once registration guard (T3.2 / R-HLJS-CORE)
+// ---------------------------------------------------------------------------
+
+let _hljsRegistered = false;
+
+/**
+ * Lazily load `highlight.js/lib/core` (tree-shakeable core, not the full
+ * bundle) and register only the curated language set on first call.
+ * Subsequent calls return the already-registered instance from the module
+ * cache without re-registering.
+ *
+ * Curated language set rationale: covers the most common code languages in
+ * markdown review and spec documents (source code, config files, data formats,
+ * shell scripts). Omits the ~170 languages in the full hljs bundle.
+ */
+async function loadHljs() {
+  const hljs = (await import('highlight.js/lib/core')).default;
+  if (!_hljsRegistered) {
+    const [
+      javascript, typescript, rust, python, go,
+      json, yaml, bash, sql, xml, css,
+      markdown, diff, dockerfile, c, cpp, java,
+    ] = await Promise.all([
+      import('highlight.js/lib/languages/javascript').then((m) => m.default),
+      import('highlight.js/lib/languages/typescript').then((m) => m.default),
+      import('highlight.js/lib/languages/rust').then((m) => m.default),
+      import('highlight.js/lib/languages/python').then((m) => m.default),
+      import('highlight.js/lib/languages/go').then((m) => m.default),
+      import('highlight.js/lib/languages/json').then((m) => m.default),
+      import('highlight.js/lib/languages/yaml').then((m) => m.default),
+      import('highlight.js/lib/languages/bash').then((m) => m.default),
+      import('highlight.js/lib/languages/sql').then((m) => m.default),
+      import('highlight.js/lib/languages/xml').then((m) => m.default),
+      import('highlight.js/lib/languages/css').then((m) => m.default),
+      import('highlight.js/lib/languages/markdown').then((m) => m.default),
+      import('highlight.js/lib/languages/diff').then((m) => m.default),
+      import('highlight.js/lib/languages/dockerfile').then((m) => m.default),
+      import('highlight.js/lib/languages/c').then((m) => m.default),
+      import('highlight.js/lib/languages/cpp').then((m) => m.default),
+      import('highlight.js/lib/languages/java').then((m) => m.default),
+    ]);
+    hljs.registerLanguage('javascript', javascript);
+    hljs.registerLanguage('typescript', typescript);
+    hljs.registerLanguage('rust', rust);
+    hljs.registerLanguage('python', python);
+    hljs.registerLanguage('go', go);
+    hljs.registerLanguage('json', json);
+    hljs.registerLanguage('yaml', yaml);
+    hljs.registerLanguage('bash', bash);
+    hljs.registerLanguage('sh', bash); // alias
+    hljs.registerLanguage('sql', sql);
+    hljs.registerLanguage('xml', xml);
+    hljs.registerLanguage('html', xml); // alias
+    hljs.registerLanguage('css', css);
+    hljs.registerLanguage('markdown', markdown);
+    hljs.registerLanguage('diff', diff);
+    hljs.registerLanguage('dockerfile', dockerfile);
+    hljs.registerLanguage('c', c);
+    hljs.registerLanguage('cpp', cpp);
+    hljs.registerLanguage('java', java);
+    _hljsRegistered = true;
+  }
+  return hljs;
+}
+
+// ---------------------------------------------------------------------------
+// Mermaid run-once initialization guard (T3.2 / C-MERMAID-INIT)
+// ---------------------------------------------------------------------------
+
+let _mermaidInitialized = false;
+
+/**
+ * Lazily load Mermaid and call initialize() exactly once.
+ *
+ * v11 initialization order: import → initialize → render.
+ * Calling initialize() per renderMermaid() call is safe but wasteful;
+ * the run-once guard avoids redundant re-initialization across renders.
+ *
+ * securityLevel: 'strict' — Mermaid will not execute any scripts embedded
+ * in diagram definitions. Combined with DOMPurify sanitization of the SVG
+ * output, this is the correct defense-in-depth posture.
+ */
+async function loadMermaid() {
+  const mermaid = (await import('mermaid')).default;
+  if (!_mermaidInitialized) {
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
+    _mermaidInitialized = true;
+  }
+  return mermaid;
+}
+
 /**
  * Async syntax-highlight a single code block via lazy-loaded highlight.js.
  * Returns sanitized HTML.
@@ -225,7 +357,7 @@ export function renderMarkdown(src: string): string {
  */
 export async function renderCodeBlock(code: string, lang: string): Promise<string> {
   try {
-    const hljs = (await import('highlight.js')).default;
+    const hljs = await loadHljs();
     const validLang = hljs.getLanguage(lang) ? lang : 'plaintext';
     const result = hljs.highlight(code, { language: validLang });
     const highlighted = `<pre><code class="hljs language-${validLang}">${result.value}</code></pre>`;
@@ -243,8 +375,7 @@ export async function renderCodeBlock(code: string, lang: string): Promise<strin
  */
 export async function renderMermaid(code: string, blockId: string): Promise<string> {
   try {
-    const mermaid = (await import('mermaid')).default;
-    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
+    const mermaid = await loadMermaid();
     const id = `mermaid-${blockId}`;
     const { svg } = await mermaid.render(id, code);
     // Sanitize the SVG output (C15 — Mermaid SVG is user/agent-supplied).
