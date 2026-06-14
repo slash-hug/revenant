@@ -19,7 +19,7 @@ use fd_lock::RwLock as FdRwLock;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io;
-use std::io::{Read as _, Seek, SeekFrom, Write as _};
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
@@ -142,15 +142,57 @@ pub fn save_file(
         });
     }
 
-    // Hashes match — write through the same locked handle.
-    guard.seek(SeekFrom::Start(0))?;
-    guard.write_all(content.as_bytes())?;
-    // Truncate in case the new content is shorter than the old content.
-    let new_len = content.len() as u64;
-    guard.set_len(new_len)?;
-
+    // Hashes match — write atomically: stage to a sibling temp file, flush it to
+    // disk, then rename over the target. A direct write-through-the-handle
+    // (seek/write/set_len) leaves the document half-new/half-old if the write
+    // fails partway (e.g. disk full), corrupting it; an atomic rename never can —
+    // a crash leaves either the whole old file or the whole new one.
     let new_hash = sha256_hex(content.as_bytes());
+
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?
+        .to_string_lossy();
+    let tmp_path = match path.parent() {
+        Some(dir) => dir.join(format!(".{file_name}.revenant.tmp")),
+        None => PathBuf::from(format!(".{file_name}.revenant.tmp")),
+    };
+
+    // Stage the new content and fsync before swapping it in.
+    if let Err(e) = stage_temp(&tmp_path, content.as_bytes()) {
+        let _ = fs::remove_file(&tmp_path); // best-effort cleanup
+        return Err(e.into());
+    }
+
+    // Release the advisory lock / file handle *before* the rename: Windows
+    // refuses to replace a file that still has an open handle, so the lock
+    // cannot be held across the rename there. The optimistic-concurrency check
+    // already happened under the lock above; the remaining drop→rename window is
+    // far smaller than the old full-duration in-place write, and the rename
+    // itself is atomic. (Non-cooperating external writers were already outside
+    // the advisory-lock model per A7.)
+    drop(guard);
+    drop(lock);
+
+    if let Err(e) = fs::rename(&tmp_path, path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(e.into());
+    }
+
     Ok(new_hash)
+}
+
+/// Write `bytes` to `tmp` (creating/truncating it) and flush to stable storage.
+/// Used by `save_file` to stage content before an atomic rename.
+fn stage_temp(tmp: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut tmp_file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(tmp)?;
+    tmp_file.write_all(bytes)?;
+    tmp_file.sync_all()?;
+    Ok(())
 }
 
 /// Compute the sha256 hex digest of `data`.
@@ -299,6 +341,28 @@ mod tests {
 
         let on_disk = fs::read_to_string(&path).unwrap();
         assert_eq!(on_disk, "updated");
+    }
+
+    #[test]
+    fn save_file_truncates_and_leaves_no_temp() {
+        // Atomic temp+rename must fully replace longer old content with shorter
+        // new content (no trailing bytes) and clean up its staging file.
+        let dir = TempDir::new().unwrap();
+        let path = write_tmp_md(&dir, "doc.md", "a much longer original body");
+        let opened = open_file(&path).unwrap();
+
+        let new_hash = save_file(&path, "short", &opened.content_hash).unwrap();
+        assert_eq!(new_hash, sha256_hex(b"short"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "short");
+
+        // The sibling staging file must not linger after a successful save.
+        let tmp = dir.path().join(".doc.md.revenant.tmp");
+        assert!(!tmp.exists(), "temp staging file was left behind");
+
+        // A second save round-trips against the new hash.
+        let h2 = save_file(&path, "second update", &new_hash).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second update");
+        assert_eq!(h2, sha256_hex(b"second update"));
     }
 
     #[test]
