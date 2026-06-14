@@ -268,8 +268,8 @@
                 end_line: sourceLine,
                 end_char: quotedText.length,
                 quoted_text: quotedText,
-                context_before: '',
-                context_after: '',
+                // context_before / context_after removed (T1.5/C-IPC-TYPE)
+                // — context is derived server-side at save time (T1.2/A2).
               },
             };
             break;

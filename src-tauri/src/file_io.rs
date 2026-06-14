@@ -15,9 +15,11 @@
 //! build the events are re-emitted via the Tauri app handle; here we expose a
 //! generic callback interface so the module is testable without Tauri.
 
+use fd_lock::RwLock as FdRwLock;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io;
+use std::io::{Read as _, Seek, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -93,6 +95,12 @@ pub fn open_file(path: &Path) -> Result<OpenedFile, FileIoError> {
 ///
 /// Also rejects non-`.md` paths.
 ///
+/// T2.1/A7: takes an exclusive `fd-lock` advisory lock on the file, then
+/// re-hashes from the SAME file handle (re-hash + write under the lock, no
+/// TOCTOU gap for co-operating writers). Non-co-operating external writers
+/// that ignore advisory locks can still race between our re-hash and write,
+/// but they will be detected by the re-hash if they finish before we read.
+///
 /// # Arguments
 /// * `path`          - Target file path (must have `.md` extension).
 /// * `content`       - New content to write.
@@ -106,9 +114,25 @@ pub fn save_file(
     // Validate extension.
     assert_markdown(path).map_err(|_| FileIoError::NotMarkdown(path.to_path_buf()))?;
 
-    // Read current disk content and compare hashes.
-    let disk_content = fs::read_to_string(path)?;
-    let actual_hash = sha256_hex(disk_content.as_bytes());
+    // Open the file for read+write so we can re-hash from the same fd.
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+
+    // Take an exclusive advisory lock (fd-lock / flock / fcntl).
+    // Cooperating writers will wait; non-cooperating ones are outside the
+    // advisory model (see A7/R-FDLOCK-MACOS in the plan).
+    let mut lock = FdRwLock::new(file);
+    let mut guard = lock
+        .write()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+
+    // Re-hash from the locked handle (same fd — the TOCTOU window is closed
+    // for cooperating writers).
+    let mut existing_bytes = Vec::new();
+    guard.read_to_end(&mut existing_bytes)?;
+    let actual_hash = sha256_hex(&existing_bytes);
 
     if actual_hash != expected_hash {
         return Err(FileIoError::HashMismatch {
@@ -117,8 +141,13 @@ pub fn save_file(
         });
     }
 
-    // Hashes match — safe to write.
-    fs::write(path, content.as_bytes())?;
+    // Hashes match — write through the same locked handle.
+    guard.seek(SeekFrom::Start(0))?;
+    guard.write_all(content.as_bytes())?;
+    // Truncate in case the new content is shorter than the old content.
+    let new_len = content.len() as u64;
+    guard.set_len(new_len)?;
+
     let new_hash = sha256_hex(content.as_bytes());
     Ok(new_hash)
 }
