@@ -87,6 +87,9 @@
     let docCanvas: HTMLCanvasElement | null = null;
     if (wsEl) {
       try {
+        // Ensure the web fonts are loaded so the snapshot embeds them (otherwise
+        // it falls back to system fonts and the cross-fade "snaps" the type).
+        if (document.fonts?.ready) await document.fonts.ready;
         docCanvas = await toCanvas(wsEl, { pixelRatio: dpr, backgroundColor: cssRaw('--bg') || undefined, cacheBust: false });
       } catch { docCanvas = null; }
     }
@@ -115,7 +118,7 @@
     const aAng = Math.random() * Math.PI * 2;
     sim!.splat(cx, cy, Math.cos(aAng) * FORCE * 0.5, Math.sin(aAng) * FORCE * 0.5, cssColor('--text'), 0.009);
 
-    const SIM_MS = 950, FADE_MS = 260;
+    const SIM_MS = 820, FADE_MS = 420; // longer fade so the live DOM dissolves the type in
     const start = performance.now();
     const frame = (now: number) => {
       if (!sim) return;
