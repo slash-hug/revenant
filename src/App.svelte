@@ -27,6 +27,7 @@
   import AnnotationPopover from './lib/AnnotationPopover.svelte';
   import ThemeToggle from './lib/ThemeToggle.svelte';
   import Suminagashi from './lib/Suminagashi.svelte';
+  import CommandPalette from './lib/CommandPalette.svelte';
 
   import { tabsStore, activeTab, tabList } from './lib/stores/tabs';
   import { annotationsStore } from './lib/stores/annotations';
@@ -34,11 +35,16 @@
   import Toast from './lib/Toast.svelte';
   import { deleteAnnotationWithUndo, cycleAnnotationId } from './lib/annotationActions';
   import { openFile, getSettings, exportObsidian } from './lib/types/ipc';
-  import type { AnchorV1, Sidecar, IpcError } from './lib/types/ipc';
+  import type { AnchorV1, Sidecar, IpcError, Annotation } from './lib/types/ipc';
+  import type { Command } from './lib/commandFilter';
   import { generateReview } from './lib/ReviewExporter';
   import { basename } from './lib/util/path';
 
   type ViewMode = 'source' | 'preview' | 'split';
+
+  // Platform-aware shortcut glyphs for palette hints.
+  const isMac = typeof navigator !== 'undefined' && /Mac|iP(hone|ad)/.test(navigator.platform);
+  const mod = isMac ? '⌘' : 'Ctrl';
 
   // Device-local layout prefs (#18), persisted in localStorage.
   const LAYOUT_KEY = 'revenant.layout.v1';
@@ -76,6 +82,7 @@
   function onDrawerResize(dx: number) {
     drawerWidth = nextDrawerWidth(drawerWidth, dx);
   }
+  let paletteOpen = $state(false); // ⌘K command palette (#9)
   let conflict = $state<{ open: boolean; path: string }>({ open: false, path: '' });
   let toast = $state<string>('');
   let recentFiles = $state<string[]>(loadRecent());
@@ -352,8 +359,81 @@
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Command palette (#9) — actions assembled from the live app state.
+  // -------------------------------------------------------------------------
+  function annPreview(a: Annotation): string {
+    const raw = (a.body || a.quoted_text || '').replace(/\s+/g, ' ').trim();
+    return raw.length > 44 ? `${raw.slice(0, 44)}…` : raw || 'comment';
+  }
+
+  function buildCommands(): Command[] {
+    const cmds: Command[] = [];
+    cmds.push({
+      id: 'open', title: 'Open file…', section: 'File', hint: `${mod}O`,
+      keywords: 'open document markdown', run: () => void handleOpenFile(),
+    });
+
+    if (!$activeTab) return cmds;
+
+    // View
+    cmds.push({ id: 'view-source', title: 'View: Source', section: 'View', hint: `${mod}1`, keywords: 'editor code', run: () => (viewMode = 'source') });
+    cmds.push({ id: 'view-split', title: 'View: Split', section: 'View', hint: `${mod}2`, keywords: 'editor preview side by side', run: () => (viewMode = 'split') });
+    cmds.push({ id: 'view-preview', title: 'View: Preview', section: 'View', hint: `${mod}3`, keywords: 'rendered markdown', run: () => (viewMode = 'preview') });
+    cmds.push({
+      id: 'toggle-drawer',
+      title: drawerOpen ? 'Hide annotation panel' : 'Show annotation panel',
+      section: 'View', hint: `${mod}\\`, keywords: 'comments drawer sidebar',
+      run: () => (drawerOpen = !drawerOpen),
+    });
+
+    // Review
+    cmds.push({ id: 'generate-review', title: 'Generate review', section: 'Review', hint: `${mod}⇧R`, keywords: 'export markdown comments report', run: () => void handleGenerateReview() });
+    cmds.push({ id: 'export-obsidian', title: 'Export to Obsidian', section: 'Review', keywords: 'vault note publish', run: () => void handleExportObsidian() });
+
+    // Comments
+    const navigable = $annotationsStore.annotations.filter(
+      (a) => a.status === 'anchored' || a.status === 'block_level',
+    );
+    if (navigable.length) {
+      cmds.push({ id: 'next-comment', title: 'Next comment', section: 'Comments', hint: isMac ? '⌥↓' : 'Alt↓', keywords: 'annotation navigate cycle', run: () => cycleAnnotation(1) });
+      cmds.push({ id: 'prev-comment', title: 'Previous comment', section: 'Comments', hint: isMac ? '⌥↑' : 'Alt↑', keywords: 'annotation navigate cycle', run: () => cycleAnnotation(-1) });
+      for (const a of navigable) {
+        cmds.push({
+          id: `jump-${a.id}`, title: `Jump to: ${annPreview(a)}`, section: 'Comments',
+          keywords: `${a.quoted_text} ${a.body}`,
+          run: () => { drawerOpen = true; focusAnnotation(a.id); },
+        });
+      }
+    }
+
+    // Tabs
+    const tabs = $tabList;
+    if (tabs.length > 1) {
+      for (const t of tabs) {
+        if (t.id === $activeTab?.id) continue;
+        cmds.push({ id: `tab-${t.id}`, title: `Switch to: ${basename(t.path)}`, section: 'Tabs', keywords: t.path, run: () => tabsStore.switchTab(t.id) });
+      }
+    }
+    cmds.push({
+      id: 'close-tab', title: 'Close current tab', section: 'Tabs',
+      keywords: 'tab close', run: () => { const id = $activeTab?.id; if (id) tabsStore.closeTab(id); },
+    });
+
+    return cmds;
+  }
+
+  const paletteCommands = $derived.by(buildCommands);
+
   function handleGlobalKeydown(e: KeyboardEvent) {
     if (!(e.metaKey || e.ctrlKey)) return;
+    // Palette + open work even from the welcome screen, so they run before the
+    // "no document open" guard below.
+    if (!e.altKey && !e.shiftKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'k') { e.preventDefault(); paletteOpen = !paletteOpen; return; }
+      if (k === 'o') { e.preventDefault(); void handleOpenFile(); return; }
+    }
     if ($tabList.length === 0) return;
     // ⌘⌥ combos — keyboard navigation of annotations (#16). ⌘⌥M (add comment on
     // selection, #10) is handled in the focused pane, not here.
@@ -438,6 +518,7 @@
         on:generateReview={handleGenerateReview}
         on:exportObsidian={handleExportObsidian}
         on:toggleDrawer={() => (drawerOpen = !drawerOpen)}
+        on:openPalette={() => (paletteOpen = true)}
       />
 
       <TabManager />
@@ -523,6 +604,9 @@
     anchorRect={$annotationFocus.anchorRect}
     on:delete={(e) => { deleteAnnotationWithUndo(e.detail.id); clearFocus(); }}
   />
+
+  <!-- ⌘K command palette (#9) — keyboard launcher over all app actions. -->
+  <CommandPalette bind:open={paletteOpen} commands={paletteCommands} />
 
   <!-- Transient status toast (undoable delete, etc.) -->
   <Toast />

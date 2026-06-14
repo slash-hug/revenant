@@ -19,7 +19,11 @@
     generateReview: void;
     exportObsidian: void;
     toggleDrawer: void;
+    openPalette: void;
   }>();
+
+  const isMac = typeof navigator !== 'undefined' && /Mac|iP(hone|ad)/.test(navigator.platform);
+  const paletteHint = isMac ? '⌘K' : 'Ctrl K';
 
   const modes: { id: ViewMode; label: string }[] = [
     { id: 'source', label: 'Source' },
@@ -59,6 +63,19 @@
   </div>
 
   <div class="right">
+    <button
+      type="button"
+      class="cmdk-trigger"
+      on:click={() => dispatch('openPalette')}
+      title={`Command palette (${paletteHint})`}
+      aria-label="Open command palette"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
+      </svg>
+      <kbd>{paletteHint}</kbd>
+    </button>
+
     <button
       type="button"
       class="btn btn-primary"
@@ -214,6 +231,32 @@
     height: 22px;
     background: var(--border);
     margin: 0 var(--sp-1);
+  }
+
+  /* Command-palette trigger — a quiet search affordance. */
+  .cmdk-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    cursor: pointer;
+    padding: 6px 9px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-muted);
+    transition: color var(--dur-fast), background var(--dur-fast), border-color var(--dur-fast);
+  }
+  .cmdk-trigger:hover { color: var(--text); border-color: var(--border-strong); }
+  .cmdk-trigger svg { width: 15px; height: 15px; }
+  .cmdk-trigger kbd {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1;
+    color: var(--text-faint);
+  }
+
+  @media (max-width: 1080px) {
+    .cmdk-trigger kbd { display: none; }
   }
 
   @media (max-width: 1080px) {
