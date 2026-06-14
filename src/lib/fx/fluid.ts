@@ -167,6 +167,20 @@ void main () {
   fragColor = value * texture(uTexture, vUv);
 }`;
 
+// Separable Gaussian (5-tap, linear-sampled) used to diffuse the dye each frame
+// so the ink bleeds and feathers softly instead of keeping hard advection fronts.
+const BLUR = F_HEADER + `
+uniform sampler2D uTex;
+uniform vec2 dir;
+void main () {
+  vec4 sum = texture(uTex, vUv) * 0.2270270270;
+  sum += texture(uTex, vUv + dir * 1.3846153846) * 0.3162162162;
+  sum += texture(uTex, vUv - dir * 1.3846153846) * 0.3162162162;
+  sum += texture(uTex, vUv + dir * 3.2307692308) * 0.0702702703;
+  sum += texture(uTex, vUv - dir * 3.2307692308) * 0.0702702703;
+  fragColor = sum;
+}`;
+
 // Display: a translucent ink wash composited OVER the live (blurring) workspace
 // beneath the canvas. Dye is premultiplied (RGB = color*amount, A = amount);
 // alpha is the ink density scaled by uStrength so even the densest ink stays
@@ -220,6 +234,8 @@ export interface FluidOptions {
   pressureIters?: number;
   velocityDissipation?: number;
   densityDissipation?: number;
+  /** Per-frame dye blur radius (texels) — softens/feathers the ink edges. */
+  dyeDiffuse?: number;
 }
 
 export class FluidSim {
@@ -249,6 +265,7 @@ export class FluidSim {
       pressureIters: options.pressureIters ?? 22,
       velocityDissipation: options.velocityDissipation ?? 0.9,
       densityDissipation: options.densityDissipation ?? 0.6,
+      dyeDiffuse: options.dyeDiffuse ?? 0.42,
     };
 
     // full-screen triangle
@@ -267,6 +284,7 @@ export class FluidSim {
       splat: mk(SPLAT), advection: mk(ADVECTION), divergence: mk(DIVERGENCE),
       curl: mk(CURL), vorticity: mk(VORTICITY), pressure: mk(PRESSURE),
       gradient: mk(GRADIENT_SUBTRACT), clear: mk(CLEAR), display: mk(DISPLAY),
+      blur: mk(BLUR),
     };
 
     this.filter = linear ? gl.LINEAR : gl.NEAREST;
@@ -410,6 +428,23 @@ export class FluidSim {
     gl.uniform1i(P.advection.uniforms['uSource'], this.dye.read.attach(1));
     gl.uniform2f(P.advection.uniforms['texelSize'], this.dye.texelSizeX, this.dye.texelSizeY);
     gl.uniform1f(P.advection.uniforms['dissipation'], this.opts.densityDissipation);
+    this.blit(this.dye.write); this.dye.swap();
+
+    // Diffuse the dye so the ink bleeds and feathers instead of keeping hard
+    // advection fronts (the "opaque cloud cutout" look).
+    this.blurDye(this.opts.dyeDiffuse);
+  }
+
+  private blurDye(radius: number) {
+    if (radius <= 0) return;
+    const gl = this.gl;
+    const B = this.programs.blur;
+    B.bind();
+    gl.uniform1i(B.uniforms['uTex'], this.dye.read.attach(0));
+    gl.uniform2f(B.uniforms['dir'], radius * this.dye.texelSizeX, 0);
+    this.blit(this.dye.write); this.dye.swap();
+    gl.uniform1i(B.uniforms['uTex'], this.dye.read.attach(0));
+    gl.uniform2f(B.uniforms['dir'], 0, radius * this.dye.texelSizeY);
     this.blit(this.dye.write); this.dye.swap();
   }
 
