@@ -107,6 +107,20 @@ const PURIFY_CONFIG = {
   FORCE_BODY: false,
 } as const;
 
+// Mermaid renders its node/label theming as a `<style>` block inside the SVG
+// (class-based, e.g. `.node rect { fill: … }`) plus `<foreignObject>` HTML labels.
+// A hand-rolled SVG allowlist is too incomplete — it strips the styling and
+// labels, leaving black nodes. Use DOMPurify's built-in svg + html profiles (the
+// documented way to sanitize Mermaid output), explicitly adding `<style>` and
+// `<foreignObject>` (excluded from the default profiles) so diagrams render fully.
+// Applied ONLY to Mermaid's own output (securityLevel:'strict' is also on);
+// general markdown keeps the stricter PURIFY_CONFIG so a doc can't inject CSS/HTML.
+const MERMAID_PURIFY_CONFIG = {
+  USE_PROFILES: { svg: true, svgFilters: true, html: true },
+  ADD_TAGS: ['style', 'foreignObject'],
+  ADD_ATTR: ['dominant-baseline', 'data-block-id', 'data-source-line', 'data-block-type'],
+} as const;
+
 // ---------------------------------------------------------------------------
 // DOMPurify hook: enforce rel="noopener noreferrer" on all anchors that carry
 // a target attribute. This prevents reverse-tabnapping regardless of whether
@@ -349,29 +363,40 @@ async function loadHljs() {
  * initialize() call rather than each running a redundant one.
  */
 let _mermaidPromise: Promise<typeof import('mermaid')['default']> | null = null;
+let _mermaidTheme: 'default' | 'dark' | null = null;
+
+/** The Mermaid theme matching the app's current light/dark mode. */
+function currentMermaidTheme(): 'default' | 'dark' {
+  return typeof document !== 'undefined' &&
+    document.documentElement.getAttribute('data-theme') === 'dark'
+    ? 'dark'
+    : 'default';
+}
 
 /**
- * Lazily load Mermaid and call initialize() exactly once.
+ * Lazily load Mermaid; (re)initialize only when the app theme changes so
+ * diagrams match light/dark mode instead of always rendering light.
  *
- * v11 initialization order: import → initialize → render.
- * Calling initialize() per renderMermaid() call is safe but wasteful;
- * caching the in-flight promise avoids redundant re-initialization even
- * when two renderMermaid() calls race before the first resolves.
+ * v11 initialization order: import → initialize → render. The module import is
+ * cached; initialize() is re-run only on a theme switch (cheap, and required for
+ * the new theme to take effect on subsequently-rendered diagrams).
  *
- * securityLevel: 'strict' — Mermaid will not execute any scripts embedded
- * in diagram definitions. Combined with DOMPurify sanitization of the SVG
- * output, this is the correct defense-in-depth posture.
+ * securityLevel: 'strict' — Mermaid will not execute any scripts embedded in
+ * diagram definitions. Combined with DOMPurify sanitization of the SVG output
+ * (MERMAID_PURIFY_CONFIG), this is the correct defense-in-depth posture.
  */
 async function loadMermaid() {
-  if (_mermaidPromise) return _mermaidPromise;
+  if (!_mermaidPromise) {
+    _mermaidPromise = (async () => (await import('mermaid')).default)();
+  }
+  const mermaid = await _mermaidPromise;
 
-  _mermaidPromise = (async () => {
-    const mermaid = (await import('mermaid')).default;
-    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
-    return mermaid;
-  })();
-
-  return _mermaidPromise;
+  const theme = currentMermaidTheme();
+  if (theme !== _mermaidTheme) {
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme });
+    _mermaidTheme = theme;
+  }
+  return mermaid;
 }
 
 /**
@@ -402,8 +427,9 @@ export async function renderMermaid(code: string, blockId: string): Promise<stri
     const mermaid = await loadMermaid();
     const id = `mermaid-${blockId}`;
     const { svg } = await mermaid.render(id, code);
-    // Sanitize the SVG output (C15 — Mermaid SVG is user/agent-supplied).
-    const sanitized = DOMPurify.sanitize(svg, PURIFY_CONFIG as unknown as DOMPurifyConfig) as unknown as string;
+    // Sanitize with the Mermaid-scoped config so the embedded <style> theming
+    // survives (C15 — Mermaid SVG is still sanitized; strict mode is on).
+    const sanitized = DOMPurify.sanitize(svg, MERMAID_PURIFY_CONFIG as unknown as DOMPurifyConfig) as unknown as string;
     return sanitized;
   } catch (err) {
     const msg = err instanceof Error ? escapeHtml(err.message) : 'Diagram error';
