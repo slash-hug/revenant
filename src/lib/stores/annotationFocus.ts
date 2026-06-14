@@ -21,7 +21,7 @@ export interface AnchorRect {
   bottom: number;
 }
 
-interface AnnotationFocusState {
+export interface AnnotationFocusState {
   /** ID of the annotation currently displayed in the shared popover (or null). */
   activeId: string | null;
   /** ID of the annotation currently hovered in any surface (or null). */
@@ -41,9 +41,7 @@ const INITIAL_STATE: AnnotationFocusState = {
   anchorRect: null,
 };
 
-const store = writable<AnnotationFocusState>(INITIAL_STATE);
-
-export const annotationFocus = store;
+export const annotationFocus = writable<AnnotationFocusState>(INITIAL_STATE);
 
 /**
  * Set the active annotation and bump the scroll nonce so all subscribers
@@ -56,7 +54,7 @@ export const annotationFocus = store;
  *                   null/undefined when triggered from the drawer (no visual anchor).
  */
 export function focusAnnotation(id: string, rect?: AnchorRect | null): void {
-  store.update((s) => ({
+  annotationFocus.update((s) => ({
     ...s,
     activeId: id,
     scrollNonce: s.scrollNonce + 1,
@@ -69,12 +67,12 @@ export function focusAnnotation(id: string, rect?: AnchorRect | null): void {
  * scrollNonce is intentionally left unchanged.
  */
 export function clearFocus(): void {
-  store.update((s) => ({ ...s, activeId: null, hoverId: null, anchorRect: null }));
+  annotationFocus.update((s) => ({ ...s, activeId: null, hoverId: null, anchorRect: null }));
 }
 
 /**
  * Set or clear the hovered annotation id.
  */
 export function hoverAnnotation(id: string | null): void {
-  store.update((s) => ({ ...s, hoverId: id }));
+  annotationFocus.update((s) => ({ ...s, hoverId: id }));
 }
