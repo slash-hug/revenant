@@ -57,50 +57,32 @@
   on:pointercancel={onPointerUp}
   on:dblclick={() => dispatch('reset')}
   on:keydown={onKeydown}
->
-  <span class="grip" aria-hidden="true"></span>
-</div>
+></div>
 
 <style>
-  /* Wide invisible hit area with a 1px divider line down the middle. The line
-     thickens + turns accent on hover/focus/drag; a small grip appears too. */
+  /* A 1px hairline divider (no layout gap). The grab zone is a wider invisible
+     ::before that overflows the 1px box without taking any layout space, so the
+     col-resize cursor appears across ~9px while the visible line stays thin. */
   .resize-handle {
     flex: none;
-    width: 9px;
+    width: 1px;
     align-self: stretch;
-    cursor: col-resize;
     position: relative;
-    background: transparent;
+    cursor: col-resize;
+    background: var(--border);
     touch-action: none;
+    transition: background var(--dur-fast);
   }
   .resize-handle::before {
     content: '';
     position: absolute;
     top: 0;
     bottom: 0;
-    left: 50%;
-    width: 1px;
-    transform: translateX(-50%);
-    background: var(--border);
-    transition: background var(--dur-fast), width var(--dur-fast);
+    left: -4px;
+    right: -4px;
   }
-  .grip {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 3px;
-    height: 30px;
-    border-radius: 2px;
-    transform: translate(-50%, -50%);
-    background: var(--accent);
-    opacity: 0;
-    transition: opacity var(--dur-fast);
-  }
-  .resize-handle:hover::before,
-  .resize-handle.dragging::before,
-  .resize-handle:focus-visible::before { background: var(--accent); width: 2px; }
-  .resize-handle:hover .grip,
-  .resize-handle.dragging .grip,
-  .resize-handle:focus-visible .grip { opacity: .9; }
+  .resize-handle:hover,
+  .resize-handle.dragging,
+  .resize-handle:focus-visible { background: var(--accent); }
   .resize-handle:focus-visible { outline: none; }
 </style>
