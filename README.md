@@ -30,13 +30,16 @@ Open markdown files in tabs, edit source, preview rendered output side-by-side, 
 - Conflict detection: external edits are surfaced with Reload / Keep mine options
 - Export to Obsidian vault (Local REST API or filesystem copy fallback)
 - Agent-agnostic review export — no hardcoded AI assistant names in output
+- Light / dark / system theme toggle — Paper (warm off-white) and Graphite (near-black) palettes, persisted across sessions and synced live to the OS preference when set to "system"
+- Ink-bloom open transition: a suminagashi (墨流し) ink-marbling animation plays when opening the first document; fully dependency-free canvas 2D, `prefers-reduced-motion` safe
+- Drag-and-drop `.md` files directly onto the window; native file-picker on the welcome screen
+- Status bar showing the abbreviated file path, line count, comment count, file type, and encoding
 
 ## Prerequisites
 
 - **macOS / Windows** — v1 targets; Linux may work but is untested
 - **Rust** ≥ 1.77 — install via [rustup](https://rustup.rs/)
-- **Tauri CLI** — `cargo install tauri-cli --version "^2"`
-- **Node.js** ≥ 20 + **npm** ≥ 10
+- **Node.js** ≥ 20 + **npm** ≥ 10 — the Tauri CLI is bundled as an npm dev dependency; no separate `cargo install` is required
 - **Windows:** WebView2 fixed-runtime bundled in the installer (no IT policy dependency)
 
 ## Install
@@ -47,7 +50,7 @@ Open markdown files in tabs, edit source, preview rendered output side-by-side, 
 git clone https://github.com/codelogiq/revenant.git
 cd revenant
 npm install
-cargo tauri build
+npm run tauri:build
 # Installer at: src-tauri/target/release/bundle/dmg/revenant_*.dmg
 ```
 
@@ -57,7 +60,7 @@ cargo tauri build
 git clone https://github.com/codelogiq/revenant.git
 cd revenant
 npm install
-cargo tauri build
+npm run tauri:build
 # Installer at: src-tauri\target\release\bundle\nsis\revenant_*_x64-setup.exe
 ```
 
@@ -105,6 +108,12 @@ npm run tauri:build
 | Desktop shell | Tauri 2 (Rust) |
 | Editor | CodeMirror 6 |
 | Markdown render | markdown-it + DOMPurify + Mermaid + highlight.js |
+| Design tokens | `src/lib/styles/tokens.css` — semantic CSS custom properties; Paper (light) and Graphite (dark) palettes on a single token layer |
+| Theming | `src/lib/stores/theme.ts` + `ThemeToggle.svelte` — light / dark / system mode, OS media-query sync, persisted to localStorage |
+| Typography | Geist (UI) · Literata (prose) · JetBrains Mono (editor/code) — self-hosted offline via `@fontsource` packages (no CDN) |
+| Open transition | `src/lib/fx/suminagashi.ts` + `Suminagashi.svelte` — dependency-free canvas 2D ink-marbling bloom, `prefers-reduced-motion` safe |
+| File picker | `tauri-plugin-dialog` — backs the welcome-screen "Open file…" button |
+| CLI integration | `tauri-plugin-cli` — `revenant --version` and positional file arguments |
 | Annotation storage | JSON sidecar (`.md.annotations.json`) next to each document |
 | Fuzzy re-anchoring | `similar` crate (Rust) — content-hash short-circuit + ≥0.75 normalized similarity |
 | Obsidian export | Local REST API + filesystem fallback |
