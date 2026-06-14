@@ -61,6 +61,11 @@
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
 
+    // Blend the ink INTO the document beneath: multiply stains the light page,
+    // screen makes the ink glow into the dark one.
+    const dark = document.documentElement.dataset.theme === 'dark';
+    canvas.style.mixBlendMode = dark ? 'screen' : 'multiply';
+
     // Randomize how the ink dissolves so no two opens look quite the same.
     const densityDissipation = 0.45 + Math.random() * 0.55; // 0.45–1.0
     const velocityDissipation = 0.88 + Math.random() * 0.28; // 0.88–1.16
@@ -107,7 +112,7 @@
       const t = now - start;
       sim!.step(0.016);
       const fade = hold ? 1 : t < SIM_MS ? 1 : Math.max(0, 1 - (t - SIM_MS) / FADE_MS);
-      sim!.render(fade, 0.58); // translucent ink — the workspace blur carries the transition
+      sim!.render(fade, 0.85); // ink blends (multiply/screen) into the doc; blur racks into focus
       if (!hold && t > SIM_MS + FADE_MS) { finish(); return; }
       raf = requestAnimationFrame(frame);
     };
