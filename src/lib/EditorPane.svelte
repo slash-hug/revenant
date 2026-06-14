@@ -27,7 +27,7 @@
   import { saveFile } from './types/ipc';
   import type { SourceAnchor, AnchorV1, IpcError, Annotation } from './types/ipc';
   import { annotationsStore } from './stores/annotations';
-  import { annotationFocus, focusAnnotation, setAnchorRect } from './stores/annotationFocus';
+  import { annotationFocus, focusAnnotation, hoverAnnotation, setAnchorRect } from './stores/annotationFocus';
 
   // -------------------------------------------------------------------------
   // Annotation focus / gutter-seal CM6 integration (T3.1 / D12)
@@ -49,6 +49,9 @@
 
   /** Replace the active annotation id inside the CM6 state. */
   const setActiveAnnotationEffect = StateEffect.define<string | null>();
+
+  /** Replace the hovered annotation id inside the CM6 state. */
+  const setHoverAnnotationEffect = StateEffect.define<string | null>();
 
   // ---------------------------------------------------------------------------
   // Seal GutterMarker
@@ -77,6 +80,10 @@
         '<circle class="s-ring" cx="10" cy="10" r="8.5" stroke-width="1.5" fill="none"/>' +
         '<path class="s-drop" d="M10 5.5 C10 5.5 7 9 7 11.2 A3 3 0 0 0 13 11.2 C13 9 10 5.5 10 5.5Z"/>' +
         '</svg>';
+      // Hover preview (mirrors the preview seal): faint brush on the hovered span.
+      const id = this.annotationId;
+      el.addEventListener('mouseenter', () => hoverAnnotation(id));
+      el.addEventListener('mouseleave', () => hoverAnnotation(null));
       return el;
     }
 
@@ -96,6 +103,7 @@
   interface AnnotationCmState {
     annotations: Annotation[];
     activeId: string | null;
+    hoverId: string | null;
   }
 
   /**
@@ -175,22 +183,33 @@
     doc: EditorState['doc'],
     annotations: Annotation[],
     activeId: string | null,
+    hoverId: string | null,
   ): DecorationSet {
-    if (!activeId) return Decoration.none;
-    const ann = annotations.find((a) => a.id === activeId);
-    if (!ann || (ann.status !== 'anchored' && ann.status !== 'block_level')) {
-      return Decoration.none;
-    }
+    // Paint the active span (full brush) and, if different, the hovered span
+    // (faint brush) — mirrors the preview's active/hover wash.
+    const washable = (id: string | null): { from: number; to: number } | null => {
+      if (!id) return null;
+      const ann = annotations.find((a) => a.id === id);
+      if (!ann || (ann.status !== 'anchored' && ann.status !== 'block_level')) return null;
+      try {
+        const range = resolveAnnotationDocRange(doc, ann);
+        return range && range.from < range.to ? range : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const activeRange = washable(activeId);
+    const hoverRange = hoverId && hoverId !== activeId ? washable(hoverId) : null;
+
+    // RangeSetBuilder requires ascending starts — collect, sort, then add.
+    const marks: { from: number; to: number; cls: string }[] = [];
+    if (activeRange) marks.push({ ...activeRange, cls: 'cm-annotation-wash' });
+    if (hoverRange) marks.push({ ...hoverRange, cls: 'cm-annotation-wash cm-annotation-wash--hover' });
+    marks.sort((a, b) => a.from - b.from);
+
     const builder = new RangeSetBuilder<Decoration>();
-    try {
-      // Wash the actual quoted words (resolveAnnotationDocRange), not the coarse
-      // stored char range — so a preview-created anchor washes the right text.
-      const range = resolveAnnotationDocRange(doc, ann);
-      if (!range || range.from >= range.to) return Decoration.none;
-      builder.add(range.from, range.to, Decoration.mark({ class: 'cm-annotation-wash' }));
-    } catch {
-      return Decoration.none;
-    }
+    for (const m of marks) builder.add(m.from, m.to, Decoration.mark({ class: m.cls }));
     return builder.finish();
   }
 
@@ -200,15 +219,16 @@
    */
   const annotationCmField = StateField.define<AnnotationCmState>({
     create() {
-      return { annotations: [], activeId: null };
+      return { annotations: [], activeId: null, hoverId: null };
     },
     update(state, tr) {
-      let { annotations, activeId } = state;
+      let { annotations, activeId, hoverId } = state;
       for (const effect of tr.effects) {
         if (effect.is(setAnnotationsEffect)) annotations = effect.value;
         if (effect.is(setActiveAnnotationEffect)) activeId = effect.value;
+        if (effect.is(setHoverAnnotationEffect)) hoverId = effect.value;
       }
-      return { annotations, activeId };
+      return { annotations, activeId, hoverId };
     },
   });
 
@@ -247,8 +267,8 @@
    *  so no Prec.lowest wrapping is required (Prec is not imported here). */
   const annotationWashExt: Extension = EditorView.decorations.of(
     (view) => {
-      const { annotations, activeId } = view.state.field(annotationCmField);
-      return buildWashDecorations(view.state.doc, annotations, activeId);
+      const { annotations, activeId, hoverId } = view.state.field(annotationCmField);
+      return buildWashDecorations(view.state.doc, annotations, activeId, hoverId);
     },
   );
 
@@ -405,6 +425,10 @@
             backgroundPosition: 'left bottom',
             paddingBottom: '0.05em',
           },
+          // Hover preview = the faint brush (must follow the base rule to win).
+          '.cm-annotation-wash--hover': {
+            backgroundImage: 'var(--ann-brush-img-faint)',
+          },
         }),
       ],
     });
@@ -426,15 +450,18 @@
     // on every hoverId update (hovering preview seals would otherwise fire one
     // per hover — harmless but wasteful).
     let lastActiveId: string | null = null;
+    let lastHoverId: string | null = null;
     let lastScrollNonce = -1;
     unsubFocus = annotationFocus.subscribe((s) => {
       if (!view) return;
-      // Only dispatch an effect when activeId changes (not on pure hoverId updates).
+      // Dispatch effects only when the relevant id actually changes.
       if (s.activeId !== lastActiveId) {
         lastActiveId = s.activeId;
-        view.dispatch({
-          effects: [setActiveAnnotationEffect.of(s.activeId)],
-        });
+        view.dispatch({ effects: [setActiveAnnotationEffect.of(s.activeId)] });
+      }
+      if (s.hoverId !== lastHoverId) {
+        lastHoverId = s.hoverId;
+        view.dispatch({ effects: [setHoverAnnotationEffect.of(s.hoverId)] });
       }
       // Scroll to the active annotation's line when scrollNonce bumps.
       if (s.scrollNonce !== lastScrollNonce && s.activeId !== null) {
