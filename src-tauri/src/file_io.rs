@@ -22,6 +22,7 @@ use std::io;
 use std::io::{Read as _, Seek, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use crate::paths::{assert_markdown, PathError};
 
@@ -195,6 +196,12 @@ where
     use notify::{Event, EventKind, RecursiveMode, Watcher};
 
     let path_for_watcher = watch_path.clone();
+    // Cheap dedup state: the (mtime, size) we last processed. Editors fire a burst
+    // of events per save (write + rename + chmod, atomic-save = temp+rename), and
+    // many carry no content change — skipping the whole-file read+hash when
+    // mtime/size are unchanged avoids re-reading the file several times per save
+    // (perf #5).
+    let last_meta: Arc<Mutex<Option<(SystemTime, u64)>>> = Arc::new(Mutex::new(None));
     let mut watcher = notify::RecommendedWatcher::new(
         move |res: Result<Event, notify::Error>| {
             if let Ok(event) = res {
@@ -204,6 +211,20 @@ where
                 );
                 if !is_modify {
                     return;
+                }
+
+                // Precheck: stat (mtime + size) is far cheaper than read + sha256.
+                // If unchanged since we last processed, this event is redundant
+                // (chmod / duplicate / rename of identical content) — skip it.
+                if let Some(stamp) = fs::metadata(&path_for_watcher)
+                    .ok()
+                    .and_then(|m| Some((m.modified().ok()?, m.len())))
+                {
+                    let mut last = last_meta.lock().unwrap_or_else(|e| e.into_inner());
+                    if last.as_ref() == Some(&stamp) {
+                        return;
+                    }
+                    *last = Some(stamp);
                 }
 
                 // Re-read to get the hash.
