@@ -156,15 +156,24 @@
     // the page so the hand-off to the live DOM shifts. Crop the strip off the top
     // so the texture maps 1:1 onto the live viewport.
     //
-    // The inset is derived from the snapshot's own backing scale (its px per CSS
-    // px), so this stays correct even when the canvas DPR is capped below the
-    // real devicePixelRatio (e.g. on 3x panels). Any sub-pixel residual left over
-    // is absorbed by the softened end-dissolve (see the frame loop below).
+    // The native WKWebView snapshot captures the webview BOUNDS, which are taller
+    // than the CSS layout viewport — the extra rows are webview area BELOW the page
+    // (the web content is top-flush: CSS origin = webview top-left, no native
+    // chrome in the capture; verified by landmarking the accent button at
+    // contentTopRow 0). Left as-is the shader squashes the taller image into the
+    // viewport, compressing the page so the hand-off shifts. Keep the top
+    // `contentH` rows and drop the bottom excess so the texture maps 1:1 onto the
+    // live viewport.
+    //
+    // contentH is derived from the snapshot's own backing scale (its px per CSS
+    // px), so this stays correct even when the canvas DPR is capped below the real
+    // devicePixelRatio (e.g. on 3x panels). Any sub-pixel residual is absorbed by
+    // the softened end-dissolve (see the frame loop below).
     if (docSource instanceof HTMLImageElement && w > 0 && h > 0) {
       const backScale = docSource.naturalWidth / w; // snapshot device px per CSS px
       const contentH = Math.round(h * backScale);    // snapshot px the viewport occupies
-      const insetTop = docSource.naturalHeight - contentH; // title-bar strip (snapshot px)
-      if (insetTop > 1) {
+      const excess = docSource.naturalHeight - contentH; // webview rows below the page
+      if (excess > 1) {
         const cropped = document.createElement('canvas');
         cropped.width = canvas.width;
         cropped.height = canvas.height;
@@ -172,8 +181,8 @@
         if (ctx) {
           ctx.drawImage(
             docSource,
-            0, insetTop, docSource.naturalWidth, contentH, // src: skip the top strip
-            0, 0, canvas.width, canvas.height,             // dst: fill the viewport-sized canvas
+            0, 0, docSource.naturalWidth, contentH, // src: top-flush content, drop the bottom excess
+            0, 0, canvas.width, canvas.height,       // dst: fill the viewport-sized canvas
           );
           docSource = cropped;
         }
