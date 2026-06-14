@@ -54,6 +54,11 @@
     addAnnotation: { anchor: AnchorV1; x: number; y: number; quoted: string };
   }>();
 
+  // Shortcut hint shown on the "+ Add comment" affordance (#10 discoverability).
+  const _isMac = typeof navigator !== 'undefined'
+    && (/Mac/i.test(navigator.platform || '') || /Mac OS X/i.test(navigator.userAgent || ''));
+  const addCommentShortcut = _isMac ? '⌘⌥M' : 'Ctrl+Alt+M';
+
   // "+ Add comment" affordance shown at the selection (mirrors EditorPane).
   let showAddComment = false;
   let pendingAnchor: AnchorV1 | null = null;
@@ -598,6 +603,7 @@
     <div class="add-comment-affordance" style="left: {btnX}px; top: {btnY + 6}px;" role="tooltip">
       <button class="add-comment-btn" type="button" on:click={handleAddCommentClick}>
         + Add comment
+        <span class="add-comment-kbd" aria-hidden="true">{addCommentShortcut}</span>
       </button>
     </div>
   {/if}
@@ -635,6 +641,16 @@
     cursor: pointer;
     box-shadow: var(--shadow-pop);
     white-space: nowrap;
+  }
+  .add-comment-kbd {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: var(--fw-semibold);
+    color: var(--text-on-accent);
+    background: color-mix(in srgb, #000 18%, transparent);
+    border-radius: var(--r-xs);
+    padding: 1px 5px;
+    letter-spacing: .02em;
   }
   .add-comment-btn::before {
     content: '';

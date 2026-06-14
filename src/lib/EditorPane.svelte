@@ -348,6 +348,9 @@
   // -------------------------------------------------------------------------
   // "Add comment" floating affordance state
   // -------------------------------------------------------------------------
+  const _isMac = typeof navigator !== 'undefined'
+    && (/Mac/i.test(navigator.platform || '') || /Mac OS X/i.test(navigator.userAgent || ''));
+  const addCommentShortcut = _isMac ? '⌘⌥M' : 'Ctrl+Alt+M';
   let showAddComment = false;
   let addCommentX = 0;
   let addCommentY = 0;
@@ -694,6 +697,7 @@
   >
     <button class="add-comment-btn" on:click={handleAddCommentClick}>
       + Add comment
+      <span class="add-comment-kbd" aria-hidden="true">{addCommentShortcut}</span>
     </button>
   </div>
 {/if}
@@ -731,6 +735,16 @@
     cursor: pointer;
     box-shadow: var(--shadow-pop);
     white-space: nowrap;
+  }
+  .add-comment-kbd {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: var(--fw-semibold);
+    color: var(--text-on-accent);
+    background: color-mix(in srgb, #000 18%, transparent);
+    border-radius: var(--r-xs);
+    padding: 1px 5px;
+    letter-spacing: .02em;
   }
   /* up-pointing arrow toward the selection */
   .add-comment-btn::before {
