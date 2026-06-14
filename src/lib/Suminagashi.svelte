@@ -158,7 +158,8 @@
     //
     // The inset is derived from the snapshot's own backing scale (its px per CSS
     // px), so this stays correct even when the canvas DPR is capped below the
-    // real devicePixelRatio (e.g. on 3x panels).
+    // real devicePixelRatio (e.g. on 3x panels). Any sub-pixel residual left over
+    // is absorbed by the softened end-dissolve (see the frame loop below).
     if (docSource instanceof HTMLImageElement && w > 0 && h > 0) {
       const backScale = docSource.naturalWidth / w; // snapshot device px per CSS px
       const contentH = Math.round(h * backScale);    // snapshot px the viewport occupies
@@ -202,13 +203,13 @@
     const aAng = Math.random() * Math.PI * 2;
     sim!.splat(cx, cy, Math.cos(aAng) * FORCE * 0.5, Math.sin(aAng) * FORCE * 0.5, cssColor('--text'), 0.009);
 
-    // The snapshot is a faithful capture of the live render, so we DON'T cross-fade
-    // the canvas out over the live DOM — that overlaps two layers and ghosts
-    // wherever they aren't pixel-aligned. Instead the canvas stays fully opaque
-    // through the whole reveal, then we hard-cut to the live DOM (unmount). Because
-    // the pixels match, the cut is seamless.
+    // Reveal, then a short dissolve to the live DOM. The canvas stays fully opaque
+    // through the reveal; at the end it fades out while the snapshot simultaneously
+    // softens (endSoften), so the dissolving layer has no sharp edges to ghost or
+    // jump against the live DOM if the captured texture is off by a sub-pixel.
     const SIM_MS = 820;  // ink blooms + draws the page into focus
-    const HOLD_MS = 90;  // hold the fully-focused page a beat, then cut
+    const HOLD_MS = 60;  // hold the focused page a beat
+    const CUT_MS = 150;  // soft dissolve to the live DOM
     const start = performance.now();
     const frame = (now: number) => {
       if (!sim) return;
@@ -218,8 +219,11 @@
       const globalFocus = hold ? 0 : Math.max(0, Math.min(1, (t - SIM_MS * 0.5) / (SIM_MS * 0.5)));
       // Ink blooms, then trails off so the page is clean by the time it's focused.
       const ink = hold ? 0.85 : 0.85 * (1 - Math.max(0, Math.min(1, (t - SIM_MS * 0.45) / (SIM_MS * 0.5))));
-      sim.render(1, globalFocus, ink); // fade=1: canvas opaque until the hard cut
-      if (!hold && t > SIM_MS + HOLD_MS) { finish(); return; }
+      const cutT = Math.max(0, t - (SIM_MS + HOLD_MS));
+      const fade = hold ? 1 : Math.max(0, 1 - cutT / CUT_MS);
+      const endSoften = hold ? 0 : Math.min(1, cutT / CUT_MS);
+      sim.render(fade, globalFocus, ink, endSoften);
+      if (!hold && t > SIM_MS + HOLD_MS + CUT_MS) { finish(); return; }
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);

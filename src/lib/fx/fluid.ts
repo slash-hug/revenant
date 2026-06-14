@@ -205,13 +205,19 @@ uniform sampler2D uCoverage;
 uniform sampler2D uDye;
 uniform float uGlobalFocus;
 uniform float uInk;
+uniform float uEndSoften;
 void main () {
   float cov = texture(uCoverage, vUv).r;
-  // The snapshot is now a faithful capture of the live render (native WKWebView
-  // snapshot on macOS, html-to-image on Chromium/WebView2), so the strokes can
-  // draw the page all the way into focus — and the end cross-fade to the live
-  // DOM is seamless because the two are pixel-identical.
+  // The snapshot is a faithful capture of the live render (native WKWebView
+  // snapshot on macOS, html-to-image on Chromium/WebView2), so the strokes draw
+  // the page all the way into focus.
   float focus = smoothstep(0.04, 0.55, max(cov, uGlobalFocus));
+  // At the very end the canvas dissolves to the live DOM underneath. Soften the
+  // snapshot as it fades (uEndSoften 0→1) so its edges go blurry: a soft, fading
+  // layer can't ghost or "jump" against the live DOM even if the captured texture
+  // is off by a sub-pixel, and the live DOM (emerging sharp underneath) keeps the
+  // page from ever looking re-blurred.
+  focus *= (1.0 - uEndSoften);
   vec3 sharp = texture(uDoc, vUv).rgb;
   vec3 soft = texture(uDocBlur, vUv).rgb;
   vec3 docCol = mix(soft, sharp, focus);
@@ -549,9 +555,10 @@ export class FluidSim {
    * Render the document snapshot — blurred, sharpened along the ink coverage and
    * the global-focus ramp — with the live ink painted on top.
    * globalFocus: 0..1 end ramp that brings any unreached areas into focus;
-   * ink: opacity of the visible ink strokes; fade: canvas CSS opacity.
+   * ink: opacity of the visible ink strokes; fade: canvas CSS opacity;
+   * endSoften: 0..1 blur-out of the snapshot during the final dissolve.
    */
-  render(fade: number, globalFocus: number, ink: number) {
+  render(fade: number, globalFocus: number, ink: number, endSoften = 0) {
     const gl = this.gl;
     if (!this.docTex || !this.docBlur) { this.canvas.style.opacity = String(fade); return; }
     const D = this.programs.display;
@@ -564,6 +571,7 @@ export class FluidSim {
     gl.uniform1i(D.uniforms['uDye'], this.dye.read.attach(3));
     gl.uniform1f(D.uniforms['uGlobalFocus'], globalFocus);
     gl.uniform1f(D.uniforms['uInk'], ink);
+    gl.uniform1f(D.uniforms['uEndSoften'], endSoften);
     this.blit(null);
     this.canvas.style.opacity = String(fade);
   }
