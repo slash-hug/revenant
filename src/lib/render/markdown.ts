@@ -393,7 +393,26 @@ async function loadMermaid() {
 
   const theme = currentMermaidTheme();
   if (theme !== _mermaidTheme) {
-    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme });
+    // Mermaid's stock 'dark' node fill (#1f2020) is almost the same as the app's
+    // dark card, so diagrams read as faint outlines. Lift the node fill off the
+    // background and use the app's accent border + light text for contrast.
+    const themeVariables = theme === 'dark'
+      ? {
+          darkMode: true,
+          background: '#1C1D20',
+          mainBkg: '#2b2f37',          // flowchart node fill — lifted off the card
+          nodeBorder: '#7FA6CC',        // app accent
+          nodeTextColor: '#D6D7DA',
+          primaryColor: '#2b2f37',
+          primaryBorderColor: '#7FA6CC',
+          primaryTextColor: '#D6D7DA',
+          secondaryColor: '#343842',
+          tertiaryColor: '#23262d',
+          lineColor: '#9aa0a6',
+          textColor: '#D6D7DA',
+        }
+      : undefined;
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme, themeVariables });
     _mermaidTheme = theme;
   }
   return mermaid;
