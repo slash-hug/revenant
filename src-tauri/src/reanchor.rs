@@ -162,7 +162,7 @@ fn build_needle(ann: &Annotation) -> String {
 /// Returns `(new_start, new_end)` **(0-indexed)** if found, else `None`.
 /// Prefers the match closest to the stored 0-indexed anchor line.
 fn probe_verbatim(ann: &Annotation, lines: &[&str]) -> Option<(u32, u32)> {
-    let quoted = &ann.quoted_text;
+    let quoted = ann.quoted_text.as_str();
     if quoted.is_empty() {
         return None;
     }
@@ -175,19 +175,30 @@ fn probe_verbatim(ann: &Annotation, lines: &[&str]) -> Option<(u32, u32)> {
     let window_hi = (stored_start + REANCHOR_WINDOW).min(lines.len());
     let mut best: Option<(u32, u32, usize)> = None; // (start, end, distance)
 
-    for i in window_lo..window_hi {
-        if i + span > lines.len() {
-            break;
+    if span <= 1 {
+        // Single-line selection — almost always a SUBSTRING of a line (a word or
+        // phrase, e.g. "Randy"), not a whole line. Match by containment, preferring
+        // the line closest to the stored anchor. Whole-line equality would detach
+        // every sub-line selection — which is the common case.
+        for (i, line) in lines.iter().enumerate().take(window_hi).skip(window_lo) {
+            if line.contains(quoted) {
+                let dist = i.abs_diff(stored_start);
+                if best.map_or(true, |(_, _, d)| dist < d) {
+                    best = Some((i as u32, i as u32, dist));
+                }
+            }
         }
-        if lines[i..i + span] == quoted_lines[..] {
-            let dist = i.abs_diff(stored_start);
-            let better = best.map_or(true, |(_, _, d)| dist < d);
-            if better {
-                best = Some((
-                    i as u32,
-                    (i + span - 1) as u32,
-                    dist,
-                ));
+    } else {
+        // Multi-line selection: match the consecutive run of lines verbatim.
+        for i in window_lo..window_hi {
+            if i + span > lines.len() {
+                break;
+            }
+            if lines[i..i + span] == quoted_lines[..] {
+                let dist = i.abs_diff(stored_start);
+                if best.map_or(true, |(_, _, d)| dist < d) {
+                    best = Some((i as u32, (i + span - 1) as u32, dist));
+                }
             }
         }
     }
@@ -588,5 +599,38 @@ mod tests {
         // Must be Detached because the target is outside the ±W window.
         assert_eq!(result.annotation.status, AnchorStatus::Detached,
             "target outside ±W should detach");
+    }
+
+    // ── 11. Sub-line selection (a word inside a longer line) re-anchors ───────
+    //
+    // The common real case: the quoted_text is a WORD selected within a longer
+    // line ("Randy" inside "**Author:** Randy ..."), not a whole line. Whole-line
+    // equality would detach it; substring containment must re-anchor it.
+
+    #[test]
+    fn sub_line_word_selection_reanchors_after_insertion() {
+        let original = "# Title\n\n**Author:** Randy (clogic@gmail.com)\nbody\n";
+        let old_hash = sha256_hex(original.as_bytes());
+
+        // "Randy" is a sub-line selection on line 2 (0-indexed).
+        let ann = make_ann("randy", 2, 2, "Randy", "", "body");
+
+        // Insert 3 lines above; the Author line moves from index 2 → 5.
+        let edited = "new 1\nnew 2\nnew 3\n# Title\n\n**Author:** Randy (clogic@gmail.com)\nbody\n";
+        let new_hash = sha256_hex(edited.as_bytes());
+
+        let result = reanchor(&ann, edited, &new_hash, &old_hash);
+        assert_eq!(result.annotation.status, AnchorStatus::Anchored,
+            "a word selected inside a line must re-anchor, not detach");
+        assert_eq!(result.annotation.line_start, 5,
+            "should follow the line to its new position (+3)");
+
+        // And if the word itself is extended (Randy → Randy Williams), the
+        // substring still anchors to that line rather than detaching.
+        let renamed = "# Title\n\n**Author:** Randy Williams (clogic@gmail.com)\nbody\n";
+        let renamed_hash = sha256_hex(renamed.as_bytes());
+        let r2 = reanchor(&ann, renamed, &renamed_hash, &old_hash);
+        assert_eq!(r2.annotation.status, AnchorStatus::Anchored,
+            "substring still present → still anchored");
     }
 }
