@@ -48,7 +48,7 @@
   onMount(() => {
     if (reduce && !hold) { finish(); return; }
     run();
-    if (!hold) backstop = setTimeout(finish, 2600);
+    if (!hold) backstop = setTimeout(finish, 1500);
   });
   onDestroy(() => {
     if (raf) cancelAnimationFrame(raf);
@@ -62,8 +62,14 @@
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
 
+    // Randomize how the ink dissolves so no two opens look quite the same.
+    const densityDissipation = 0.45 + Math.random() * 0.55; // 0.45–1.0
+    const velocityDissipation = 0.88 + Math.random() * 0.28; // 0.88–1.16
     try {
-      sim = new FluidSim(canvas, { simRes: 160, dyeRes: 640, curl: 44, pressureIters: 20 });
+      sim = new FluidSim(canvas, {
+        simRes: 160, dyeRes: 640, curl: 44, pressureIters: 20,
+        densityDissipation, velocityDissipation,
+      });
     } catch {
       finish(); // no WebGL2 → skip the effect gracefully
       return;
@@ -85,28 +91,19 @@
     const cx = 0.5, cy = 0.46;
     inks.forEach((c) => {
       const pAng = Math.random() * Math.PI * 2;
-      const rad = 0.05 + 0.09 * Math.random(); // tight: 0.05–0.14 from center
+      const rad = 0.15 + 0.11 * Math.random(); // spread: 0.15–0.26 from center
       const x = cx + Math.cos(pAng) * rad;
       const y = cy + Math.sin(pAng) * rad * 0.85;
       // each stroke flies a different direction + magnitude → no uniform swirl
       const vAng = Math.random() * Math.PI * 2;
       const vMag = FORCE * (0.55 + 0.75 * Math.random());
-      sim!.splat(x, y, Math.cos(vAng) * vMag, Math.sin(vAng) * vMag, c, 0.0055);
+      sim!.splat(x, y, Math.cos(vAng) * vMag, Math.sin(vAng) * vMag, c, 0.0065);
     });
-    // a couple of denser ink drops right at the heart of the bloom
-    for (let k = 0; k < 2; k++) {
-      const vAng = Math.random() * Math.PI * 2;
-      sim!.splat(
-        cx + (Math.random() - 0.5) * 0.05,
-        cy + (Math.random() - 0.5) * 0.05,
-        Math.cos(vAng) * FORCE * 0.6,
-        Math.sin(vAng) * FORCE * 0.6,
-        sub(cssColor('--text'), bg),
-        0.007,
-      );
-    }
+    // one anchor drop near the heart of the bloom
+    const aAng = Math.random() * Math.PI * 2;
+    sim!.splat(cx, cy, Math.cos(aAng) * FORCE * 0.5, Math.sin(aAng) * FORCE * 0.5, sub(cssColor('--text'), bg), 0.009);
 
-    const SIM_MS = 1100, FADE_MS = 520;
+    const SIM_MS = 770, FADE_MS = 330;
     const start = performance.now();
     const frame = (now: number) => {
       const t = now - start;
