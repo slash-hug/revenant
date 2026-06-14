@@ -245,3 +245,15 @@ export function getSettings(): Promise<Settings> {
 export function setSettings(settings: Settings): Promise<void> {
   return invoke<void>("set_settings", { settings });
 }
+
+/**
+ * Capture the current web content as a `data:image/png;base64,...` URL.
+ *
+ * Backs the suminagashi open transition. Uses the native WKWebView snapshot on
+ * macOS (real renderer → fonts match the live DOM exactly); throws IpcError with
+ * code "SNAPSHOT_UNSUPPORTED" on other platforms, where the caller falls back to
+ * html-to-image (which renders correctly on Chromium / WebView2).
+ */
+export function snapshotWebview(): Promise<string> {
+  return invoke<string>("snapshot_webview");
+}

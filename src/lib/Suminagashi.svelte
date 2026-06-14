@@ -11,6 +11,16 @@
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
   import { FluidSim } from './fx/fluid';
   import { toCanvas } from 'html-to-image';
+  import { snapshotWebview } from './types/ipc';
+
+  // macOS uses the native WKWebView snapshot (real renderer → fonts match the
+  // live DOM exactly). WebKit can't render @font-face inside html-to-image's
+  // SVG-foreignObject rasteriser, so on macOS that path drops the editor font and
+  // the transition "snaps" on hand-off. Chromium / WebView2 (Windows) render it
+  // correctly, so html-to-image stays the fallback there.
+  const isMac =
+    typeof navigator !== 'undefined' &&
+    (/Mac/i.test(navigator.platform || '') || /Mac OS X/i.test(navigator.userAgent || ''));
 
   /** Preview mode: keep simulating, no fade / no `done`. */
   export let hold = false;
@@ -77,25 +87,51 @@
       return;
     }
 
-    // Cover the document immediately (opaque bg) so the live sharp doc never
-    // flashes during the async snapshot below.
-    sim.fillBackground(cssColor('--bg'));
-
-    // Snapshot the freshly-opened workspace — the transition reveals THIS, sharp,
-    // along the ink's path. The fluid canvas is a sibling, so it isn't captured.
+    // Capture a faithful bitmap of the freshly-opened workspace — the transition
+    // reveals THIS, sharp, along the ink's path.
+    //
+    // Ordering differs by capture method:
+    //  - Native (macOS): the snapshot reads the on-screen pixels, so the fluid
+    //    canvas must stay transparent (it's a sibling on top of .ws) until AFTER
+    //    the capture — only then do we fillBackground() to cover. There's an
+    //    unavoidable brief moment of the sharp doc while WKWebView renders the
+    //    snapshot.
+    //  - html-to-image (Chromium/WebView2): reads the DOM directly, so occlusion
+    //    is irrelevant — cover FIRST to avoid any flash, then capture.
     const wsEl = document.querySelector('.ws') as HTMLElement | null;
-    let docCanvas: HTMLCanvasElement | null = null;
-    if (wsEl) {
+    let docSource: TexImageSource | null = null;
+
+    // Let the just-opened workspace lay out + paint before capturing it.
+    if (document.fonts?.ready) { try { await document.fonts.ready; } catch { /* ignore */ } }
+    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+    if (!sim) return; // disposed/finished while awaiting
+
+    const htmlToImageCapture = async (): Promise<TexImageSource | null> => {
+      if (!wsEl) return null;
       try {
-        // Ensure the web fonts are loaded so the snapshot embeds them (otherwise
-        // it falls back to system fonts and the cross-fade "snaps" the type).
-        if (document.fonts?.ready) await document.fonts.ready;
-        docCanvas = await toCanvas(wsEl, { pixelRatio: dpr, backgroundColor: cssRaw('--bg') || undefined, cacheBust: false });
-      } catch { docCanvas = null; }
+        return await toCanvas(wsEl, { pixelRatio: dpr, backgroundColor: cssRaw('--bg') || undefined, cacheBust: false });
+      } catch { return null; }
+    };
+
+    if (isMac) {
+      try {
+        const dataUrl = await snapshotWebview();
+        const img = new Image();
+        img.src = dataUrl;
+        await img.decode();
+        docSource = img;
+      } catch { docSource = null; }
+      if (!sim) return;
+      sim.fillBackground(cssColor('--bg')); // cover now that the capture is done
+      if (!docSource) docSource = await htmlToImageCapture(); // native unavailable → fall back
+    } else {
+      sim.fillBackground(cssColor('--bg')); // cover first — no flash on Chromium/WebView2
+      docSource = await htmlToImageCapture();
     }
+
     if (!sim) return; // disposed/finished while awaiting the snapshot
-    if (!docCanvas) { finish(); return; }
-    sim.setDocument(docCanvas, canvas.width, canvas.height);
+    if (!docSource) { finish(); return; }
+    sim.setDocument(docSource, canvas.width, canvas.height);
 
     const inks: RGB[] = [
       cssColor('--text'), cssColor('--accent'), cssColor('--detached'),

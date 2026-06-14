@@ -18,6 +18,7 @@ import {
   exportObsidian,
   getSettings,
   setSettings,
+  snapshotWebview,
   type Annotation,
   type Sidecar,
   type Settings,
@@ -37,6 +38,7 @@ describe("IPC contract", () => {
     expect(typeof exportObsidian).toBe("function");
     expect(typeof getSettings).toBe("function");
     expect(typeof setSettings).toBe("function");
+    expect(typeof snapshotWebview).toBe("function");
   });
 
   it("openFile calls invoke with correct command name", async () => {
@@ -114,5 +116,12 @@ describe("IPC contract", () => {
       updated_at: new Date().toISOString(),
     };
     expect(["anchored", "detached", "block_level"]).toContain(ann.status);
+  });
+
+  it("snapshotWebview invokes the snapshot_webview command with no args", async () => {
+    mockInvoke.mockResolvedValueOnce("data:image/png;base64,AAAA");
+    const url = await snapshotWebview();
+    expect(mockInvoke).toHaveBeenCalledWith("snapshot_webview");
+    expect(url).toBe("data:image/png;base64,AAAA");
   });
 });
