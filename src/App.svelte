@@ -19,11 +19,13 @@
   import AnnotationDrawer from './lib/AnnotationDrawer.svelte';
   import ConflictModal from './lib/ConflictModal.svelte';
   import AnnotationComposer from './lib/AnnotationComposer.svelte';
+  import AnnotationPopover from './lib/AnnotationPopover.svelte';
   import ThemeToggle from './lib/ThemeToggle.svelte';
   import Suminagashi from './lib/Suminagashi.svelte';
 
   import { tabsStore, activeTab, tabList } from './lib/stores/tabs';
   import { annotationsStore } from './lib/stores/annotations';
+  import { annotationFocus, clearFocus } from './lib/stores/annotationFocus';
   import { openFile, getSettings, exportObsidian } from './lib/types/ipc';
   import type { AnchorV1, Sidecar, IpcError } from './lib/types/ipc';
   import { generateReview } from './lib/ReviewExporter';
@@ -120,6 +122,16 @@
     } else if (!tab) {
       loadedPath = null;
     }
+  });
+
+  // D11/TRAP 4 — annotationFocus is not tab-scoped; clear it on every tab switch
+  // so a stale activeId from the previous tab does not ghost-wash the new one.
+  // scrollNonce is left unchanged (clearFocus does not touch it).
+  $effect(() => {
+    // Reading $activeTab?.id registers the dependency; the body runs whenever it
+    // changes (including initial mount, which is a no-op — activeId is already null).
+    $activeTab?.id;
+    clearFocus();
   });
 
   // -------------------------------------------------------------------------
@@ -420,6 +432,17 @@
   {/if}
 
   <ConflictModal open={conflict.open} filePath={conflict.path} on:reload={handleReload} on:keepMine={handleKeepMine} />
+
+  <!-- Shared annotation popover — portal-mounted at App root, position: fixed.
+       Driven by $annotationFocus.activeId. Placement is coordinate-driven from
+       the seal/marker rect emitted via the focus store (D4). -->
+  <AnnotationPopover
+    annotation={$annotationFocus.activeId
+      ? ($annotationsStore.annotations.find((a) => a.id === $annotationFocus.activeId) ?? null)
+      : null}
+    anchorRect={$annotationFocus.anchorRect}
+    on:delete={(e) => { annotationsStore.deleteAnnotation(e.detail.id); }}
+  />
 
   {#if compose}
     <AnnotationComposer
