@@ -63,7 +63,7 @@
     canvas.height = Math.round(h * dpr);
 
     try {
-      sim = new FluidSim(canvas, { simRes: 160, dyeRes: 640, curl: 30, pressureIters: 20 });
+      sim = new FluidSim(canvas, { simRes: 160, dyeRes: 640, curl: 44, pressureIters: 20 });
     } catch {
       finish(); // no WebGL2 → skip the effect gracefully
       return;
@@ -79,21 +79,32 @@
       sub(cssColor('--accent'), bg),
     ];
 
-    // Seed ink drops across the canvas with outward/swirling velocity.
-    const FORCE = 620;
+    // Seed a tight cluster of ink drops near the center, each flung in its own
+    // randomized direction so the brushstrokes feather out non-uniformly.
+    const FORCE = 740;
     const cx = 0.5, cy = 0.46;
-    inks.forEach((c, i) => {
-      const ang = (i / inks.length) * Math.PI * 2 + 0.6;
-      const rad = 0.16 + 0.1 * Math.random();
-      const x = cx + Math.cos(ang) * rad;
-      const y = cy + Math.sin(ang) * rad * 0.82;
-      // velocity: a tangential swirl + a little outward push
-      const vx = (-Math.sin(ang) * 0.8 + Math.cos(ang) * 0.5) * FORCE;
-      const vy = (Math.cos(ang) * 0.8 + Math.sin(ang) * 0.5) * FORCE;
-      sim!.splat(x, y, vx, vy, c, 0.009);
+    inks.forEach((c) => {
+      const pAng = Math.random() * Math.PI * 2;
+      const rad = 0.05 + 0.09 * Math.random(); // tight: 0.05–0.14 from center
+      const x = cx + Math.cos(pAng) * rad;
+      const y = cy + Math.sin(pAng) * rad * 0.85;
+      // each stroke flies a different direction + magnitude → no uniform swirl
+      const vAng = Math.random() * Math.PI * 2;
+      const vMag = FORCE * (0.55 + 0.75 * Math.random());
+      sim!.splat(x, y, Math.cos(vAng) * vMag, Math.sin(vAng) * vMag, c, 0.0055);
     });
-    // a calm central drop to anchor the bloom
-    sim!.splat(cx, cy, 0, -FORCE * 0.4, sub(cssColor('--text'), bg), 0.012);
+    // a couple of denser ink drops right at the heart of the bloom
+    for (let k = 0; k < 2; k++) {
+      const vAng = Math.random() * Math.PI * 2;
+      sim!.splat(
+        cx + (Math.random() - 0.5) * 0.05,
+        cy + (Math.random() - 0.5) * 0.05,
+        Math.cos(vAng) * FORCE * 0.6,
+        Math.sin(vAng) * FORCE * 0.6,
+        sub(cssColor('--text'), bg),
+        0.007,
+      );
+    }
 
     const SIM_MS = 1100, FADE_MS = 520;
     const start = performance.now();
