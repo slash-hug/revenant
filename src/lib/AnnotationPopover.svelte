@@ -17,8 +17,8 @@
    * whitelisted as non-dismissing so clicking a different seal changes the
    * active annotation without closing the popover first.
    *
-   * Delete: two-step inline confirm replicating AnnotationDrawer.pendingDeleteId
-   * pattern — no native confirm() (C plan T1.3).
+   * Delete: immediate + undoable — the button dispatches 'delete'; the parent
+   * removes the annotation and shows an Undo toast (UX #11).
    *
    * Events (legacy createEventDispatcher for compatibility with consuming
    * components that use on:delete):
@@ -54,8 +54,6 @@
   let placement: 'below' | 'above' = 'below';
   let caretLeft = 24; // px from the popover's left edge — points at the span center
 
-  // Two-step inline delete (replicates AnnotationDrawer.pendingDeleteId — no native confirm).
-  let pendingDeleteId: string | null = null;
 
   const dispatch = createEventDispatcher<{ delete: { id: string } }>();
 
@@ -140,15 +138,8 @@
     outsideListenerAttached = false;
   }
 
-  // ── Delete flow ──────────────────────────────────────────────────────────────
-
-  function requestDelete(id: string) { pendingDeleteId = id; }
-  function cancelDelete() { pendingDeleteId = null; }
-  function confirmDelete(id: string) {
-    pendingDeleteId = null;
-    dispatch('delete', { id });
-    clearFocus();
-  }
+  // Delete is immediate + undoable: the button dispatches 'delete' and the parent
+  // (App) removes the annotation, shows an Undo toast, and clears focus (UX #11).
 
   // ── Lifecycle ────────────────────────────────────────────────────────────────
 
@@ -163,10 +154,6 @@
 
   // Recompute placement whenever the annotation or its anchor rect changes.
   $: if (annotation) {
-    // Reset pending delete if the active annotation changed.
-    if (pendingDeleteId !== null && annotation.id !== pendingDeleteId) {
-      pendingDeleteId = null;
-    }
     // Attach outside-click listener (deferred first time).
     tick().then(() => {
       computePlacement();
@@ -174,7 +161,6 @@
     });
   } else {
     detachOutsideListener();
-    pendingDeleteId = null;
   }
 
   // Re-run placement if anchorRect changes while a popover is open.
@@ -204,16 +190,10 @@
         <span class="badge badge-open">Anchored</span>
       {/if}
       <span class="spacer"></span>
-      {#if pendingDeleteId === annotation.id}
-        <span class="del-confirm">
-          <button class="del-cancel" type="button" on:click={cancelDelete}>Cancel</button>
-          <button class="del-yes" type="button" on:click={() => confirmDelete(annotation!.id)}>Delete</button>
-        </span>
-      {:else}
         <button
           class="pop-del"
           type="button"
-          on:click={() => requestDelete(annotation!.id)}
+          on:click={() => dispatch('delete', { id: annotation!.id })}
           aria-label="Delete annotation"
           title="Delete"
         >
@@ -222,7 +202,6 @@
             <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12" />
           </svg>
         </button>
-      {/if}
     </div>
 
     <!-- Quoted snippet (italic Literata, ink-left-border) -->
@@ -318,22 +297,6 @@
   }
   .pop-del svg { width: 14px; height: 14px; }
   .pop-del:hover { color: var(--danger-text); background: var(--danger-soft); }
-
-  .del-confirm { display: inline-flex; gap: 4px; align-items: center; }
-  .del-cancel, .del-yes {
-    font: inherit;
-    font-size: var(--fs-xs);
-    font-weight: var(--fw-medium);
-    line-height: 1;
-    cursor: pointer;
-    padding: 4px 8px;
-    border-radius: var(--r-sm);
-    border: 1px solid transparent;
-  }
-  .del-cancel { background: transparent; color: var(--text-muted); border-color: var(--border); }
-  .del-cancel:hover { color: var(--text); border-color: var(--border-strong); }
-  .del-yes { background: var(--danger); color: #fff; }
-  .del-yes:hover { background: color-mix(in srgb, var(--danger) 88%, #000); }
 
   .pop-snippet {
     margin: 0;

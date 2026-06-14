@@ -6,6 +6,7 @@
    */
   import { annotationsStore } from './stores/annotations';
   import { annotationFocus, focusAnnotation } from './stores/annotationFocus';
+  import { deleteAnnotationWithUndo } from './annotationActions';
   import type { Annotation } from './types/ipc';
 
   export let open: boolean = true;
@@ -19,14 +20,11 @@
     notesDebounceTimer = setTimeout(() => annotationsStore.updateGeneralNotes(value), NOTES_DEBOUNCE_MS);
   }
 
-  // Inline two-step delete confirm (no native confirm() dialog).
-  let pendingDeleteId: string | null = null;
-  function requestDelete(e: MouseEvent, id: string) { e.stopPropagation(); pendingDeleteId = id; }
-  function cancelDelete(e: MouseEvent) { e.stopPropagation(); pendingDeleteId = null; }
-  function confirmDelete(e: MouseEvent, id: string) {
+  // Delete immediately + offer an Undo toast (UX #11) — stopPropagation so the
+  // click doesn't also trigger the card's focus/navigate handler.
+  function handleDelete(e: MouseEvent, id: string) {
     e.stopPropagation();
-    pendingDeleteId = null;
-    annotationsStore.deleteAnnotation(id);
+    deleteAnnotationWithUndo(id);
   }
 
   /** Allow keyboard activation of the card body (Enter / Space). */
@@ -102,18 +100,11 @@
                     <span class="badge badge-open">Anchored</span>
                   {/if}
                   <span class="spacer"></span>
-                  {#if pendingDeleteId === ann.id}
-                    <span class="del-confirm">
-                      <button class="del-cancel" type="button" on:click={(e) => cancelDelete(e)}>Cancel</button>
-                      <button class="del-yes" type="button" on:click={(e) => confirmDelete(e, ann.id)}>Delete</button>
-                    </span>
-                  {:else}
-                    <button class="cmt-del" type="button" on:click={(e) => requestDelete(e, ann.id)} aria-label="Delete comment" title="Delete">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12" />
-                      </svg>
-                    </button>
-                  {/if}
+                  <button class="cmt-del" type="button" on:click={(e) => handleDelete(e, ann.id)} aria-label="Delete comment" title="Delete">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12" />
+                    </svg>
+                  </button>
                 </div>
                 {#if ann.quoted_text}
                   <blockquote class="cmt-snippet">{ann.quoted_text}</blockquote>
@@ -140,18 +131,11 @@
                   <span class="chip chip-detached">{anchorLabel(ann)}</span>
                   <span class="badge badge-detached">Anchor lost</span>
                   <span class="spacer"></span>
-                  {#if pendingDeleteId === ann.id}
-                    <span class="del-confirm">
-                      <button class="del-cancel" type="button" on:click={cancelDelete}>Cancel</button>
-                      <button class="del-yes" type="button" on:click={(e) => confirmDelete(e, ann.id)}>Delete</button>
-                    </span>
-                  {:else}
-                    <button class="cmt-del" type="button" on:click={(e) => requestDelete(e, ann.id)} aria-label="Delete comment" title="Delete">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12" />
-                      </svg>
-                    </button>
-                  {/if}
+                  <button class="cmt-del" type="button" on:click={(e) => handleDelete(e, ann.id)} aria-label="Delete comment" title="Delete">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12" />
+                    </svg>
+                  </button>
                 </div>
                 {#if ann.quoted_text}
                   <blockquote class="cmt-snippet">{ann.quoted_text}</blockquote>
@@ -318,23 +302,6 @@
   }
   .cmt-del svg { width: 14px; height: 14px; }
   .cmt-del:hover { color: var(--danger-text); background: var(--danger-soft); }
-
-  /* Inline delete confirm */
-  .del-confirm { display: inline-flex; gap: 4px; align-items: center; }
-  .del-cancel, .del-yes {
-    font: inherit;
-    font-size: var(--fs-xs);
-    font-weight: var(--fw-medium);
-    line-height: 1;
-    cursor: pointer;
-    padding: 4px 8px;
-    border-radius: var(--r-sm);
-    border: 1px solid transparent;
-  }
-  .del-cancel { background: transparent; color: var(--text-muted); border-color: var(--border); }
-  .del-cancel:hover { color: var(--text); border-color: var(--border-strong); }
-  .del-yes { background: var(--danger); color: #fff; }
-  .del-yes:hover { background: color-mix(in srgb, var(--danger) 88%, #000); }
 
   .cmt-snippet {
     margin: 0;
