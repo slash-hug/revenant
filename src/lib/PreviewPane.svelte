@@ -544,9 +544,22 @@
     handlePreviewMouseUp(); // builds pendingAnchor from the current selection
     handleAddCommentClick();
   }
+  // Dismiss the affordance on any mousedown that isn't on the affordance itself —
+  // covers clicking into the editor pane or anywhere else (the per-pane selection
+  // handlers don't fire for the other pane). Clicking the affordance button is
+  // whitelisted so its own click still registers.
+  function handleAffordanceDismiss(e: MouseEvent) {
+    if (!showAddComment) return;
+    if ((e.target as Element | null)?.closest?.('.add-comment-affordance')) return;
+    showAddComment = false;
+  }
   onMount(() => {
     window.addEventListener('keydown', handleAddCommentKeydown);
-    return () => window.removeEventListener('keydown', handleAddCommentKeydown);
+    window.addEventListener('mousedown', handleAffordanceDismiss);
+    return () => {
+      window.removeEventListener('keydown', handleAddCommentKeydown);
+      window.removeEventListener('mousedown', handleAffordanceDismiss);
+    };
   });
 </script>
 

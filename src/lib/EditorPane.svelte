@@ -683,6 +683,20 @@
       showAddComment = false;
     }
   }
+
+  // Dismiss the affordance on any mousedown that isn't on the affordance itself —
+  // covers clicking into the preview pane or elsewhere (the editor keeps its
+  // greyed selection on blur, so handleSelectionChange wouldn't fire). The
+  // affordance button is whitelisted so its own click still registers.
+  function handleAffordanceDismiss(e: MouseEvent) {
+    if (!showAddComment) return;
+    if ((e.target as Element | null)?.closest?.('.add-comment-affordance')) return;
+    showAddComment = false;
+  }
+  onMount(() => {
+    window.addEventListener('mousedown', handleAffordanceDismiss);
+    return () => window.removeEventListener('mousedown', handleAffordanceDismiss);
+  });
 </script>
 
 <div class="editor-pane" bind:this={editorEl} role="textbox" aria-label="Markdown editor" aria-multiline="true">
