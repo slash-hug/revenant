@@ -1,10 +1,13 @@
 <script lang="ts">
   /**
    * ConflictModal.svelte — blocking conflict-resolution dialog (C12).
-   * Two options: Reload (take disk) / Keep mine. Esc / dismiss = Keep mine
+   * Two options: Reload (take disk) / Keep mine. Esc / backdrop = Keep mine
    * (safe default — no data loss). Wired to file_changed + save HASH_MISMATCH.
+   *
+   * Uses the native <dialog> element via showModal(), which provides a real
+   * focus trap, Esc handling, and an inert background for free.
    */
-  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import { createEventDispatcher } from 'svelte';
   import { basename } from './util/path';
 
   export let open: boolean = false;
@@ -12,85 +15,80 @@
 
   const dispatch = createEventDispatcher<{ reload: void; keepMine: void }>();
 
+  let dialog: HTMLDialogElement | undefined;
+
+  // Drive the native modal from the `open` prop.
+  $: if (dialog) {
+    if (open && !dialog.open) dialog.showModal();
+    else if (!open && dialog.open) dialog.close();
+  }
+
   function handleReload() { dispatch('reload'); }
   function handleKeepMine() { dispatch('keepMine'); }
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (!open) return;
-    if (e.key === 'Escape') { e.preventDefault(); handleKeepMine(); }
-  }
-
-  onMount(() => window.addEventListener('keydown', handleKeydown));
-  onDestroy(() => window.removeEventListener('keydown', handleKeydown));
+  // Esc (native `cancel`) → keep edits (safe default). Prevent the auto-close;
+  // the parent clears `open`, which closes the dialog via the reactive block.
+  function handleCancel(e: Event) { e.preventDefault(); handleKeepMine(); }
 
   $: fileName = basename(filePath);
 </script>
 
-{#if open}
-  <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <!-- svelte-ignore a11y-interactive-supports-focus -->
-  <div class="modal-scrim" on:keydown={handleKeydown}>
-    <div
-      class="modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="conflict-title"
-      aria-describedby="conflict-desc"
-    >
-      <h3 id="conflict-title">File changed externally</h3>
-      <p id="conflict-desc">
-        <strong>{fileName}</strong> was modified outside Revenant while you had unsaved changes.
-        Keep your edits, or reload the version on disk?
-      </p>
+<dialog
+  bind:this={dialog}
+  class="modal"
+  aria-labelledby="conflict-title"
+  aria-describedby="conflict-desc"
+  on:cancel={handleCancel}
+>
+  <h3 id="conflict-title">File changed externally</h3>
+  <p id="conflict-desc">
+    <strong>{fileName}</strong> was modified outside Revenant while you had unsaved changes.
+    Keep your edits, or reload the version on disk?
+  </p>
 
-      <div class="modal-actions">
-        <button type="button" class="btn btn-secondary" on:click={handleReload}>
-          Reload from disk
-        </button>
-        <!-- svelte-ignore a11y-autofocus -->
-        <button type="button" class="btn btn-primary" on:click={handleKeepMine} autofocus>
-          Keep my edits
-        </button>
-      </div>
-
-      <p class="modal-hint">Press <kbd>Esc</kbd> to keep your edits — the safe default.</p>
-    </div>
+  <div class="modal-actions">
+    <button type="button" class="btn btn-secondary" on:click={handleReload}>
+      Reload from disk
+    </button>
+    <!-- svelte-ignore a11y-autofocus -->
+    <button type="button" class="btn btn-primary" on:click={handleKeepMine} autofocus>
+      Keep my edits
+    </button>
   </div>
-{/if}
+
+  <p class="modal-hint">Press <kbd>Esc</kbd> to keep your edits — the safe default.</p>
+</dialog>
 
 <style>
-  .modal-scrim {
-    position: fixed;
-    inset: 0;
-    z-index: var(--z-scrim);
-    background: color-mix(in srgb, var(--bg) 35%, rgba(0, 0, 0, .45));
-    backdrop-filter: blur(2px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    animation: scrim-in var(--dur-base) var(--ease-out);
-  }
-  @keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
-
   .modal {
+    margin: auto; /* center in the viewport */
     width: 440px;
     max-width: 92vw;
     background: var(--surface);
+    color: var(--text);
     border: 1px solid var(--border);
     border-radius: var(--r-xl);
     box-shadow: var(--shadow-lg);
     padding: 22px 24px;
+  }
+  .modal[open] {
     display: flex;
     flex-direction: column;
     gap: var(--sp-3);
     animation: modal-in var(--dur-slow) var(--ease-out);
   }
+  .modal::backdrop {
+    background: color-mix(in srgb, var(--bg) 35%, rgba(0, 0, 0, .45));
+    backdrop-filter: blur(2px);
+    animation: scrim-in var(--dur-base) var(--ease-out);
+  }
+  @keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
   @keyframes modal-in {
     from { opacity: 0; transform: translateY(8px) scale(.985); }
     to { opacity: 1; transform: none; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .modal-scrim, .modal { animation: none; }
+    .modal[open], .modal::backdrop { animation: none; }
   }
 
   .modal h3 {
