@@ -19,6 +19,7 @@
   import AnnotationDrawer from './lib/AnnotationDrawer.svelte';
   import ConflictModal from './lib/ConflictModal.svelte';
   import ThemeToggle from './lib/ThemeToggle.svelte';
+  import Suminagashi from './lib/Suminagashi.svelte';
 
   import { tabsStore, activeTab, tabList } from './lib/stores/tabs';
   import { annotationsStore } from './lib/stores/annotations';
@@ -34,6 +35,7 @@
   let conflict = $state<{ open: boolean; path: string }>({ open: false, path: '' });
   let toast = $state<string>('');
   let recentFiles = $state<string[]>(loadRecent());
+  let bloom = $state(false); // suminagashi open-transition overlay
 
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
   let loadedPath: string | null = null;
@@ -81,10 +83,13 @@
   // Open / reload
   // -------------------------------------------------------------------------
   async function openDoc(path: string) {
+    const wasEmpty = $tabList.length === 0;
     try {
       const res = await openFile(path);
       tabsStore.openTab(res.path, res.content, res.content_hash);
       rememberRecent(res.path);
+      // Ink-bloom transition on entering the workspace from the welcome screen.
+      if (wasEmpty) bloom = true;
     } catch (err) {
       showToast(`Could not open file: ${errMessage(err)}`);
     }
@@ -378,6 +383,10 @@
   {/if}
 
   <ConflictModal open={conflict.open} filePath={conflict.path} on:reload={handleReload} on:keepMine={handleKeepMine} />
+
+  {#if bloom}
+    <Suminagashi on:done={() => (bloom = false)} />
+  {/if}
 
   {#if toast}
     <div class="toast-stack">
