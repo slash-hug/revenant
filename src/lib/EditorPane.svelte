@@ -416,6 +416,16 @@
             handleSelectionChange(update.view);
           }
         }),
+        // Show the affordance after a pointer selection settles. A drag ends in a
+        // selectionSet that the listener above catches, but a double-/triple-click
+        // word/line select is finalized by CM on mouseup/dblclick and doesn't
+        // reliably surface there — so re-check on those events too (deferred a
+        // tick so CM has applied the selection). Mirrors the preview's
+        // mouseup-driven affordance so both panes behave identically.
+        EditorView.domEventHandlers({
+          mouseup: (_event, v) => { window.setTimeout(() => handleSelectionChange(v), 0); return false; },
+          dblclick: (_event, v) => { window.setTimeout(() => handleSelectionChange(v), 0); return false; },
+        }),
         rvTheme,
         // Seal gutter theme
         EditorView.theme({
@@ -690,7 +700,14 @@
   // affordance button is whitelisted so its own click still registers.
   function handleAffordanceDismiss(e: MouseEvent) {
     if (!showAddComment) return;
-    if ((e.target as Element | null)?.closest?.('.add-comment-affordance')) return;
+    const target = e.target as Element | null;
+    if (target?.closest?.('.add-comment-affordance')) return;
+    // Mousedowns inside the editor are owned by CodeMirror's selection, which
+    // drives handleSelectionChange (shows the affordance on word/range select,
+    // hides it on a collapsing click). Dismissing here would kill the affordance
+    // that a double-click's word-selection just created in the SAME mousedown
+    // (CM updates the selection during mousedown, then this bubbles to window).
+    if (editorEl && target && editorEl.contains(target)) return;
     showAddComment = false;
   }
   onMount(() => {

@@ -426,6 +426,12 @@
   let scrollEls: HTMLElement[] = [];
   let scrollSyncRaf = 0;
   let pendingScrollLine = 0;
+  // Last editor line we synced the preview to. The sync block below depends on
+  // `syncDegraded`, which is reassigned on every `content` re-pass (i.e. any App
+  // re-render) — without this guard the block re-fires and yanks the preview back
+  // to `scrollLine` even when the editor never moved, so a user scrolling the
+  // preview gets snapped to the top. Only sync on a real line change.
+  let lastSyncedScrollLine = -1;
 
   function rebuildScrollIndex() {
     if (!previewEl) { scrollLines = []; scrollEls = []; return; }
@@ -437,9 +443,13 @@
     scrollEls = sorted.map((b) => b.el);
   }
 
-  // rAF-throttle the sync: editor scroll fires scrollLine changes continuously, so
-  // coalesce to one scrollIntoView per frame (perf #3).
-  $: if (previewEl && scrollLine > 0 && !syncDegraded) {
+  // Editor→preview scroll sync. DORMANT: `scrollLine` is not currently fed by the
+  // parent (disabled pending #34 — section anchoring drifts). The `lastSyncedScrollLine`
+  // guard is what keeps it inert: without it, `syncDegraded` reassigning on every
+  // content re-pass would re-fire this and yank the preview to the top.
+  // rAF-throttle so a future re-enable coalesces continuous scroll to one sync/frame.
+  $: if (previewEl && scrollLine > 0 && !syncDegraded && scrollLine !== lastSyncedScrollLine) {
+    lastSyncedScrollLine = scrollLine;
     pendingScrollLine = scrollLine;
     if (!scrollSyncRaf) {
       scrollSyncRaf = requestAnimationFrame(() => {
@@ -450,9 +460,24 @@
   }
 
   function syncScrollToLine(line: number) {
-    if (!previewEl) return;
+    if (!previewEl || !pvScrollEl) return;
     const idx = nearestLineIndex(scrollLines, line);
-    if (idx >= 0) scrollEls[idx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (idx < 0) return;
+    // Align the matched block to the TOP of the preview so the editor's top
+    // visible line and the preview's top line show the same content. ('nearest'
+    // would instead snap it to whichever edge is closest — the bottom when
+    // scrolling down — leaving the synced line off-screen-low.) Scroll the
+    // container directly rather than scrollIntoView so we never scroll ancestors
+    // or fight a user mid-gesture in the other pane.
+    const el = scrollEls[idx];
+    const elRect = el.getBoundingClientRect();
+    const cRect = pvScrollEl.getBoundingClientRect();
+    const top = pvScrollEl.scrollTop + (elRect.top - cRect.top);
+    // Instant, not smooth: continuous editor scrolling fires a sync per line, and
+    // a ~300ms smooth animation per step interrupts the previous one — so the
+    // preview ends up stranded mid-animation ("hit or miss"). Instant tracking
+    // keeps the preview locked to the editor; the editor's own scroll is smooth.
+    pvScrollEl.scrollTo({ top, behavior: 'auto' });
   }
 
   // -------------------------------------------------------------------------

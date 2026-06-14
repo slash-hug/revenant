@@ -549,6 +549,10 @@
               {/if}
               {#if viewMode === 'preview' || viewMode === 'split'}
                 <div class="pane preview-wrap">
+                  <!-- Editor→preview scroll sync is disabled pending #34 (section
+                       anchoring drifts ~a section). PreviewPane keeps the dormant
+                       machinery; re-enabling = pass scrollLine + re-add the
+                       EditorPane scroll emit. -->
                   <PreviewPane
                     content={$activeTab.content}
                     on:addAnnotation={(e) => requestAnnotation(e.detail)}

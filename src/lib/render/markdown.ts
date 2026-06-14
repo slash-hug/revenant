@@ -184,12 +184,17 @@ const md = new MarkdownIt({
 // ---------------------------------------------------------------------------
 // Source-line + block-ID injection (C7/C8)
 //
-// We override the fence (code block), bullet_list_open, ordered_list_open,
-// table_open, and blockquote_open renderer rules to inject:
+// We override the fence (code block), list_item_open, table_open,
+// blockquote_open, paragraph_open, and heading_open renderer rules to inject:
 //   data-source-line  — 1-based line number of the opening token
 //   data-block-id     — unique id used for scroll sync and annotation anchoring
 //   data-block-type   — 'mermaid' | 'table' | 'list' | 'blockquote' | 'code'
 //                        (lets the anchor layer pick block vs source anchoring)
+//
+// List items carry their own metadata (not just the list container): a TIGHT
+// list renders inline text directly inside <li> with no inner <p>, so without
+// this the "+ Add comment" affordance and annotation anchoring have no
+// source-mapped ancestor to attach to when the user selects text in a list.
 // ---------------------------------------------------------------------------
 
 const defaultFence = md.renderer.rules.fence?.bind(md.renderer) ?? (() => '');
@@ -228,6 +233,23 @@ md.renderer.rules.blockquote_open = function (tokens, idx) {
   const blockId = nextBlockId();
   const sourceLine = token.map ? token.map[0] + 1 : 0;
   return `<blockquote data-block-id="${blockId}" data-source-line="${sourceLine}" data-block-type="blockquote">`;
+};
+
+// List items: inject per-item metadata so selecting text inside a (tight) list
+// item — which has no inner <p> to carry data-source-line — still resolves to a
+// source line, so the "+ Add comment" affordance and annotation anchoring work.
+const defaultListItemOpen = md.renderer.rules.list_item_open?.bind(md.renderer);
+md.renderer.rules.list_item_open = function (tokens, idx, options, env, self) {
+  const token = tokens[idx];
+  const blockId = nextBlockId();
+  const sourceLine = token.map ? token.map[0] + 1 : 0;
+  const base = defaultListItemOpen
+    ? defaultListItemOpen(tokens, idx, options, env, self)
+    : self.renderToken(tokens, idx, options);
+  return base.replace(
+    /^<li/,
+    `<li data-block-id="${blockId}" data-source-line="${sourceLine}" data-block-type="list"`,
+  );
 };
 
 // Paragraphs.
