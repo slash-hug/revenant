@@ -150,12 +150,12 @@
 
     if (anchor.type === 'source') {
       const a = anchor.anchor;
-      await annotationsStore.addAnnotation(
+      annotationsStore.addAnnotation(
         a.start_line, a.end_line, a.start_char, a.end_char, a.quoted_text, body, 'anchored',
       );
     } else {
       // Block-level anchor (Mermaid/table): no precise source range available.
-      await annotationsStore.addAnnotation(0, 0, 0, 0, anchor.anchor.quoted_text, body, 'block_level');
+      annotationsStore.addAnnotation(0, 0, 0, 0, anchor.anchor.quoted_text, body, 'block_level');
     }
     drawerOpen = true;
   }

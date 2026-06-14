@@ -2,6 +2,12 @@
 //!
 //! Unit tests are also colocated in `annotations.rs`.  This file adds tests
 //! that span load → modify → save → reload workflows.
+//!
+//! T2.4 (A9/C-CRLF-BLAST): CRLF regression test drives `frontmatter::merge_into_doc`
+//! (the `obsidian.rs:164` export/merge path) with a CRLF document and asserts
+//! CRLF is preserved after merge. The preview path (frontend `stripFrontmatter`)
+//! is NOT tested here — it is already CRLF-aware and does not exercise the Rust
+//! frontmatter code.
 
 #[cfg(test)]
 mod integration {
@@ -139,5 +145,71 @@ mod integration {
             LoadResult::Loaded(s) => assert_eq!(s.annotations.len(), 1),
             _ => panic!("expected Loaded after fresh save"),
         }
+    }
+
+    // ── T2.4: CRLF regression via the export/merge path (A9/C-CRLF-BLAST) ───
+    //
+    // Drives `frontmatter::merge_into_doc` (the obsidian.rs:164 path) with a
+    // CRLF document, asserting the merged output has YAML correctly applied and
+    // CRLF line endings are preserved.
+
+    #[test]
+    fn merge_into_doc_preserves_crlf_round_trip() {
+        use crate::frontmatter::merge_into_doc;
+        use serde_yaml::Value;
+
+        // A CRLF document with existing frontmatter.
+        let crlf_doc = "---\r\ntitle: Existing\r\nauthor: Alice\r\n---\r\n# Body content\r\nWith CRLF\r\n";
+
+        // Overlay: add a new key and override the title.
+        let overlay: serde_yaml::Mapping = serde_yaml::from_str("title: Updated\ntags: [review]").unwrap();
+
+        let result = merge_into_doc(crlf_doc, &overlay).unwrap();
+
+        // YAML must be correctly merged.
+        assert!(result.contains("title:"), "title key must be present");
+        assert!(result.contains("Updated"), "overlay title must win");
+        assert!(result.contains("author:"), "base author must be preserved");
+        assert!(result.contains("Alice"), "base author value must be preserved");
+        assert!(result.contains("tags:"), "overlay tags must be present");
+
+        // Body must be preserved.
+        assert!(result.contains("# Body content"), "body must be preserved");
+
+        // CRLF must be preserved throughout — no bare LF-only lines in the
+        // frontmatter section.
+        assert!(result.contains("\r\n"), "output must contain CRLF");
+        // Opening and closing fences must use CRLF.
+        assert!(result.starts_with("---\r\n"), "opening fence must use CRLF");
+
+        // Round-trip: parse the result and check YAML fields again.
+        let reparsed = crate::frontmatter::parse(&result).unwrap();
+        let m = reparsed.mapping.expect("reparsed must have mapping");
+        assert_eq!(
+            m.get(&Value::String("title".into())),
+            Some(&Value::String("Updated".into())),
+            "title must survive CRLF round-trip"
+        );
+        assert_eq!(
+            m.get(&Value::String("author".into())),
+            Some(&Value::String("Alice".into())),
+            "author must survive CRLF round-trip"
+        );
+    }
+
+    /// CRLF document WITHOUT frontmatter: adding overlay frontmatter via
+    /// `merge_into_doc` must produce correct CRLF fences.
+    #[test]
+    fn merge_into_doc_crlf_no_prior_frontmatter() {
+        use crate::frontmatter::merge_into_doc;
+
+        let crlf_no_fm = "# Title\r\nSome content.\r\n";
+        let overlay: serde_yaml::Mapping = serde_yaml::from_str("added: yes").unwrap();
+        let result = merge_into_doc(crlf_no_fm, &overlay).unwrap();
+
+        assert!(result.contains("added:"), "added key must be present");
+        assert!(result.contains("# Title"), "body must be preserved");
+        // Since the input uses CRLF, the injected fences should too.
+        assert!(result.contains("\r\n"), "CRLF from input must be reflected in output");
     }
 }

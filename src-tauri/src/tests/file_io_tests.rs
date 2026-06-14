@@ -63,4 +63,47 @@ mod integration {
             "expected hash mismatch error"
         );
     }
+
+    // ── T2.1: fd-lock advisory lock tests ─────────────────────────────────────
+
+    /// A hash mismatch (simulating concurrent external write) must reject the
+    /// save and NOT modify the on-disk content. This covers the in-process TOCTOU
+    /// case: we simulate "external write happened before save_file re-hashes" by
+    /// simply providing a stale expected_hash.
+    #[test]
+    fn fd_lock_hash_mismatch_does_not_write() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("lock_test.md");
+        let initial_content = "initial content\n";
+        fs::write(&path, initial_content).unwrap();
+
+        let stale_hash = sha256_hex(b"definitely wrong hash");
+        let err = save_file(&path, "new content\n", &stale_hash).unwrap_err();
+
+        // Must be a HashMismatch.
+        let msg = format!("{}", err);
+        assert!(msg.contains("Hash mismatch"), "got: {}", msg);
+
+        // File must still have the initial content (not modified).
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert_eq!(on_disk, initial_content, "file must be unmodified on mismatch");
+    }
+
+    /// save_file correctly truncates when writing shorter content over longer.
+    /// This exercises the `set_len` call added for the fd-lock implementation.
+    #[test]
+    fn save_file_truncates_when_new_content_shorter() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("truncate.md");
+        let long_content = "# Very long initial content that will be replaced\n\nWith much less text.\n";
+        fs::write(&path, long_content).unwrap();
+
+        let hash = sha256_hex(long_content.as_bytes());
+        let short = "short\n";
+        let new_hash = save_file(&path, short, &hash).unwrap();
+
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert_eq!(on_disk, short, "file must contain only the new shorter content");
+        assert_eq!(new_hash, sha256_hex(short.as_bytes()));
+    }
 }

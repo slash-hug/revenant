@@ -30,6 +30,13 @@ use crate::annotations::{Annotation, AnchorStatus};
 /// Similarity threshold for re-anchoring (C3).
 pub const SIMILARITY_THRESHOLD: f64 = 0.75;
 
+/// Half-width of the search window around the stored anchor line (T1.1/A5).
+///
+/// The fuzzy search and verbatim probe are restricted to lines
+/// `[stored_line - W, stored_line + W]` to bound worst-case O(doc) → O(W)
+/// per annotation, keeping re-anchor latency constant for large documents.
+pub const REANCHOR_WINDOW: usize = 50;
+
 /// The outcome of re-anchoring a single annotation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReanchorResult {
@@ -149,35 +156,49 @@ fn build_needle(ann: &Annotation) -> String {
     parts.join("\n")
 }
 
-/// Probe the document for a verbatim match of `ann.quoted_text`.
+/// Probe the document for a verbatim match of `ann.quoted_text` within ±W lines
+/// of the stored anchor position (T1.1/A5 windowed search).
 ///
 /// Returns `(new_start, new_end)` **(0-indexed)** if found, else `None`.
 /// Prefers the match closest to the stored 0-indexed anchor line.
 fn probe_verbatim(ann: &Annotation, lines: &[&str]) -> Option<(u32, u32)> {
-    let quoted = &ann.quoted_text;
+    let quoted = ann.quoted_text.as_str();
     if quoted.is_empty() {
         return None;
     }
     let quoted_lines: Vec<&str> = quoted.lines().collect();
     let span = quoted_lines.len();
 
-    // Search the whole document for verbatim match; prefer closest to stored anchor.
+    // Search within ±W of the stored anchor; prefer closest match.
     let stored_start = ann.line_start as usize; // 0-indexed
+    let window_lo = stored_start.saturating_sub(REANCHOR_WINDOW);
+    let window_hi = (stored_start + REANCHOR_WINDOW).min(lines.len());
     let mut best: Option<(u32, u32, usize)> = None; // (start, end, distance)
 
-    for i in 0..lines.len() {
-        if i + span > lines.len() {
-            break;
+    if span <= 1 {
+        // Single-line selection — almost always a SUBSTRING of a line (a word or
+        // phrase, e.g. "Randy"), not a whole line. Match by containment, preferring
+        // the line closest to the stored anchor. Whole-line equality would detach
+        // every sub-line selection — which is the common case.
+        for (i, line) in lines.iter().enumerate().take(window_hi).skip(window_lo) {
+            if line.contains(quoted) {
+                let dist = i.abs_diff(stored_start);
+                if best.map_or(true, |(_, _, d)| dist < d) {
+                    best = Some((i as u32, i as u32, dist));
+                }
+            }
         }
-        if lines[i..i + span] == quoted_lines[..] {
-            let dist = i.abs_diff(stored_start);
-            let better = best.map_or(true, |(_, _, d)| dist < d);
-            if better {
-                best = Some((
-                    i as u32,
-                    (i + span - 1) as u32,
-                    dist,
-                ));
+    } else {
+        // Multi-line selection: match the consecutive run of lines verbatim.
+        for i in window_lo..window_hi {
+            if i + span > lines.len() {
+                break;
+            }
+            if lines[i..i + span] == quoted_lines[..] {
+                let dist = i.abs_diff(stored_start);
+                if best.map_or(true, |(_, _, d)| dist < d) {
+                    best = Some((i as u32, (i + span - 1) as u32, dist));
+                }
             }
         }
     }
@@ -208,16 +229,40 @@ fn best_fuzzy_match(
         return None;
     }
 
+    // Restrict the slide range to ±W lines around the stored anchor (T1.1/A5).
+    let anchor = stored_anchor_line as usize;
+    let slide_lo = anchor.saturating_sub(REANCHOR_WINDOW);
+    let slide_hi = (anchor + REANCHOR_WINDOW).min(lines.len().saturating_sub(window_size));
+
+    if slide_lo > slide_hi {
+        return None;
+    }
+
+    // Pre-compute needle character count for pre-filter.
+    let needle_char_count = needle.chars().count();
+
     // We'll collect candidates keyed by (distance, start_idx) → similarity.
     // BTreeMap gives us deterministic ordering: smallest key first.
     let mut candidates: BTreeMap<(usize, usize), f64> = BTreeMap::new();
 
-    for i in 0..=lines.len().saturating_sub(window_size) {
+    for i in slide_lo..=slide_hi {
         let window = lines[i..i + window_size].join("\n");
+
+        // Cheap pre-filter: skip if character count ratio is too far off.
+        // A similarity of ≥0.75 requires the lengths to not differ too much.
+        // We allow a 4× ratio (0.25 of the longer → similarity < 0.25, well below
+        // threshold) as the filter is conservative and avoids redundant char-diff.
+        let w_chars = window.chars().count();
+        let max_c = needle_char_count.max(w_chars);
+        let min_c = needle_char_count.min(w_chars);
+        if max_c > 0 && (min_c as f64) / (max_c as f64) < 0.25 {
+            continue;
+        }
+
         let sim = normalized_similarity(needle, &window);
         if sim >= SIMILARITY_THRESHOLD {
             // Distance is measured from stored 0-indexed anchor to the window-start.
-            let dist = i.abs_diff(stored_anchor_line as usize);
+            let dist = i.abs_diff(anchor);
             candidates
                 .entry((dist, i))
                 .and_modify(|s| {
@@ -490,5 +535,102 @@ mod tests {
             "Important notes here.",
         );
         assert!(s >= SIMILARITY_THRESHOLD, "got {}", s);
+    }
+
+    // ── 9. Window bound: hit inside ±W re-anchors ─────────────────────────────
+    //
+    // T1.1: verify that a text moved within REANCHOR_WINDOW lines of the stored
+    // anchor is found by the windowed search.
+
+    #[test]
+    fn windowed_hit_inside_bound_reanchors() {
+        // Build a document where the annotated line is initially at position W-1
+        // (just inside the window), then simulate a doc where it has moved to
+        // position W (still inside the ±W window).
+        let w = REANCHOR_WINDOW;
+
+        // Original: target text at line 0.
+        let mut original_lines = vec!["padding line"; w + 10];
+        original_lines[0] = "the anchored sentence here";
+        let original = original_lines.join("\n");
+        let old_hash = sha256_hex(original.as_bytes());
+
+        // Edited: target text moved forward by W lines (still inside ±W from stored 0).
+        let mut edited_lines = vec!["padding line"; w + 10];
+        edited_lines[w] = "the anchored sentence here"; // moved to exactly +W
+        let edited = edited_lines.join("\n");
+        let new_hash = sha256_hex(edited.as_bytes());
+
+        let ann = make_ann("win-hit", 0, 0, "the anchored sentence here", "", "padding line");
+
+        let result = reanchor(&ann, &edited, &new_hash, &old_hash);
+        // Should still be found within the ±W window.
+        assert_eq!(result.annotation.status, AnchorStatus::Anchored,
+            "target within ±W should re-anchor");
+        assert_eq!(result.annotation.line_start, w as u32,
+            "should find at offset +W");
+    }
+
+    // ── 10. Window bound: miss outside ±W marks detached ─────────────────────
+    //
+    // T1.1: verify that text moved MORE than REANCHOR_WINDOW lines away is NOT
+    // found and returns Detached (the window bound is enforced).
+
+    #[test]
+    fn miss_outside_window_marks_detached() {
+        let w = REANCHOR_WINDOW;
+
+        // Original: unique target at line 0.
+        let mut original_lines: Vec<String> = (0..=w * 3 + 5).map(|i| format!("filler {i}")).collect();
+        original_lines[0] = "unique target text outside window".to_string();
+        let original = original_lines.join("\n");
+        let old_hash = sha256_hex(original.as_bytes());
+
+        // Edited: move target to line W+10 (outside the ±W window from stored line 0).
+        let outside_pos = w + 10;
+        let mut edited_lines: Vec<String> = (0..=w * 3 + 5).map(|i| format!("filler {i}")).collect();
+        edited_lines[outside_pos] = "unique target text outside window".to_string();
+        let edited = edited_lines.join("\n");
+        let new_hash = sha256_hex(edited.as_bytes());
+
+        let ann = make_ann("win-miss", 0, 0, "unique target text outside window", "", "filler 1");
+
+        let result = reanchor(&ann, &edited, &new_hash, &old_hash);
+        // Must be Detached because the target is outside the ±W window.
+        assert_eq!(result.annotation.status, AnchorStatus::Detached,
+            "target outside ±W should detach");
+    }
+
+    // ── 11. Sub-line selection (a word inside a longer line) re-anchors ───────
+    //
+    // The common real case: the quoted_text is a WORD selected within a longer
+    // line ("Randy" inside "**Author:** Randy ..."), not a whole line. Whole-line
+    // equality would detach it; substring containment must re-anchor it.
+
+    #[test]
+    fn sub_line_word_selection_reanchors_after_insertion() {
+        let original = "# Title\n\n**Author:** Randy (clogic@gmail.com)\nbody\n";
+        let old_hash = sha256_hex(original.as_bytes());
+
+        // "Randy" is a sub-line selection on line 2 (0-indexed).
+        let ann = make_ann("randy", 2, 2, "Randy", "", "body");
+
+        // Insert 3 lines above; the Author line moves from index 2 → 5.
+        let edited = "new 1\nnew 2\nnew 3\n# Title\n\n**Author:** Randy (clogic@gmail.com)\nbody\n";
+        let new_hash = sha256_hex(edited.as_bytes());
+
+        let result = reanchor(&ann, edited, &new_hash, &old_hash);
+        assert_eq!(result.annotation.status, AnchorStatus::Anchored,
+            "a word selected inside a line must re-anchor, not detach");
+        assert_eq!(result.annotation.line_start, 5,
+            "should follow the line to its new position (+3)");
+
+        // And if the word itself is extended (Randy → Randy Williams), the
+        // substring still anchors to that line rather than detaching.
+        let renamed = "# Title\n\n**Author:** Randy Williams (clogic@gmail.com)\nbody\n";
+        let renamed_hash = sha256_hex(renamed.as_bytes());
+        let r2 = reanchor(&ann, renamed, &renamed_hash, &old_hash);
+        assert_eq!(r2.annotation.status, AnchorStatus::Anchored,
+            "substring still present → still anchored");
     }
 }

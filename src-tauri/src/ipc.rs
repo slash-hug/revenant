@@ -148,11 +148,14 @@ pub struct ExportObsidianResult {
 /// Convert an `ipc::Annotation` (transport layer) to an
 /// `annotations::Annotation` (on-disk / data-engine format).
 ///
-/// `context_before` and `context_after` are not present in the IPC type — they
-/// are internal re-anchoring data preserved only in the sidecar.  When the
-/// frontend supplies an annotation without these fields (e.g. a brand-new
-/// annotation), they default to empty.
-fn ann_from_ipc(a: Annotation) -> crate::annotations::Annotation {
+/// `context_before` and `context_after` are derived by the caller from the
+/// document content (T1.2/A2/A6) — they are internal re-anchoring data
+/// preserved only in the sidecar and never cross the IPC seam.
+fn ann_from_ipc(
+    a: Annotation,
+    context_before: String,
+    context_after: String,
+) -> crate::annotations::Annotation {
     crate::annotations::Annotation {
         id: a.id,
         line_start: a.line_start,
@@ -160,8 +163,8 @@ fn ann_from_ipc(a: Annotation) -> crate::annotations::Annotation {
         char_start: a.char_start,
         char_end: a.char_end,
         quoted_text: a.quoted_text,
-        context_before: String::new(),
-        context_after: String::new(),
+        context_before,
+        context_after,
         body: a.body,
         status: match a.status.as_str() {
             "detached" => crate::annotations::AnchorStatus::Detached,
@@ -197,13 +200,40 @@ fn ann_to_ipc(a: crate::annotations::Annotation) -> Annotation {
     }
 }
 
-/// Convert an `ipc::Sidecar` to an `annotations::Sidecar`.
-fn sidecar_from_ipc(s: Sidecar) -> crate::annotations::Sidecar {
+/// Convert an `ipc::Sidecar` to an `annotations::Sidecar`, deriving
+/// `context_before`/`context_after` from `doc_lines` for each annotation.
+///
+/// Per A6/T1.2: annotations are 0-indexed; `context_before` = line at
+/// `line_start - 1` (empty if line_start == 0); `context_after` = line at
+/// `line_end + 1` (empty if past EOF).
+fn sidecar_from_ipc_with_context(s: Sidecar, doc_lines: &[&str]) -> crate::annotations::Sidecar {
+    let annotations = s
+        .annotations
+        .into_iter()
+        .map(|a| {
+            let context_before = if a.line_start > 0 {
+                doc_lines
+                    .get((a.line_start - 1) as usize)
+                    .copied()
+                    .unwrap_or("")
+                    .to_string()
+            } else {
+                String::new()
+            };
+            let context_after = doc_lines
+                .get((a.line_end + 1) as usize)
+                .copied()
+                .unwrap_or("")
+                .to_string();
+            ann_from_ipc(a, context_before, context_after)
+        })
+        .collect();
+
     crate::annotations::Sidecar {
         schema_version: 1,
         doc_content_hash: s.doc_content_hash,
         general_notes: s.general_notes,
-        annotations: s.annotations.into_iter().map(ann_from_ipc).collect(),
+        annotations,
     }
 }
 
@@ -457,31 +487,112 @@ pub fn save_file(
     })
 }
 
+/// Core re-anchor logic extracted from the `load_annotations` IPC command.
+///
+/// Given a sidecar and the current document content + its hash, applies
+/// in-memory re-anchoring when the stored hash differs from the current hash.
+/// This is the exact guard that the async command wraps in `spawn_blocking`.
+///
+/// Extracted so that integration tests can call the real production logic
+/// without needing a live `AppHandle` (closes T1.4/R-OFFSET-TEST fidelity
+/// gap — tests no longer duplicate this logic inline).
+pub fn apply_reanchor_to_sidecar(
+    mut sidecar: crate::annotations::Sidecar,
+    doc_content: &str,
+    doc_hash: &str,
+) -> crate::annotations::Sidecar {
+    if sidecar.doc_content_hash != doc_hash && !sidecar.annotations.is_empty() {
+        let stored_hash = sidecar.doc_content_hash.clone();
+        let results = crate::reanchor::reanchor_all(
+            &sidecar.annotations,
+            doc_content,
+            doc_hash,
+            &stored_hash,
+        );
+        sidecar.annotations = results.into_iter().map(|r| r.annotation).collect();
+        sidecar.doc_content_hash = doc_hash.to_string();
+    }
+    sidecar
+}
+
 /// Load sidecar annotations for a document. Migrates schema if needed.
+///
+/// T1.3/A4: now `async` so the re-anchor computation can run on a blocking
+/// thread via `tauri::async_runtime::spawn_blocking` without stalling the IPC
+/// handler thread on large documents.
+///
+/// On hash mismatch (doc has been edited since last save) re-anchors all
+/// annotations in-memory per the approved C-LOAD-WRITE decision — does NOT
+/// write the sidecar on load; re-anchored positions are returned to the
+/// frontend and persisted on the next normal save.
+///
+/// The re-anchor guard itself is in `apply_reanchor_to_sidecar` — a sync
+/// function that integration tests call directly (T1.4/R-OFFSET-TEST).
 #[tauri::command]
-pub fn load_annotations(doc_path: String) -> IpcResult<Sidecar> {
-    let p = std::path::Path::new(&doc_path);
-    // We need the current doc hash to create a fresh sidecar if none exists.
-    // Open the file just for hashing (content is not returned here).
-    let doc_hash = {
-        let bytes = std::fs::read(p)
-            .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
-        crate::file_io::sha256_hex(&bytes)
-    };
-    let load_result = crate::annotations::load_annotations(p, &doc_hash).map_err(ann_err)?;
+pub async fn load_annotations(doc_path: String) -> IpcResult<Sidecar> {
+    // Read the full doc content (we need it for re-anchoring and hashing).
+    let doc_content = tauri::async_runtime::spawn_blocking({
+        let path = doc_path.clone();
+        move || std::fs::read_to_string(&path)
+    })
+    .await
+    .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?
+    .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
+
+    let doc_hash = crate::file_io::sha256_hex(doc_content.as_bytes());
+
+    let load_result = tauri::async_runtime::spawn_blocking({
+        let path = doc_path.clone();
+        let hash = doc_hash.clone();
+        move || {
+            let p = std::path::Path::new(&path);
+            crate::annotations::load_annotations(p, &hash)
+        }
+    })
+    .await
+    .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?
+    .map_err(ann_err)?;
+
     let sidecar = match load_result {
         crate::annotations::LoadResult::Loaded(s) => s,
         crate::annotations::LoadResult::NotFound(s) => s,
         crate::annotations::LoadResult::Quarantined { fallback, .. } => fallback,
     };
+
+    // T1.3: if the doc has changed since last save, re-anchor in-memory.
+    // Delegate to `apply_reanchor_to_sidecar` (the same function integration
+    // tests call directly) so the guard + hash-update logic is not duplicated.
+    let sidecar = {
+        let content_clone = doc_content.clone();
+        let hash_clone = doc_hash.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            apply_reanchor_to_sidecar(sidecar, &content_clone, &hash_clone)
+        })
+        .await
+        .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?
+    };
+
     Ok(sidecar_to_ipc(sidecar))
 }
 
 /// Save sidecar annotations for a document.
+///
+/// T1.2/A2/A6: reads the document at `doc_path`, splits into 0-indexed lines,
+/// and derives `context_before`/`context_after` for every annotation from the
+/// live doc content — NOT from the IPC payload (the IPC Annotation type has no
+/// context fields). This is the single source of truth for context; the
+/// frontend never supplies it.
 #[tauri::command]
 pub fn save_annotations(doc_path: String, sidecar: Sidecar) -> IpcResult<()> {
     let p = std::path::Path::new(&doc_path);
-    let store_sidecar = sidecar_from_ipc(sidecar);
+
+    // Read the current doc content so we can derive annotation context lines.
+    let doc_content = std::fs::read_to_string(p)
+        .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
+    let doc_lines: Vec<&str> = doc_content.lines().collect();
+
+    let store_sidecar = sidecar_from_ipc_with_context(sidecar, &doc_lines);
+
     // Ensure gitignore entry on first write.
     if let Some(dir) = p.parent() {
         let _ = crate::paths::ensure_gitignore_entry(dir);

@@ -8,6 +8,11 @@
  *  - Detached annotations are retained with 'detached' status.
  *  - General notes persistence.
  *  - schema_version: 1 is always written to the sidecar.
+ *
+ * Note on mutator calls: addAnnotation, detachAnnotation, reanchorAnnotation,
+ * deleteAnnotation, and updateGeneralNotes are synchronous — they return values
+ * immediately and enqueue a fire-and-forget save on the serialized chain. Tests
+ * flush the microtask queue via flushChain() when they need the save to have run.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
@@ -29,6 +34,13 @@ function makeEmptySidecar(): Sidecar {
     general_notes: '',
     annotations: [],
   };
+}
+
+/** Flush the microtask queue to let the save chain execute. */
+async function flushChain(): Promise<void> {
+  for (let i = 0; i < 10; i++) {
+    await Promise.resolve();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +108,7 @@ describe('annotationsStore', () => {
     await annotationsStore.load('/doc.md', 'hash001');
 
     mockInvoke.mockResolvedValueOnce(undefined); // save_annotations
-    const ann = await annotationsStore.addAnnotation(
+    const ann = annotationsStore.addAnnotation(
       10,   // lineStart
       10,   // lineEnd
       0,    // charStart
@@ -104,6 +116,7 @@ describe('annotationsStore', () => {
       'hello', // quotedText
       'This needs work', // body
     );
+    await flushChain();
 
     const state = get(annotationsStore);
     expect(state.annotations).toHaveLength(1);
@@ -119,9 +132,10 @@ describe('annotationsStore', () => {
     await annotationsStore.load('/doc.md', 'hash001');
 
     mockInvoke.mockResolvedValueOnce(undefined);
-    const ann = await annotationsStore.addAnnotation(
+    const ann = annotationsStore.addAnnotation(
       5, 5, 0, 0, '', 'Mermaid diagram issue', 'block_level'
     );
+    await flushChain();
 
     expect(ann.status).toBe('block_level');
   });
@@ -135,10 +149,12 @@ describe('annotationsStore', () => {
     await annotationsStore.load('/doc.md', 'hash001');
 
     mockInvoke.mockResolvedValueOnce(undefined); // save on add
-    const ann = await annotationsStore.addAnnotation(1, 1, 0, 1, 'x', 'A comment');
+    const ann = annotationsStore.addAnnotation(1, 1, 0, 1, 'x', 'A comment');
+    await flushChain();
 
     mockInvoke.mockResolvedValueOnce(undefined); // save on detach
-    await annotationsStore.detachAnnotation(ann.id);
+    annotationsStore.detachAnnotation(ann.id);
+    await flushChain();
 
     const state = get(annotationsStore);
     const found = state.annotations.find((a) => a.id === ann.id);
@@ -150,13 +166,16 @@ describe('annotationsStore', () => {
     await annotationsStore.load('/doc.md', 'hash001');
 
     mockInvoke.mockResolvedValueOnce(undefined);
-    const ann = await annotationsStore.addAnnotation(1, 1, 0, 1, 'y', 'Body');
+    const ann = annotationsStore.addAnnotation(1, 1, 0, 1, 'y', 'Body');
+    await flushChain();
 
     mockInvoke.mockResolvedValueOnce(undefined);
-    await annotationsStore.detachAnnotation(ann.id);
+    annotationsStore.detachAnnotation(ann.id);
+    await flushChain();
 
     mockInvoke.mockResolvedValueOnce(undefined);
-    await annotationsStore.reanchorAnnotation(ann.id, 5, 5, 0, 10);
+    annotationsStore.reanchorAnnotation(ann.id, 5, 5, 0, 10);
+    await flushChain();
 
     const state = get(annotationsStore);
     const found = state.annotations.find((a) => a.id === ann.id);
@@ -206,7 +225,8 @@ describe('annotationsStore', () => {
     await annotationsStore.load('/doc.md', 'hash001');
 
     mockInvoke.mockResolvedValueOnce(undefined);
-    await annotationsStore.updateGeneralNotes('My notes here');
+    annotationsStore.updateGeneralNotes('My notes here');
+    await flushChain();
 
     const state = get(annotationsStore);
     expect(state.generalNotes).toBe('My notes here');
@@ -227,7 +247,8 @@ describe('annotationsStore', () => {
       return Promise.resolve(undefined);
     });
 
-    await annotationsStore.addAnnotation(1, 1, 0, 1, 'z', 'test body');
+    annotationsStore.addAnnotation(1, 1, 0, 1, 'z', 'test body');
+    await flushChain();
 
     const sidecar = (capturedArgs as { sidecar: Sidecar }).sidecar;
     expect(sidecar.schema_version).toBe(1);
@@ -242,10 +263,12 @@ describe('annotationsStore', () => {
     await annotationsStore.load('/doc.md', 'hash001');
 
     mockInvoke.mockResolvedValueOnce(undefined);
-    const ann = await annotationsStore.addAnnotation(1, 1, 0, 1, 'w', 'To delete');
+    const ann = annotationsStore.addAnnotation(1, 1, 0, 1, 'w', 'To delete');
+    await flushChain();
 
     mockInvoke.mockResolvedValueOnce(undefined);
-    await annotationsStore.deleteAnnotation(ann.id);
+    annotationsStore.deleteAnnotation(ann.id);
+    await flushChain();
 
     const state = get(annotationsStore);
     expect(state.annotations.find((a) => a.id === ann.id)).toBeUndefined();

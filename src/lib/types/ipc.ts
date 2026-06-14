@@ -135,6 +135,11 @@ export interface ExportObsidianResult {
 /**
  * A source-level anchor produced by the editor (EditorPane / source selection).
  * Line numbers are 0-indexed to match the frozen IPC Annotation contract.
+ *
+ * NOTE: context_before and context_after have been removed (T1.5/C-IPC-TYPE).
+ * Context lines are now derived server-side in the Rust `save_annotations`
+ * command (T1.2/A2/A6) and are internal to the re-anchoring engine — they
+ * never cross the IPC seam.
  */
 export interface SourceAnchor {
   /** 0-indexed starting line. */
@@ -147,10 +152,6 @@ export interface SourceAnchor {
   end_char: number;
   /** The exact selected text. */
   quoted_text: string;
-  /** Line of context immediately before the selection (for re-anchoring). */
-  context_before: string;
-  /** Line of context immediately after the selection (for re-anchoring). */
-  context_after: string;
 }
 
 /**

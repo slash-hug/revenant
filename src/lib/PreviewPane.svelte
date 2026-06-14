@@ -120,6 +120,9 @@
           const blockId = div.dataset.blockId ?? '';
           try {
             const svg = await renderMermaid(code, blockId);
+            // Keep the source so we can re-render in the other Mermaid theme when
+            // the app flips light/dark (the SVG bakes its colors at render time).
+            div.setAttribute('data-mermaid-src', encodeURIComponent(code));
             div.innerHTML = svg;
             div.removeAttribute('data-mermaid-pending');
           } catch (err) {
@@ -163,6 +166,38 @@
       isHydrating = false;
     }
   }
+
+  /**
+   * Re-render already-rendered Mermaid diagrams when the app theme flips, so they
+   * switch between the light and dark Mermaid themes. Mermaid bakes its colors
+   * into the SVG at render time, so a cached diagram keeps its original theme
+   * until re-rendered.
+   */
+  async function reRenderMermaidForTheme() {
+    if (!previewEl) return;
+    const divs = previewEl.querySelectorAll<HTMLElement>(
+      '[data-block-type="mermaid"][data-mermaid-src]',
+    );
+    if (divs.length === 0) return;
+    await Promise.allSettled(
+      Array.from(divs).map(async (div) => {
+        const code = decodeURIComponent(div.getAttribute('data-mermaid-src') ?? '');
+        const blockId = div.dataset.blockId ?? '';
+        if (!code) return;
+        try {
+          div.innerHTML = await renderMermaid(code, blockId);
+        } catch { /* keep the current render on failure */ }
+      }),
+    );
+  }
+
+  // Re-theme diagrams on a light/dark switch — covers the manual toggle AND an OS
+  // change while in "system" mode, both of which update <html data-theme>.
+  onMount(() => {
+    const obs = new MutationObserver(() => void reRenderMermaidForTheme());
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => obs.disconnect();
+  });
 
   /**
    * Build and emit the block-id → source-line map for the C8 source-map layer.
@@ -268,8 +303,8 @@
                 end_line: sourceLine,
                 end_char: quotedText.length,
                 quoted_text: quotedText,
-                context_before: '',
-                context_after: '',
+                // context_before / context_after removed (T1.5/C-IPC-TYPE)
+                // — context is derived server-side at save time (T1.2/A2).
               },
             };
             break;

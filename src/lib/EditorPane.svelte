@@ -20,6 +20,7 @@
   import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
   import { tags as t } from '@lezer/highlight';
   import { tabsStore } from './stores/tabs';
+  import { flushPendingDebounce } from './editor-flush';
   import { saveFile } from './types/ipc';
   import type { SourceAnchor, AnchorV1, IpcError } from './types/ipc';
 
@@ -80,6 +81,13 @@
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   const DEBOUNCE_MS = 400;
 
+  // T2.6/C-FLUSH-TABID: snapshot the tab id at mount time so the onDestroy
+  // flush uses the correct id even when the prop changes (e.g. rapid tab switch
+  // with {#key $activeTab.id} remounting). Each EditorPane instance's tabId
+  // prop is stable for its lifetime because {#key} creates a new instance per
+  // tab, but we snapshot explicitly for robustness.
+  const myTabId = tabId;
+
   // -------------------------------------------------------------------------
   // "Add comment" floating affordance state
   // -------------------------------------------------------------------------
@@ -133,8 +141,13 @@
   });
 
   onDestroy(() => {
+    // T2.6/C-FLUSH-TABID: if a debounce timer is pending, flush the latest
+    // editor content to the tab store BEFORE destroying the view, so keystrokes
+    // typed within DEBOUNCE_MS of unmount (e.g. rapid tab switch via {#key
+    // $activeTab.id}) are not lost. Delegates to the extracted helper so this
+    // exact code path can be exercised by unit tests (closes fidelity gap).
+    debounceTimer = flushPendingDebounce(debounceTimer, view, myTabId, tabsStore);
     view?.destroy();
-    if (debounceTimer) clearTimeout(debounceTimer);
   });
 
   // Sync content prop → editor when it changes externally (tab switch).
@@ -221,6 +234,8 @@
     }
 
     // Build a SourceAnchor from the current selection.
+    // context_before / context_after are now derived server-side at save time
+    // (T1.2/A2) and are no longer part of the SourceAnchor interface (T1.5/C-IPC-TYPE).
     const doc = editorView.state.doc;
     const from = sel.from;
     const to = sel.to;
@@ -235,12 +250,6 @@
       end_line: endLine.number - 1,
       end_char: to - endLine.from,
       quoted_text: doc.sliceString(from, to),
-      context_before: startLine.number > 1
-        ? doc.line(startLine.number - 1).text
-        : '',
-      context_after: endLine.number < doc.lines
-        ? doc.line(endLine.number + 1).text
-        : '',
     };
 
     pendingAnchor = { type: 'source', anchor };

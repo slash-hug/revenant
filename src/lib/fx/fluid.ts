@@ -267,6 +267,8 @@ export interface FluidOptions {
 export class FluidSim {
   private gl: WebGL2RenderingContext;
   private quadVao: WebGLVertexArrayObject;
+  /** The vertex buffer backing the full-screen quad (stored for dispose). */
+  private quadBuf!: WebGLBuffer;
   private programs: Record<string, Program> = {};
   private velocity!: DoubleFBO;
   private dye!: DoubleFBO;
@@ -306,6 +308,7 @@ export class FluidSim {
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     this.quadVao = vao;
+    this.quadBuf = buf; // stored for dispose (T3.5 / A11 / C-QUAD)
 
     const vs = compile(gl, gl.VERTEX_SHADER, BASE_VERTEX);
     const mk = (src: string) => new Program(gl, vs, src);
@@ -568,8 +571,69 @@ export class FluidSim {
     this.canvas.style.opacity = String(fade);
   }
 
+  /**
+   * Release every GPU resource owned by this FluidSim, then signal context
+   * loss so the driver knows the GPU objects are gone (T3.5 / A11).
+   *
+   * Deletion order (per spec): delete textures/framebuffers/programs/VAOs/
+   * buffers first; loseContext() last. loseContext() may be null on WebView2
+   * / ANGLE drivers that don't expose WEBGL_lose_context — resource deletion
+   * must not be conditional on it (all deletes run unconditionally).
+   *
+   * FBOs deleted: velocity (read+write), dye (read+write), divergence, curl,
+   * pressure (read+write), coverage (read+write), docBlur (read+write if set).
+   * docTex deleted if set.
+   * Programs deleted: splat, advection, divergence, curl, vorticity, pressure,
+   * gradient, clear, display, blur, cover.
+   * VAO and quad buffer deleted last before context loss.
+   */
   dispose() {
     const gl = this.gl;
+
+    // Helper to delete a single FBO's texture + framebuffer.
+    const deleteFBO = (fbo: FBO) => {
+      gl.deleteTexture(fbo.texture);
+      gl.deleteFramebuffer(fbo.fbo);
+    };
+
+    // Double-FBOs: delete both read and write.
+    deleteFBO(this.velocity.read);
+    deleteFBO(this.velocity.write);
+    deleteFBO(this.dye.read);
+    deleteFBO(this.dye.write);
+    deleteFBO(this.pressure.read);
+    deleteFBO(this.pressure.write);
+    deleteFBO(this.coverage.read);
+    deleteFBO(this.coverage.write);
+
+    // Single FBOs.
+    deleteFBO(this.divergence);
+    deleteFBO(this.curlFbo);
+
+    // Document snapshot texture + blur FBOs (may be null if setDocument() was
+    // never called).
+    if (this.docTex) {
+      gl.deleteTexture(this.docTex);
+      this.docTex = null;
+    }
+    if (this.docBlur) {
+      deleteFBO(this.docBlur.read);
+      deleteFBO(this.docBlur.write);
+      this.docBlur = null;
+    }
+
+    // Shader programs.
+    for (const prog of Object.values(this.programs)) {
+      gl.deleteProgram(prog.prog);
+    }
+
+    // Vertex array object and quad buffer.
+    gl.deleteVertexArray(this.quadVao);
+    gl.deleteBuffer(this.quadBuf);
+
+    // Signal context loss last. WEBGL_lose_context may be absent on some
+    // WebView2 / ANGLE configurations — deletion above must have already run
+    // (and did), so this is best-effort context invalidation only.
     const lose = gl.getExtension('WEBGL_lose_context');
     if (lose) lose.loseContext();
   }

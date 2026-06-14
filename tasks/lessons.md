@@ -100,7 +100,34 @@ visual judgment had to come from the user):
   CSS viewport, and includes no native chrome; content is top-flush. Map it to the
   live viewport by cropping the BOTTOM excess (`naturalHeight − innerHeight×scale`),
   derived from the snapshot's own backing scale so it survives a capped canvas DPR.
+- **`WKWebView.takeSnapshot` does NOT composite the WebGL canvas layer** — it reads
+  the live web content *underneath* an accelerated `<canvas>`. So for the open
+  transition, keep the GL cover canvas **fully opaque the entire time** (`fillBackground`
+  before the fonts/layout wait); the snapshot still captures the real `.ws` beneath it.
+  The earlier code went *transparent* for the capture to "see `.ws` through" the
+  canvas — that exposed the raw sharp doc for the whole fonts.ready + nextPaint +
+  snapshot window = a visible flicker before the ink. Never reveal the canvas to
+  snapshot; the WebGL layer is invisible to `takeSnapshot` regardless. (Confirmed
+  2026-06-14: opaque-cover = zero flash + correct capture.)
 - New IPC commands go in BOTH `ipc.rs` and `ipc.ts` (+ contract test) and are
   registered in `lib.rs`; macOS-only native deps go under
   `[target.'cfg(target_os = "macos")'.dependencies]`, pinned to the objc2 versions
   `wry` already locks so no extra crates enter the tree.
+
+## Launch smoke gate is open after fd-lock + async annotation load (2026-06-14)
+
+**Context:** WS-1/WS-2 hardening made `load_annotations` async, added a doc-read
+to `save_annotations`, and introduced `fd-lock` (a new Cargo dependency using raw
+OS file descriptors outside `tauri-plugin-fs`). All three verified green in
+`cargo build` + `cargo test` + `npm test`, but none of those start the binary.
+
+**Unconfirmed launch behaviour:** `cargo tauri dev` on macOS with the actual binary
+has not been verified by a human since this round landed. Per the 2026-06-13 lesson,
+green CI does NOT prove the binary boots. The async IPC handler, the doc-read in
+`save_annotations`, and the `fd-lock` OS calls in particular must be exercised
+under the real runtime — not just in unit tests — before declaring the round done.
+
+**Rule:** After any round that changes Tauri async commands, adds new OS-level
+dependencies (fd-lock, keyring, etc.), or touches the Tauri plugin list, run
+`cargo tauri dev` and confirm the window opens before marking the round complete.
+Flag this explicitly in the review so it is not silently deferred.

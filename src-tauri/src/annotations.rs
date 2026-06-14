@@ -113,6 +113,10 @@ pub struct Annotation {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sidecar {
     /// Schema version — always written as `1` by this code.
+    /// T2.2/A3: defaults to `0` on deserialization so that valid JSON without
+    /// this field is treated as a v0 sidecar and migrated in-place rather than
+    /// quarantined (matches `settings.rs` `unwrap_or(0)` policy).
+    #[serde(default)]
     pub schema_version: u32,
 
     /// sha256 hex digest of the document content at the time annotations were
@@ -198,26 +202,46 @@ pub fn load_annotations_from_path(
 
     let raw = fs::read_to_string(sidecar_path)?;
 
-    // Peek at just the schema_version field before full deserialization so we
-    // can quarantine unknown versions without crashing on unexpected structure.
-    let version = peek_schema_version(&raw);
+    // T2.2/A3 two-pass schema parse (mirrors settings.rs `unwrap_or(0)`):
+    //
+    // Pass 1: attempt a full Value parse to distinguish malformed JSON from
+    // valid JSON that merely has a missing/null schema_version field.
+    //
+    //   • parse fails  → quarantine (malformed JSON, never migrate-on-corrupt)
+    //   • parse succeeds → extract schema_version (missing or null → treat as 0,
+    //                      migrate in-place just like settings.rs)
+    //
+    // This fixes the bug where peek_schema_version() returned None for BOTH
+    // malformed JSON and valid JSON missing schema_version, causing valid
+    // but version-less sidecars to be quarantined instead of migrated (C-PEEK-1).
+    let value: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => {
+            // Malformed JSON — quarantine immediately; do NOT attempt migration.
+            return quarantine(sidecar_path, current_doc_hash, "sidecar JSON is malformed");
+        }
+    };
+
+    // Extract schema_version from the parsed Value; absent/null → 0.
+    let version: u32 = value
+        .get("schema_version")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
+        .unwrap_or(0);
 
     match version {
-        None => {
-            // Malformed JSON — treat as unknown version and quarantine.
-            quarantine(sidecar_path, current_doc_hash, "sidecar JSON is malformed or missing schema_version")
-        }
-        Some(v) if v == CURRENT_SCHEMA_VERSION => {
+        v if v == CURRENT_SCHEMA_VERSION => {
             // Known version — deserialize fully.
             let sidecar: Sidecar = serde_json::from_str(&raw)?;
             Ok(LoadResult::Loaded(sidecar))
         }
-        Some(v) if v < CURRENT_SCHEMA_VERSION => {
-            // Known *older* version — migrate in-place (C5), mirroring the
-            // settings store's policy. Missing fields are filled by serde
-            // defaults; we bump the version and write the upgrade back so the
-            // sidecar is self-healing. If the older payload cannot be parsed at
-            // all we quarantine rather than discard (never lose data).
+        v if v < CURRENT_SCHEMA_VERSION => {
+            // Known *older* version (including 0 = missing field) — migrate
+            // in-place (C5), mirroring the settings store's policy.  Missing
+            // fields are filled by serde defaults; we bump the version and write
+            // the upgrade back so the sidecar is self-healing.
+            // If the payload cannot be deserialized even after we know it's
+            // valid JSON, quarantine rather than discard (never lose data).
             match serde_json::from_str::<Sidecar>(&raw) {
                 Ok(mut sidecar) => {
                     sidecar.schema_version = CURRENT_SCHEMA_VERSION;
@@ -234,7 +258,7 @@ pub fn load_annotations_from_path(
                 ),
             }
         }
-        Some(v) => {
+        v => {
             // Unknown/future version — quarantine.
             quarantine(
                 sidecar_path,
@@ -278,17 +302,6 @@ pub fn save_annotations_to_path(
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
-
-/// Extract `schema_version` from a raw JSON string without full deserialization.
-fn peek_schema_version(raw: &str) -> Option<u32> {
-    // Use a minimal partial parse — only extract the `schema_version` field.
-    #[derive(Deserialize)]
-    struct Peek {
-        schema_version: Option<u32>,
-    }
-    let peek: Result<Peek, _> = serde_json::from_str(raw);
-    peek.ok().and_then(|p| p.schema_version)
-}
 
 /// Rename `sidecar_path` to `<path>.bak` and return a `Quarantined` result.
 fn quarantine(
@@ -486,5 +499,70 @@ mod tests {
         assert_eq!(json, "\"anchored\"");
         let json = serde_json::to_string(&AnchorStatus::BlockLevel).unwrap();
         assert_eq!(json, "\"block_level\"");
+    }
+
+    // ── T2.2: Two-pass schema parse (A3/C-PEEK-1) ────────────────────────────
+
+    /// Valid JSON that is missing the `schema_version` field should migrate
+    /// in-place (treated as version 0), NOT quarantine.  This was the bug
+    /// fixed by T2.2: the old `peek_schema_version` returned `None` for both
+    /// malformed JSON and valid-JSON-missing-field.
+    #[test]
+    fn valid_json_missing_schema_version_migrates_not_quarantines() {
+        let dir = TempDir::new().unwrap();
+        // Valid JSON but no schema_version field.
+        let json_no_version = r#"{
+            "doc_content_hash": "abc123",
+            "general_notes": "must be preserved",
+            "annotations": []
+        }"#;
+        let sidecar_path = write_sidecar_json(&dir, "noversion.md.annotations.json", json_no_version);
+
+        let result = load_annotations_from_path(&sidecar_path, "abc123").unwrap();
+
+        // Must be Loaded (migrated), NOT Quarantined.
+        match result {
+            LoadResult::Loaded(s) => {
+                assert_eq!(s.schema_version, CURRENT_SCHEMA_VERSION,
+                    "migrated sidecar must have current schema_version");
+                assert_eq!(s.general_notes, "must be preserved",
+                    "general_notes must survive migration");
+            }
+            LoadResult::Quarantined { .. } => {
+                panic!("valid JSON missing schema_version must migrate, not quarantine");
+            }
+            LoadResult::NotFound(_) => {
+                panic!("unexpected NotFound");
+            }
+        }
+
+        // The on-disk file must have been rewritten at the current version.
+        let on_disk = fs::read_to_string(&sidecar_path).unwrap();
+        assert!(on_disk.contains("\"schema_version\": 1"),
+            "migrated sidecar must have schema_version: 1 on disk");
+
+        // No .bak must exist.
+        let bak = dir.path().join("noversion.md.annotations.json.bak");
+        assert!(!bak.exists(), "migration must not create a .bak file");
+    }
+
+    /// Malformed JSON (not valid JSON at all) must still be quarantined.
+    /// This is the other half of T2.2 — the two passes keep both behaviors.
+    #[test]
+    fn malformed_json_still_quarantines_after_two_pass_fix() {
+        let dir = TempDir::new().unwrap();
+        let sidecar_path =
+            write_sidecar_json(&dir, "malformed.md.annotations.json", "{ not : valid json !!!");
+
+        let result = load_annotations_from_path(&sidecar_path, "hash").unwrap();
+
+        match result {
+            LoadResult::Quarantined { bak_path, .. } => {
+                assert!(bak_path.exists(), ".bak must be created for malformed JSON");
+            }
+            other => {
+                panic!("malformed JSON must quarantine, got {:?}", other);
+            }
+        }
     }
 }
