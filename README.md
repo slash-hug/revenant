@@ -31,7 +31,7 @@ Open markdown files in tabs, edit source, preview rendered output side-by-side, 
 - Export to Obsidian vault (Local REST API or filesystem copy fallback)
 - Agent-agnostic review export — no hardcoded AI assistant names in output
 - Light / dark / system theme toggle — Paper (warm off-white) and Graphite (near-black) palettes, persisted across sessions and synced live to the OS preference when set to "system"
-- Ink-bloom open transition: a suminagashi (墨流し) ink-marbling animation plays when opening the first document; fully dependency-free canvas 2D, `prefers-reduced-motion` safe
+- Ink-dissolution open transition: a suminagashi (墨流し) GPU fluid simulation (WebGL2 — advection + curl + pressure) dyes ink into water and lets it swirl and dissolve when opening the first document; dependency-free, `prefers-reduced-motion` safe
 - Drag-and-drop `.md` files directly onto the window; native file-picker on the welcome screen
 - Status bar showing the abbreviated file path, line count, comment count, file type, and encoding
 
@@ -111,7 +111,7 @@ npm run tauri:build
 | Design tokens | `src/lib/styles/tokens.css` — semantic CSS custom properties; Paper (light) and Graphite (dark) palettes on a single token layer |
 | Theming | `src/lib/stores/theme.ts` + `ThemeToggle.svelte` — light / dark / system mode, OS media-query sync, persisted to localStorage |
 | Typography | Geist (UI) · Literata (prose) · JetBrains Mono (editor/code) — self-hosted offline via `@fontsource` packages (no CDN) |
-| Open transition | `src/lib/fx/suminagashi.ts` + `Suminagashi.svelte` — dependency-free canvas 2D ink-marbling bloom, `prefers-reduced-motion` safe |
+| Open transition | `src/lib/fx/fluid.ts` + `Suminagashi.svelte` — WebGL2 GPU fluid simulation (Navier-Stokes: advection + curl + pressure), dependency-free, `prefers-reduced-motion` safe |
 | File picker | `tauri-plugin-dialog` — backs the welcome-screen "Open file…" button |
 | CLI integration | `tauri-plugin-cli` — `revenant --version` and positional file arguments |
 | Annotation storage | JSON sidecar (`.md.annotations.json`) next to each document |

@@ -1,100 +1,108 @@
 <script lang="ts">
   /**
-   * Suminagashi.svelte — one-shot ink-marbling "bloom" overlay (墨流し).
+   * Suminagashi.svelte — GPU ink-in-water "dissolution" overlay (墨流し).
    *
-   * On mount it paints a full-screen ink marble in the current theme's colors,
-   * then fades the canvas away to reveal the workspace beneath — "the document
-   * returns out of the ink." Decorative + non-blocking (pointer-events: none),
-   * reduced-motion-safe, and backed by a hard timeout so it can NEVER leave the
-   * overlay up (e.g. if rAF is throttled in a background/headless renderer).
-   *
-   * The engine (fx/suminagashi.ts) is generic, so ambient / pointer-ripple modes
-   * can be layered on later without touching it.
+   * On mount it seeds a handful of ink drops with velocity into a WebGL2 fluid
+   * simulation (advection + curl + pressure), lets the ink flow and swirl for a
+   * beat, then fades the canvas to reveal the workspace — "the document returns
+   * out of the ink." Decorative + non-blocking (pointer-events: none),
+   * reduced-motion-safe, with a hard backstop so it can never stay up.
    */
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
-  import { Marble, bloomPlan } from './fx/suminagashi';
+  import { FluidSim } from './fx/fluid';
 
-  /** Preview mode: render the full marble and hold it (no fade, no `done`). */
+  /** Preview mode: keep simulating, no fade / no `done`. */
   export let hold = false;
 
   const dispatch = createEventDispatcher<{ done: void }>();
   let canvas: HTMLCanvasElement;
   let raf = 0;
   let backstop: ReturnType<typeof setTimeout> | null = null;
+  let sim: FluidSim | null = null;
 
   const reduce =
     typeof window !== 'undefined' &&
     !!window.matchMedia &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  function cssVar(name: string): string {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#000';
+  type RGB = [number, number, number];
+  function cssColor(name: string): RGB {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    const h = v.replace('#', '');
+    if (h.length >= 6) {
+      return [parseInt(h.slice(0, 2), 16) / 255, parseInt(h.slice(2, 4), 16) / 255, parseInt(h.slice(4, 6), 16) / 255];
+    }
+    const m = v.match(/(\d+\.?\d*)/g);
+    return m ? [(+m[0]) / 255, (+m[1]) / 255, (+m[2]) / 255] : [0, 0, 0];
   }
+  const sub = (a: RGB, b: RGB, k = 0.78): RGB => [(a[0] - b[0]) * k, (a[1] - b[1]) * k, (a[2] - b[2]) * k];
 
   function finish() {
     if (raf) cancelAnimationFrame(raf);
     if (backstop) clearTimeout(backstop);
-    raf = 0;
-    backstop = null;
+    raf = 0; backstop = null;
+    sim?.dispose(); sim = null;
     dispatch('done');
   }
 
   onMount(() => {
     if (reduce && !hold) { finish(); return; }
-    runBloom();
-    if (!hold) backstop = setTimeout(finish, 1400); // safety: never stay up
+    run();
+    if (!hold) backstop = setTimeout(finish, 2600);
   });
-
   onDestroy(() => {
     if (raf) cancelAnimationFrame(raf);
     if (backstop) clearTimeout(backstop);
+    sim?.dispose();
   });
 
-  function runBloom() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+  function run() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    const w = window.innerWidth, h = window.innerHeight;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) { finish(); return; }
-    ctx.scale(dpr, dpr);
 
-    const paper = cssVar('--bg');
-    const plan = bloomPlan(w, h, {
-      ink: cssVar('--text'),
-      paper,
-      accent: cssVar('--accent'),
-      muted: cssVar('--text-muted'),
+    try {
+      sim = new FluidSim(canvas, { simRes: 160, dyeRes: 640, curl: 30, pressureIters: 20 });
+    } catch {
+      finish(); // no WebGL2 → skip the effect gracefully
+      return;
+    }
+
+    const bg = cssColor('--bg');
+    const inks: RGB[] = [
+      sub(cssColor('--text'), bg),
+      sub(cssColor('--accent'), bg),
+      sub(cssColor('--detached'), bg),
+      sub(cssColor('--success'), bg),
+      sub(cssColor('--text'), bg),
+      sub(cssColor('--accent'), bg),
+    ];
+
+    // Seed ink drops across the canvas with outward/swirling velocity.
+    const FORCE = 620;
+    const cx = 0.5, cy = 0.46;
+    inks.forEach((c, i) => {
+      const ang = (i / inks.length) * Math.PI * 2 + 0.6;
+      const rad = 0.16 + 0.1 * Math.random();
+      const x = cx + Math.cos(ang) * rad;
+      const y = cy + Math.sin(ang) * rad * 0.82;
+      // velocity: a tangential swirl + a little outward push
+      const vx = (-Math.sin(ang) * 0.8 + Math.cos(ang) * 0.5) * FORCE;
+      const vy = (Math.cos(ang) * 0.8 + Math.sin(ang) * 0.5) * FORCE;
+      sim!.splat(x, y, vx, vy, c, 0.009);
     });
+    // a calm central drop to anchor the bloom
+    sim!.splat(cx, cy, 0, -FORCE * 0.4, sub(cssColor('--text'), bg), 0.012);
 
-    const marble = new Marble();
-    const STEP = 16; // ms between drops
-    const addEnd = plan.drops.length * STEP + 40;
-    const FADE = 340;
-
+    const SIM_MS = 1100, FADE_MS = 520;
     const start = performance.now();
-    let idx = 0;
     const frame = (now: number) => {
       const t = now - start;
-      while (idx < plan.drops.length && t >= idx * STEP) {
-        const s = plan.drops[idx++];
-        marble.addDrop(s.x, s.y, s.r, s.color);
-        for (const tn of plan.tines) {
-          if (tn.afterIndex === idx) marble.tine(tn.x1, tn.y1, tn.x2, tn.y2, tn.shift);
-        }
-      }
-
-      ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = paper;
-      ctx.fillRect(0, 0, w, h);
-      marble.render(ctx);
-
-      if (hold) { raf = requestAnimationFrame(frame); return; }
-
-      const alpha = t <= addEnd ? 1 : Math.max(0, 1 - (t - addEnd) / FADE);
-      canvas.style.opacity = String(alpha);
-      if (t > addEnd + FADE) { finish(); return; }
+      sim!.step(0.016);
+      const fade = hold ? 1 : t < SIM_MS ? 1 : Math.max(0, 1 - (t - SIM_MS) / FADE_MS);
+      sim!.render(bg, fade);
+      if (!hold && t > SIM_MS + FADE_MS) { finish(); return; }
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
