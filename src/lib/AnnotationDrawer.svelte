@@ -143,10 +143,10 @@
                   {#if pendingDeleteId === ann.id}
                     <span class="del-confirm">
                       <button class="del-cancel" type="button" on:click={cancelDelete}>Cancel</button>
-                      <button class="del-yes" type="button" on:click={() => confirmDelete(ann.id)}>Delete</button>
+                      <button class="del-yes" type="button" on:click={(e) => confirmDelete(e, ann.id)}>Delete</button>
                     </span>
                   {:else}
-                    <button class="cmt-del" type="button" on:click={() => requestDelete(ann.id)} aria-label="Delete comment" title="Delete">
+                    <button class="cmt-del" type="button" on:click={(e) => requestDelete(e, ann.id)} aria-label="Delete comment" title="Delete">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12" />
                       </svg>

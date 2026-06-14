@@ -8,7 +8,7 @@
    * Decisions implemented:
    *  - D3: Mounted as first child of .pv-scroll (position: relative ancestor).
    *  - D6: Block-level full-block tint driven by [data-block-id] attribute selector
-   *        via a dynamic <style> tag — never adds a class to sanitized content.
+   *        via a dynamic inline style rule — never adds a class to sanitized content.
    *  - D7: block_level annotations resolve target block by quoted_text text-search;
    *        seal stacking keyed off the resolved DOM block, not stored line.
    *  - D8: Anchored annotations matched via data-source-line === line_start + 1.
@@ -122,12 +122,12 @@
 
   // ── Active block tint (D6) ──────────────────────────────────────────────
   //
-  // Instead of injecting a string-interpolated {@html <style>} (which would
+  // Instead of injecting a string-interpolated style block (which would
   // bypass Svelte escaping and become an XSS/CSS-injection vector if
   // data-block-id ever carries document content), we apply the tint as an
   // inline CSS custom property directly on the resolved block element.
   // Svelte handles the reactive remove/re-apply; no user-controlled string
-  // ever touches a <style> rule.
+  // ever touches a CSS rule.
 
   let prevTintEl: HTMLElement | null = null;
 
@@ -189,8 +189,9 @@
 </script>
 
 <!-- Seal markers — absolutely positioned relative to .pv-scroll -->
-<!-- Block tint (D6) is applied via direct inline style on the resolved block
-     element in the $: reactive block above — no {@html <style>} injection needed. -->
+<!-- Block tint (D6) is applied via a direct inline style on the resolved block
+     element in the reactive block above, so no sanitized-HTML style injection is
+     needed and DOMPurify is never involved. -->
 <div class="seals-layer" aria-hidden="true">
   {#each seals as entry (entry.annotation.id)}
     {@const isActive = $annotationFocus.activeId === entry.annotation.id}
