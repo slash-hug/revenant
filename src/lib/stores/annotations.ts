@@ -246,14 +246,36 @@ function createAnnotationsStore() {
   }
 
   /**
-   * Delete an annotation permanently.
-   * Enqueues a fire-and-forget sidecar write; persistence lands asynchronously.
+   * Delete an annotation. Returns the removed annotation plus its original index
+   * so the caller can offer an undo (see restoreAnnotation); returns null if no
+   * annotation with that id exists. Enqueues a fire-and-forget sidecar write.
    */
-  function deleteAnnotation(id: string): void {
+  function deleteAnnotation(id: string): { annotation: Annotation; index: number } | null {
+    const state = get({ subscribe });
+    const index = state.annotations.findIndex((a) => a.id === id);
+    if (index === -1) return null;
+    const annotation = state.annotations[index];
     update((s) => ({
       ...s,
       annotations: s.annotations.filter((a) => a.id !== id),
     }));
+    enqueueSave();
+    return { annotation, index };
+  }
+
+  /**
+   * Re-insert a previously deleted annotation at its original index (undo).
+   * No-op if it's already present (double-undo) or `removed` is null.
+   * Enqueues a fire-and-forget sidecar write.
+   */
+  function restoreAnnotation(removed: { annotation: Annotation; index: number } | null): void {
+    if (!removed) return;
+    update((s) => {
+      if (s.annotations.some((a) => a.id === removed.annotation.id)) return s;
+      const next = [...s.annotations];
+      next.splice(Math.min(removed.index, next.length), 0, removed.annotation);
+      return { ...s, annotations: next };
+    });
     enqueueSave();
   }
 
@@ -292,6 +314,7 @@ function createAnnotationsStore() {
     detachAnnotation,
     reanchorAnnotation,
     deleteAnnotation,
+    restoreAnnotation,
     updateGeneralNotes,
     setDocContentHash,
     reset,

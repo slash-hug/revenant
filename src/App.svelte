@@ -26,6 +26,8 @@
   import { tabsStore, activeTab, tabList } from './lib/stores/tabs';
   import { annotationsStore } from './lib/stores/annotations';
   import { annotationFocus, clearFocus } from './lib/stores/annotationFocus';
+  import Toast from './lib/Toast.svelte';
+  import { deleteAnnotationWithUndo } from './lib/annotationActions';
   import { openFile, getSettings, exportObsidian } from './lib/types/ipc';
   import type { AnchorV1, Sidecar, IpcError } from './lib/types/ipc';
   import { generateReview } from './lib/ReviewExporter';
@@ -420,6 +422,14 @@
 
       {#if $activeTab}
         <div class="ws-status" role="status" aria-label="Document status">
+          <span
+            class="st-save"
+            class:dirty={$activeTab.dirty}
+            title={$activeTab.dirty ? 'Unsaved changes' : 'All changes saved'}
+          >
+            <span class="st-dot" aria-hidden="true"></span>
+            {$activeTab.dirty ? 'Unsaved' : 'Saved'}
+          </span>
           <span class="st-path" title={$activeTab.path}>{homeAbbrev($activeTab.path)}</span>
           <span>{$activeTab.content.split('\n').length} lines</span>
           <span>{$annotationsStore.annotations.length} comments</span>
@@ -441,8 +451,11 @@
       ? ($annotationsStore.annotations.find((a) => a.id === $annotationFocus.activeId) ?? null)
       : null}
     anchorRect={$annotationFocus.anchorRect}
-    on:delete={(e) => { annotationsStore.deleteAnnotation(e.detail.id); }}
+    on:delete={(e) => { deleteAnnotationWithUndo(e.detail.id); clearFocus(); }}
   />
+
+  <!-- Transient status toast (undoable delete, etc.) -->
+  <Toast />
 
   {#if compose}
     <AnnotationComposer
@@ -615,6 +628,24 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 50%;
+  }
+  .ws-status .st-save {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--success-text);
+  }
+  .ws-status .st-save.dirty { color: var(--text-muted); }
+  .ws-status .st-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--success);
+    flex: none;
+  }
+  .ws-status .st-save.dirty .st-dot {
+    background: transparent;
+    border: 1px solid var(--text-muted);
   }
 
   /* ============ Toast ============ */
