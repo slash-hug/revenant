@@ -99,9 +99,43 @@
   }
 
   /**
+   * Resolve an annotation to a concrete document offset range.
+   *
+   * Anchors created from the PREVIEW store a coarse source position (the block's
+   * source line + char 0..quoted_text.length) that does NOT point at the real
+   * source location of the quoted words. So we prefer a text-search for
+   * quoted_text (starting at/after line_start, wrapping to the doc start) and fall
+   * back to the stored line/char range only when there's no quoted text.
+   */
+  function resolveAnnotationDocRange(
+    doc: EditorState['doc'],
+    ann: Annotation,
+  ): { from: number; to: number } | null {
+    const q = ann.quoted_text;
+    if (q) {
+      const text = doc.toString();
+      const ln = ann.line_start + 1;
+      const searchFrom = ln >= 1 && ln <= doc.lines ? doc.line(ln).from : 0;
+      let idx = text.indexOf(q, searchFrom);
+      if (idx === -1) idx = text.indexOf(q); // wrap to the start
+      if (idx !== -1) return { from: idx, to: idx + q.length };
+    }
+    // Fallback: stored line/char offsets.
+    const startLineNum = ann.line_start + 1;
+    const endLineNum = ann.line_end + 1;
+    if (startLineNum < 1 || startLineNum > doc.lines) return null;
+    if (endLineNum < 1 || endLineNum > doc.lines) return null;
+    const startLine = doc.line(startLineNum);
+    const endLine = doc.line(endLineNum);
+    const from = startLine.from + Math.min(ann.char_start, startLine.length);
+    const to = endLine.from + Math.min(ann.char_end, endLine.length);
+    return from < to ? { from, to } : null;
+  }
+
+  /**
    * Build a RangeSet<SealMarker> from the annotation list.
-   * Each anchored/block_level annotation gets a seal on its `line_start` line.
-   * Lines are 0-indexed in Annotation; CM6 doc.line() is 1-indexed.
+   * Each anchored/block_level annotation gets a seal on the line where its quoted
+   * text actually lives (resolveAnnotationDocRange), deduped one-per-line.
    */
   function buildGutterMarkers(
     doc: EditorState['doc'],
@@ -113,14 +147,22 @@
     const active = annotations.filter(
       (a) => a.status === 'anchored' || a.status === 'block_level',
     );
-    // Sort ascending by line so the RangeSetBuilder receives ranges in order.
-    const sorted = [...active].sort((a, b) => a.line_start - b.line_start);
-    for (const ann of sorted) {
-      // line_start is 0-indexed; CM6 doc.line() expects 1-indexed.
-      const lineNum = ann.line_start + 1;
-      if (lineNum < 1 || lineNum > doc.lines) continue;
-      const line = doc.line(lineNum);
-      builder.add(line.from, line.from, new SealMarker(ann.id, ann.id === activeId));
+    // Resolve each to a line position, deduping to one seal per line (active wins).
+    const byLine = new Map<number, { ann: Annotation; active: boolean }>();
+    for (const ann of active) {
+      const range = resolveAnnotationDocRange(doc, ann);
+      if (!range) continue;
+      const linePos = doc.lineAt(range.from).from;
+      const isActive = ann.id === activeId;
+      const existing = byLine.get(linePos);
+      if (!existing || isActive) {
+        byLine.set(linePos, { ann, active: isActive || (existing?.active ?? false) });
+      }
+    }
+    // RangeSetBuilder requires ascending positions.
+    for (const pos of [...byLine.keys()].sort((a, b) => a - b)) {
+      const { ann, active: isActive } = byLine.get(pos)!;
+      builder.add(pos, pos, new SealMarker(ann.id, isActive));
     }
     return builder.finish();
   }
@@ -141,16 +183,11 @@
     }
     const builder = new RangeSetBuilder<Decoration>();
     try {
-      const startLineNum = ann.line_start + 1;
-      const endLineNum = ann.line_end + 1;
-      if (startLineNum < 1 || startLineNum > doc.lines) return Decoration.none;
-      if (endLineNum < 1 || endLineNum > doc.lines) return Decoration.none;
-      const startLine = doc.line(startLineNum);
-      const endLine = doc.line(endLineNum);
-      const from = startLine.from + Math.min(ann.char_start, startLine.length);
-      const to = endLine.from + Math.min(ann.char_end, endLine.length);
-      if (from >= to) return Decoration.none;
-      builder.add(from, to, Decoration.mark({ class: 'cm-annotation-wash' }));
+      // Wash the actual quoted words (resolveAnnotationDocRange), not the coarse
+      // stored char range — so a preview-created anchor washes the right text.
+      const range = resolveAnnotationDocRange(doc, ann);
+      if (!range || range.from >= range.to) return Decoration.none;
+      builder.add(range.from, range.to, Decoration.mark({ class: 'cm-annotation-wash' }));
     } catch {
       return Decoration.none;
     }
@@ -193,11 +230,11 @@
             a.line_start + 1 === lineNum,
         );
         if (!ann) return false;
-        // Emit anchor rect for the shared popover (D4): use the clicked element's
-        // bounding rect as the popover anchor coordinate.
-        const el = event.target as HTMLElement;
-        const { x, y, width, height, bottom } = el.getBoundingClientRect();
-        focusAnnotation(ann.id, { x, y, width, height, bottom });
+        // Just set focus. In split/preview view the PreviewPane measures the span
+        // and anchors the popover (avoids a distracting jump from gutter→preview);
+        // in source-only view the focus subscription below anchors it from the
+        // line coords. Either way we never anchor to the gutter marker.
+        focusAnnotation(ann.id);
         return true;
       },
     },
@@ -357,11 +394,10 @@
           '.cm-seal-active .s-ring': { opacity: '1' },
           '.cm-seal-active .s-drop': { fill: 'var(--seal-on)', opacity: '1' },
           '.cm-annotation-wash': {
-            backgroundColor: 'color-mix(in srgb, var(--seal-ink, #4A453B) 16%, transparent)',
             textDecoration: 'underline',
-            textDecorationColor: 'var(--seal-ink)',
-            textDecorationThickness: '2px',
-            textUnderlineOffset: '2px',
+            textDecorationColor: 'color-mix(in srgb, var(--seal-ink, #4A453B) 34%, transparent)',
+            textDecorationThickness: '0.5em',
+            textUnderlineOffset: '-0.16em',
           },
         }),
       ],
@@ -413,19 +449,22 @@
               }),
             });
             // In source-only view the preview isn't mounted, so nothing else
-            // anchors the popover — do it here from the line's on-screen coords.
+            // anchors the popover — do it here from the quoted text's coords.
             if (!document.querySelector('.preview-content')) {
               requestAnimationFrame(() => {
                 if (!view) return;
-                const from = line.from + Math.min(ann.char_start, line.length);
-                const coords = view.coordsAtPos(from);
-                if (!coords) return;
+                const range = resolveAnnotationDocRange(view.state.doc, ann);
+                const fromPos = range ? range.from : line.from;
+                const start = view.coordsAtPos(fromPos);
+                const end = range ? view.coordsAtPos(range.to) : start;
+                if (!start) return;
+                const right = end ? end.right : start.right;
                 setAnchorRect({
-                  x: coords.left,
-                  y: coords.top,
-                  width: 0,
-                  height: coords.bottom - coords.top,
-                  bottom: coords.bottom,
+                  x: start.left,
+                  y: start.top,
+                  width: Math.max(0, right - start.left),
+                  height: start.bottom - start.top,
+                  bottom: start.bottom,
                 });
               });
             }

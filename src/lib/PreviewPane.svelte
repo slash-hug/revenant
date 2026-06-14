@@ -584,18 +584,16 @@
      a translucent ink fill plus an ink underline on the exact quoted words.
      active = full ink; hover = a faint preview. */
   :global(::highlight(annotation-wash-active)) {
-    background-color: color-mix(in srgb, var(--seal-ink) 20%, transparent);
     text-decoration-line: underline;
-    text-decoration-color: var(--seal-ink);
-    text-decoration-thickness: 2px;
-    text-underline-offset: 2px;
+    text-decoration-color: color-mix(in srgb, var(--seal-ink) 34%, transparent);
+    text-decoration-thickness: 0.5em;
+    text-underline-offset: -0.16em;
   }
   :global(::highlight(annotation-wash-hover)) {
-    background-color: color-mix(in srgb, var(--seal-ink) 11%, transparent);
     text-decoration-line: underline;
-    text-decoration-color: color-mix(in srgb, var(--seal-ink) 50%, transparent);
-    text-decoration-thickness: 2px;
-    text-underline-offset: 2px;
+    text-decoration-color: color-mix(in srgb, var(--seal-ink) 18%, transparent);
+    text-decoration-thickness: 0.5em;
+    text-underline-offset: -0.16em;
   }
 
   /* "+ Add comment" affordance at the selection (viewport-fixed; preview scrolls) */
