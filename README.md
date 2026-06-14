@@ -10,15 +10,21 @@ Open markdown files in tabs, edit source, preview rendered output side-by-side, 
 > JetBrains Mono, steel-blue accent, blue-violet for detached annotations.
 > Rendered from the live Svelte frontend; native window chrome omitted.
 
+**Review workspace — source editor, live preview, and annotation drawer**
+
+![Revenant workspace, Paper theme](docs/screenshots/workspace-light.png)
+
+**Ink-dissolution open transition** — a suminagashi (墨流し) GPU fluid simulation
+plays as the first document opens: themed ink swirls across the page while the
+strokes "draw" it into focus, then dissolve to reveal the live document.
+
+![Revenant suminagashi open transition](docs/screenshots/transition-light.png)
+
 **Welcome screen**
 
 ![Revenant welcome screen](docs/screenshots/welcome-light.png)
 
-**Review workspace — source editor, live preview, and annotation drawer (light)**
-
-![Revenant workspace, Paper theme](docs/screenshots/workspace-light.png)
-
-**Review workspace (dark)**
+**Graphite (dark) theme**
 
 ![Revenant workspace, Graphite theme](docs/screenshots/workspace-dark.png)
 
