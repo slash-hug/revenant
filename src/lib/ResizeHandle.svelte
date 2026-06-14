@@ -83,6 +83,6 @@
   }
   .resize-handle:hover,
   .resize-handle.dragging,
-  .resize-handle:focus-visible { background: var(--accent); }
+  .resize-handle:focus-visible { background: var(--seal-ink); }
   .resize-handle:focus-visible { outline: none; }
 </style>
