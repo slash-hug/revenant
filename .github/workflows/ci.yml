@@ -90,7 +90,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tauriScript: cargo tauri
+          # The Tauri CLI ships as an npm devDependency here, not a cargo
+          # subcommand — run it via the npm "tauri" script.
+          tauriScript: npm run tauri --
 
       - name: Upload artifacts (macOS)
         if: runner.os == 'macOS'
