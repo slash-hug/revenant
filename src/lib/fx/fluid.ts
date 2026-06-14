@@ -207,10 +207,11 @@ uniform float uGlobalFocus;
 uniform float uInk;
 void main () {
   float cov = texture(uCoverage, vUv).r;
-  // Cap well below 1.0 so the snapshot stays soft — its font/render differences
-  // (esp. the editor's monospace) aren't legible through the blur. The actual
-  // crispness comes from the live DOM cross-fading in underneath.
-  float focus = smoothstep(0.04, 0.55, max(cov, uGlobalFocus)) * 0.6;
+  // The snapshot is a faithful, pixel-aligned capture of the live render (native
+  // WKWebView snapshot on macOS, html-to-image on Chromium/WebView2), so the
+  // strokes draw the page all the way into focus, and the end dissolve to the
+  // live DOM is invisible because the two are identical.
+  float focus = smoothstep(0.04, 0.55, max(cov, uGlobalFocus));
   vec3 sharp = texture(uDoc, vUv).rgb;
   vec3 soft = texture(uDocBlur, vUv).rgb;
   vec3 docCol = mix(soft, sharp, focus);
@@ -524,9 +525,13 @@ export class FluidSim {
   }
 
   /**
-   * Paint the canvas opaque immediately (before the async snapshot) so it covers
-   * the live document from the first frame — no flash of the sharp doc. The
-   * blurred snapshot is mostly this same color, so the hand-off is seamless.
+   * Paint the canvas opaque so it covers the live document. The blurred snapshot
+   * is mostly this same color, so the hand-off into the reveal is seamless.
+   *
+   * Call timing depends on the capture method (see Suminagashi.run): with the DOM
+   * reader (html-to-image) this runs first to prevent any flash; with the native
+   * WKWebView snapshot it must run *after* capture, since the snapshot reads the
+   * on-screen pixels and the canvas has to stay transparent until then.
    */
   fillBackground(color: [number, number, number]) {
     const gl = this.gl;

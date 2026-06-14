@@ -615,6 +615,30 @@ pub fn set_settings(settings: Settings) -> IpcResult<()> {
     crate::settings::set_settings(&path, store_settings).map_err(settings_err)
 }
 
+/// Capture the current web content as a PNG data URL.
+///
+/// Backs the suminagashi open transition: the frontend needs a faithful bitmap of
+/// the freshly-opened document to feed the GPU ink reveal. On macOS this uses the
+/// native WKWebView snapshot (real renderer → correct fonts); see `snapshot.rs`
+/// for why html-to-image cannot be trusted there. On every other platform it
+/// returns `SNAPSHOT_UNSUPPORTED` and the frontend falls back to html-to-image
+/// (which renders correctly on Chromium / WebView2).
+#[tauri::command]
+pub async fn snapshot_webview(window: tauri::WebviewWindow) -> IpcResult<String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::snapshot::capture_png_data_url(window).await
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        Err(IpcError {
+            code: "SNAPSHOT_UNSUPPORTED".into(),
+            message: "native webview snapshot is only available on macOS".into(),
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------

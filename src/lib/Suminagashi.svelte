@@ -11,6 +11,16 @@
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
   import { FluidSim } from './fx/fluid';
   import { toCanvas } from 'html-to-image';
+  import { snapshotWebview } from './types/ipc';
+
+  // macOS uses the native WKWebView snapshot (real renderer → fonts match the
+  // live DOM exactly). WebKit can't render @font-face inside html-to-image's
+  // SVG-foreignObject rasteriser, so on macOS that path drops the editor font and
+  // the transition "snaps" on hand-off. Chromium / WebView2 (Windows) render it
+  // correctly, so html-to-image stays the fallback there.
+  const isMac =
+    typeof navigator !== 'undefined' &&
+    (/Mac/i.test(navigator.platform || '') || /Mac OS X/i.test(navigator.userAgent || ''));
 
   /** Preview mode: keep simulating, no fade / no `done`. */
   export let hold = false;
@@ -40,6 +50,15 @@
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   }
 
+  /** Resolve after `n` animation frames (lets the DOM lay out and paint). */
+  function nextPaint(n = 1): Promise<void> {
+    return new Promise((resolve) => {
+      const tick = (left: number) =>
+        left <= 0 ? resolve() : requestAnimationFrame(() => tick(left - 1));
+      tick(n);
+    });
+  }
+
   function finish() {
     if (raf) cancelAnimationFrame(raf);
     if (backstop) clearTimeout(backstop);
@@ -60,7 +79,12 @@
   });
 
   async function run() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    // Render at the native device-pixel-ratio so the snapshot shown on the canvas
+    // is exactly as crisp as the live DOM underneath — otherwise the hard cut
+    // "pops" as the page sharpens by the cap's worth of resolution. The per-frame
+    // fluid sim runs at its own fixed internal resolution (simRes/dyeRes), so this
+    // only enlarges the final display blit. Capped at 2 to bound cost on 3x panels.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = window.innerWidth, h = window.innerHeight;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
@@ -77,25 +101,95 @@
       return;
     }
 
-    // Cover the document immediately (opaque bg) so the live sharp doc never
-    // flashes during the async snapshot below.
-    sim.fillBackground(cssColor('--bg'));
-
-    // Snapshot the freshly-opened workspace — the transition reveals THIS, sharp,
-    // along the ink's path. The fluid canvas is a sibling, so it isn't captured.
+    // Capture a faithful bitmap of the freshly-opened workspace — the transition
+    // reveals THIS, sharp, along the ink's path.
+    //
+    // Ordering differs by capture method:
+    //  - Native (macOS): the snapshot reads the on-screen pixels, so the fluid
+    //    canvas must stay transparent (it's a sibling on top of .ws) until AFTER
+    //    the capture — only then do we fillBackground() to cover. There's an
+    //    unavoidable brief moment of the sharp doc while WKWebView renders the
+    //    snapshot.
+    //  - html-to-image (Chromium/WebView2): reads the DOM directly, so occlusion
+    //    is irrelevant — cover FIRST to avoid any flash, then capture.
     const wsEl = document.querySelector('.ws') as HTMLElement | null;
-    let docCanvas: HTMLCanvasElement | null = null;
-    if (wsEl) {
+    let docSource: TexImageSource | null = null;
+
+    // Let the just-opened workspace fully lay out + paint before capturing it.
+    // This matters for a clean hand-off: the snapshot must match the FINAL live
+    // layout, or the end cut visibly settles (the preview's prose reflows as
+    // Literata applies, drifting the lower lines).
+    if (document.fonts?.ready) { try { await document.fonts.ready; } catch { /* ignore */ } }
+    await nextPaint(4);
+    if (!sim) return; // disposed/finished while awaiting
+
+    const htmlToImageCapture = async (): Promise<TexImageSource | null> => {
+      if (!wsEl) return null;
       try {
-        // Ensure the web fonts are loaded so the snapshot embeds them (otherwise
-        // it falls back to system fonts and the cross-fade "snaps" the type).
-        if (document.fonts?.ready) await document.fonts.ready;
-        docCanvas = await toCanvas(wsEl, { pixelRatio: dpr, backgroundColor: cssRaw('--bg') || undefined, cacheBust: false });
-      } catch { docCanvas = null; }
+        return await toCanvas(wsEl, { pixelRatio: dpr, backgroundColor: cssRaw('--bg') || undefined, cacheBust: false });
+      } catch { return null; }
+    };
+
+    if (isMac) {
+      try {
+        const dataUrl = await snapshotWebview();
+        const img = new Image();
+        img.src = dataUrl;
+        await img.decode();
+        docSource = img;
+      } catch { docSource = null; }
+      if (!sim) return;
+      sim.fillBackground(cssColor('--bg')); // cover now that the capture is done
+      if (!docSource) docSource = await htmlToImageCapture(); // native unavailable → fall back
+    } else {
+      sim.fillBackground(cssColor('--bg')); // cover first — no flash on Chromium/WebView2
+      docSource = await htmlToImageCapture();
     }
+
     if (!sim) return; // disposed/finished while awaiting the snapshot
-    if (!docCanvas) { finish(); return; }
-    sim.setDocument(docCanvas, canvas.width, canvas.height);
+    if (!docSource) { finish(); return; }
+
+    // The native WKWebView snapshot captures the full webview bounds, which on a
+    // decorated macOS window include the title-bar strip ABOVE the CSS layout
+    // viewport (the viewport is inset below the title bar). Left as-is, the
+    // shader squashes that taller image into the viewport, vertically compressing
+    // the page so the hand-off to the live DOM shifts. Crop the strip off the top
+    // so the texture maps 1:1 onto the live viewport.
+    //
+    // The native WKWebView snapshot captures the webview BOUNDS, which are taller
+    // than the CSS layout viewport — the extra rows are webview area BELOW the page
+    // (the web content is top-flush: CSS origin = webview top-left, no native
+    // chrome in the capture; verified by landmarking the accent button at
+    // contentTopRow 0). Left as-is the shader squashes the taller image into the
+    // viewport, compressing the page so the hand-off shifts. Keep the top
+    // `contentH` rows and drop the bottom excess so the texture maps 1:1 onto the
+    // live viewport.
+    //
+    // contentH is derived from the snapshot's own backing scale (its px per CSS
+    // px), so this stays correct even when the canvas DPR is capped below the real
+    // devicePixelRatio (e.g. on 3x panels). Any sub-pixel residual is absorbed by
+    // the softened end-dissolve (see the frame loop below).
+    if (docSource instanceof HTMLImageElement && w > 0 && h > 0) {
+      const backScale = docSource.naturalWidth / w; // snapshot device px per CSS px
+      const contentH = Math.round(h * backScale);    // snapshot px the viewport occupies
+      const excess = docSource.naturalHeight - contentH; // webview rows below the page
+      if (excess > 1) {
+        const cropped = document.createElement('canvas');
+        cropped.width = canvas.width;
+        cropped.height = canvas.height;
+        const ctx = cropped.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(
+            docSource,
+            0, 0, docSource.naturalWidth, contentH, // src: top-flush content, drop the bottom excess
+            0, 0, canvas.width, canvas.height,       // dst: fill the viewport-sized canvas
+          );
+          docSource = cropped;
+        }
+      }
+    }
+
+    sim.setDocument(docSource, canvas.width, canvas.height);
 
     const inks: RGB[] = [
       cssColor('--text'), cssColor('--accent'), cssColor('--detached'),
@@ -118,17 +212,26 @@
     const aAng = Math.random() * Math.PI * 2;
     sim!.splat(cx, cy, Math.cos(aAng) * FORCE * 0.5, Math.sin(aAng) * FORCE * 0.5, cssColor('--text'), 0.009);
 
-    const SIM_MS = 760, FADE_MS = 560; // soft reveal, then a long dissolve to the crisp live DOM
+    // Reveal, then a short crossfade to the live DOM. The canvas stays fully opaque
+    // through the reveal, then its opacity fades out. Because the snapshot is a
+    // pixel-aligned copy of the live render, the crossfade is invisible (a·img +
+    // (1−a)·img = img) — no ghost, no jump, no brightening.
+    const SIM_MS = 820;  // ink blooms + draws the page into focus
+    const HOLD_MS = 60;  // hold the focused page a beat
+    const CUT_MS = 150;  // crossfade to the live DOM
     const start = performance.now();
     const frame = (now: number) => {
       if (!sim) return;
       const t = now - start;
       sim.step(0.016);
-      // strokes draw focus first; a global ramp brings any unreached areas in by the end.
-      const globalFocus = hold ? 0 : Math.max(0, Math.min(1, (t - SIM_MS * 0.58) / (SIM_MS * 0.42)));
-      const fade = hold ? 1 : t < SIM_MS ? 1 : Math.max(0, 1 - (t - SIM_MS) / FADE_MS);
-      sim.render(fade, globalFocus, 0.8);
-      if (!hold && t > SIM_MS + FADE_MS) { finish(); return; }
+      // Strokes draw focus first; a global ramp brings any unreached areas in by SIM_MS.
+      const globalFocus = hold ? 0 : Math.max(0, Math.min(1, (t - SIM_MS * 0.5) / (SIM_MS * 0.5)));
+      // Ink blooms, then trails off so the page is clean by the time it's focused.
+      const ink = hold ? 0.85 : 0.85 * (1 - Math.max(0, Math.min(1, (t - SIM_MS * 0.45) / (SIM_MS * 0.5))));
+      const cutT = Math.max(0, t - (SIM_MS + HOLD_MS));
+      const fade = hold ? 1 : Math.max(0, 1 - cutT / CUT_MS);
+      sim.render(fade, globalFocus, ink);
+      if (!hold && t > SIM_MS + HOLD_MS + CUT_MS) { finish(); return; }
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);

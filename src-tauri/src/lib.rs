@@ -21,6 +21,10 @@ pub mod settings;
 pub mod secrets;
 pub mod obsidian;
 
+// Native macOS WKWebView snapshot (open-transition document capture).
+#[cfg(target_os = "macos")]
+pub mod snapshot;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -93,6 +97,7 @@ pub fn run() {
             ipc::export_obsidian,
             ipc::get_settings,
             ipc::set_settings,
+            ipc::snapshot_webview,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
