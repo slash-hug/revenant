@@ -161,7 +161,8 @@ pub fn export_obsidian_with_frontmatter(
         Some(base) => merge_mappings(base, &overlay),
         None => overlay,
     };
-    let merged_doc = reassemble(Some(&merged_mapping), &parsed.body).map_err(|e| {
+    // T2.3: pass the detected line_ending so CRLF documents are preserved.
+    let merged_doc = reassemble(Some(&merged_mapping), &parsed.body, parsed.line_ending).map_err(|e| {
         ObsidianError::Http(format!("frontmatter reassemble error: {e}"))
     })?;
     export_obsidian(&merged_doc, vault_relative_path, settings, rest_port)
