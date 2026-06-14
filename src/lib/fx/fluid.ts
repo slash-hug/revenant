@@ -207,10 +207,10 @@ uniform float uGlobalFocus;
 uniform float uInk;
 void main () {
   float cov = texture(uCoverage, vUv).r;
-  // Cap below 1.0 so the snapshot never reaches fully sharp — the final
-  // crispness comes from the live DOM cross-fading in, which hides any
-  // snapshot font/render differences in the dissolve.
-  float focus = smoothstep(0.04, 0.55, max(cov, uGlobalFocus)) * 0.82;
+  // Cap well below 1.0 so the snapshot stays soft — its font/render differences
+  // (esp. the editor's monospace) aren't legible through the blur. The actual
+  // crispness comes from the live DOM cross-fading in underneath.
+  float focus = smoothstep(0.04, 0.55, max(cov, uGlobalFocus)) * 0.6;
   vec3 sharp = texture(uDoc, vUv).rgb;
   vec3 soft = texture(uDocBlur, vUv).rgb;
   vec3 docCol = mix(soft, sharp, focus);

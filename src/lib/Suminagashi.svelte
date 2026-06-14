@@ -118,7 +118,7 @@
     const aAng = Math.random() * Math.PI * 2;
     sim!.splat(cx, cy, Math.cos(aAng) * FORCE * 0.5, Math.sin(aAng) * FORCE * 0.5, cssColor('--text'), 0.009);
 
-    const SIM_MS = 820, FADE_MS = 420; // longer fade so the live DOM dissolves the type in
+    const SIM_MS = 760, FADE_MS = 560; // soft reveal, then a long dissolve to the crisp live DOM
     const start = performance.now();
     const frame = (now: number) => {
       if (!sim) return;
