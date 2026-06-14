@@ -77,6 +77,10 @@
       return;
     }
 
+    // Cover the document immediately (opaque bg) so the live sharp doc never
+    // flashes during the async snapshot below.
+    sim.fillBackground(cssColor('--bg'));
+
     // Snapshot the freshly-opened workspace — the transition reveals THIS, sharp,
     // along the ink's path. The fluid canvas is a sibling, so it isn't captured.
     const wsEl = document.querySelector('.ws') as HTMLElement | null;

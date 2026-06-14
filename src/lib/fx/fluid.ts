@@ -520,6 +520,20 @@ export class FluidSim {
     this.blit(this.dye.write); this.dye.swap();
   }
 
+  /**
+   * Paint the canvas opaque immediately (before the async snapshot) so it covers
+   * the live document from the first frame — no flash of the sharp doc. The
+   * blurred snapshot is mostly this same color, so the hand-off is seamless.
+   */
+  fillBackground(color: [number, number, number]) {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.clearColor(color[0], color[1], color[2], 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    this.canvas.style.opacity = '1';
+  }
+
   /** True once a document snapshot has been provided. */
   get hasDocument() { return !!this.docTex && !!this.docBlur; }
 
