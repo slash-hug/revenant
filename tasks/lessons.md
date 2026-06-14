@@ -160,3 +160,36 @@ containment**.
   keeps its theme. Re-render on `<html data-theme>` change (MutationObserver) to
   follow light/dark; the stock 'dark' node fill (#1f2020) needs `mainBkg` lifted
   off the app's dark card for contrast.
+
+## `tsc --noEmit` + `vite build` + `npm test` all pass while the app is broken — run `svelte-check` (2026-06-14)
+
+**What happened:** The annotation-markers feature-implement round merged with a
+green `tsc --noEmit`, `vite build`, and 114 passing Vitest tests — yet
+`svelte-check` found 4 errors that would ship a broken feature:
+- `AnnotationSeals.svelte`: a JS comment in the `<script>` contained the literal
+  text `<style>` and `{@html <style>}`. `svelte2tsx`'s lightweight tag scanner
+  (which svelte-check uses, but the real `svelte/compiler` parser and Vite's
+  bundler do NOT) treated those literals as real tags, decided the `<script>`
+  was "left open," and reported the component as having **no default export** —
+  cascading into a `PreviewPane` import error. The component compiled and ran
+  fine under Vite; only svelte-check caught it.
+- `AnnotationDrawer.svelte`: the detached-section delete buttons still called the
+  old 1-arg `requestDelete(id)` after the active section was changed to
+  `(e, id)`. `tsc` doesn't typecheck the internals of `.svelte` files; svelte-check
+  does — so the arity mismatch was invisible to `tsc --noEmit`.
+- `import.meta.env.DEV` failed to typecheck because `tsconfig.types` is an
+  explicit allowlist (`["vitest/globals","node"]`) that excluded `vite/client`.
+
+**Rules:**
+- **`svelte-check` is a required gate, distinct from `tsc --noEmit`.** `tsc`
+  checks `.ts` files and the module graph but does NOT typecheck the contents of
+  `.svelte` `<script>`/markup (arity, prop types, store call signatures).
+  `vite build` doesn't typecheck at all. A round is not "green" until
+  `svelte-check` is clean. The feature-implement workflow ran tsc+build+test but
+  not svelte-check — add it to the verification set.
+- **Never put `<style>`, `</script>`, or `{@html ...}` literals in a Svelte
+  `<script>` comment.** `svelte2tsx`'s scanner mis-reads them as tags even though
+  the real compiler tolerates them. Rephrase ("a dynamic style rule", "sanitized
+  HTML injection") instead of writing the literal tag text.
+- When `tsconfig.compilerOptions.types` is set, it's an exhaustive allowlist —
+  using `import.meta.env` requires adding `"vite/client"` to it.

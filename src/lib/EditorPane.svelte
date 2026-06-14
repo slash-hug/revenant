@@ -27,7 +27,7 @@
   import { saveFile } from './types/ipc';
   import type { SourceAnchor, AnchorV1, IpcError, Annotation } from './types/ipc';
   import { annotationsStore } from './stores/annotations';
-  import { annotationFocus, focusAnnotation } from './stores/annotationFocus';
+  import { annotationFocus, focusAnnotation, setAnchorRect } from './stores/annotationFocus';
 
   // -------------------------------------------------------------------------
   // Annotation focus / gutter-seal CM6 integration (T3.1 / D12)
@@ -70,7 +70,13 @@
       el.className = 'cm-seal-marker' + (this.isActive ? ' cm-seal-active' : '');
       el.setAttribute('aria-label', 'Annotation');
       // D-RISK-2: do NOT add tabindex in this round — defer to follow-up issue.
-      el.textContent = '◆';
+      // Droplet-in-a-ring seal matching the preview gutter (AnnotationSeals.svelte).
+      el.innerHTML =
+        '<svg viewBox="0 0 20 20" fill="none" aria-hidden="true">' +
+        '<circle class="s-fill" cx="10" cy="10" r="9"/>' +
+        '<circle class="s-ring" cx="10" cy="10" r="8.5" stroke-width="1.5" fill="none"/>' +
+        '<path class="s-drop" d="M10 5.5 C10 5.5 7 9 7 11.2 A3 3 0 0 0 13 11.2 C13 9 10 5.5 10 5.5Z"/>' +
+        '</svg>';
       return el;
     }
 
@@ -331,28 +337,31 @@
         // Seal gutter theme
         EditorView.theme({
           '.cm-annotation-gutter': {
-            width: '18px',
+            width: '20px',
             cursor: 'pointer',
           },
           '.cm-seal-marker': {
-            display: 'block',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
             width: '100%',
-            textAlign: 'center',
-            fontSize: '9px',
-            lineHeight: '1.95',
-            color: 'var(--seal-ink)',
-            opacity: '0.75',
-            transition: 'opacity var(--dur-fast)',
+            transition: 'transform var(--dur-fast)',
           },
-          '.cm-seal-marker:hover': {
-            opacity: '1',
-          },
-          '.cm-seal-active': {
-            opacity: '1',
-            color: 'var(--seal-ink)',
-          },
+          '.cm-seal-marker svg': { width: '14px', height: '14px', overflow: 'visible' },
+          '.cm-seal-marker .s-fill': { fill: 'transparent', transition: 'fill var(--dur-fast)' },
+          '.cm-seal-marker .s-ring': { stroke: 'var(--seal-ink)', opacity: '0.7' },
+          '.cm-seal-marker .s-drop': { fill: 'var(--seal-ink)', opacity: '0.8' },
+          '.cm-seal-marker:hover': { transform: 'scale(1.1)' },
+          '.cm-seal-marker:hover .s-ring, .cm-seal-marker:hover .s-drop': { opacity: '1' },
+          '.cm-seal-active .s-fill': { fill: 'var(--seal-ink)' },
+          '.cm-seal-active .s-ring': { opacity: '1' },
+          '.cm-seal-active .s-drop': { fill: 'var(--seal-on)', opacity: '1' },
           '.cm-annotation-wash': {
-            backgroundColor: 'color-mix(in srgb, var(--seal-ink, #4A453B) 10%, transparent)',
+            backgroundColor: 'color-mix(in srgb, var(--seal-ink, #4A453B) 16%, transparent)',
+            textDecoration: 'underline',
+            textDecorationColor: 'var(--seal-ink)',
+            textDecorationThickness: '2px',
+            textUnderlineOffset: '2px',
           },
         }),
       ],
@@ -403,6 +412,23 @@
                 yMargin: prefersReducedMotion ? 0 : undefined,
               }),
             });
+            // In source-only view the preview isn't mounted, so nothing else
+            // anchors the popover — do it here from the line's on-screen coords.
+            if (!document.querySelector('.preview-content')) {
+              requestAnimationFrame(() => {
+                if (!view) return;
+                const from = line.from + Math.min(ann.char_start, line.length);
+                const coords = view.coordsAtPos(from);
+                if (!coords) return;
+                setAnchorRect({
+                  x: coords.left,
+                  y: coords.top,
+                  width: 0,
+                  height: coords.bottom - coords.top,
+                  bottom: coords.bottom,
+                });
+              });
+            }
           }
         }
       }

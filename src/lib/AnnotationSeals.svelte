@@ -39,13 +39,15 @@
 
   const SEAL_HEIGHT = 22; // px — height of each seal circle
   const SEAL_STACK_GAP = 2; // px — gap between stacked seals on the same block
-  const SEAL_LEFT_OFFSET = -32; // px — seal left edge relative to .pv-scroll left
+  const SEAL_GUTTER = 30; // px — how far left of the text the seal sits (within the prose left padding)
+  const SEAL_MIN_LEFT = 4; // px — never let the seal escape the left edge of .pv-scroll
 
   // ── Seal resolution ─────────────────────────────────────────────────────────
 
   interface SealEntry {
     annotation: Annotation;
     top: number; // px offset from .pv-scroll top
+    left: number; // px offset from .pv-scroll left (in the prose gutter, beside the text)
     blockEl: Element;
   }
 
@@ -75,6 +77,7 @@
 
     const scrollContainerRect = scrollContainer.getBoundingClientRect();
     const scrollTop = scrollContainer.scrollTop;
+    const scrollLeft = scrollContainer.scrollLeft;
 
     // Track resolved blocks and how many seals each block already has (for stacking).
     const blockSealCount = new Map<Element, number>();
@@ -91,10 +94,13 @@
         continue;
       }
 
-      // offsetTop of block relative to the scroll container.
+      // Position relative to the scroll container, in the block's own gutter
+      // (just left of the text), so the seal sits inside the prose left padding
+      // and scrolls with the content — not pinned to the container edge.
       const blockRect = blockEl.getBoundingClientRect();
-      const relativeTop =
-        blockRect.top - scrollContainerRect.top + scrollTop;
+      const relativeTop = blockRect.top - scrollContainerRect.top + scrollTop;
+      const blockLeft = blockRect.left - scrollContainerRect.left + scrollLeft;
+      const left = Math.max(SEAL_MIN_LEFT, blockLeft - SEAL_GUTTER);
 
       // Stack multiple seals on the same block.
       const stackIdx = blockSealCount.get(blockEl) ?? 0;
@@ -103,6 +109,7 @@
       newSeals.push({
         annotation: ann,
         top: relativeTop + stackIdx * (SEAL_HEIGHT + SEAL_STACK_GAP),
+        left,
         blockEl,
       });
     }
@@ -134,7 +141,7 @@
   $: {
     // Remove tint from the previous block.
     if (prevTintEl) {
-      prevTintEl.style.removeProperty('--block-tint');
+      prevTintEl.style.removeProperty('background');
       prevTintEl.style.removeProperty('border-radius');
       prevTintEl = null;
     }
@@ -142,10 +149,12 @@
     const activeId = $annotationFocus.activeId;
     if (activeId) {
       const entry = seals.find((s) => s.annotation.id === activeId);
-      if (entry) {
+      // Block-level annotations have no inline text span to wash, so THEY get the
+      // soft full-block tint. Anchored annotations get the inline ink wash
+      // (CSS Custom Highlight API) instead — never the block tint (D6).
+      if (entry && entry.annotation.status === 'block_level') {
         const el = entry.blockEl as HTMLElement;
-        el.style.setProperty('--block-tint', 'color-mix(in srgb, var(--seal-ink, #4A453B) 8%, transparent)');
-        el.style.setProperty('background', 'var(--block-tint)');
+        el.style.setProperty('background', 'color-mix(in srgb, var(--seal-ink, #4A453B) 8%, transparent)');
         el.style.setProperty('border-radius', '4px');
         prevTintEl = el;
       }
@@ -156,16 +165,9 @@
 
   function handleSealClick(e: MouseEvent, ann: Annotation) {
     e.stopPropagation();
-    // Pass the seal element's viewport rect to the focus store so AnnotationPopover
-    // can use it for coordinate-driven placement (D4 — portal-mounted at App root).
-    const domRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    focusAnnotation(ann.id, {
-      x: domRect.right,
-      y: domRect.top,
-      width: domRect.width,
-      height: domRect.height,
-      bottom: domRect.bottom,
-    });
+    // Just set focus — PreviewPane measures the real span/block rect and sets the
+    // popover anchor (so the popover sits under the WORDS, not the gutter seal).
+    focusAnnotation(ann.id);
   }
 
   function handleSealMouseEnter(ann: Annotation) {
@@ -205,20 +207,20 @@
       title={entry.annotation.quoted_text
         ? `"${entry.annotation.quoted_text.slice(0, 60)}${entry.annotation.quoted_text.length > 60 ? '…' : ''}"`
         : entry.annotation.body.slice(0, 80)}
-      style="top: {entry.top}px; left: {SEAL_LEFT_OFFSET}px;"
+      style="top: {entry.top}px; left: {entry.left}px;"
       on:click={(e) => handleSealClick(e, entry.annotation)}
       on:mouseenter={() => handleSealMouseEnter(entry.annotation)}
       on:mouseleave={handleSealMouseLeave}
     >
-      <!-- Droplet-in-a-ring seal icon -->
+      <!-- Droplet-in-a-ring seal icon. At rest: ink ring + ink droplet on a
+           transparent field. Active: the field fills with ink and the droplet
+           inverts to the surface color (see CSS). -->
       <svg class="seal-svg" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-        <!-- Outer ring -->
-        <circle cx="10" cy="10" r="8.5" stroke="currentColor" stroke-width="1.5" />
-        <!-- Inner droplet -->
+        <circle class="seal-fill" cx="10" cy="10" r="9" />
+        <circle class="seal-ring" cx="10" cy="10" r="8.5" stroke-width="1.5" fill="none" />
         <path
+          class="seal-drop"
           d="M10 5.5 C10 5.5 7 9 7 11.2 A3 3 0 0 0 13 11.2 C13 9 10 5.5 10 5.5Z"
-          fill="currentColor"
-          opacity="0.85"
         />
       </svg>
     </button>
@@ -251,29 +253,33 @@
     pointer-events: all;
     border-radius: 50%;
     color: var(--seal-ink, #4A453B);
-    opacity: 0.55;
-    transition:
-      opacity var(--dur-fast, 120ms),
-      color var(--dur-fast, 120ms),
-      transform var(--dur-fast, 120ms);
+    transition: transform var(--dur-fast, 120ms);
   }
 
+  .seal-svg { width: 18px; height: 18px; flex: none; overflow: visible; }
+
+  /* Resting: ink ring + ink droplet, no fill. */
+  .seal-fill { fill: transparent; transition: fill var(--dur-fast, 120ms); }
+  .seal-ring { stroke: var(--seal-ink, #4A453B); opacity: 0.7; transition: opacity var(--dur-fast, 120ms); }
+  .seal-drop { fill: var(--seal-ink, #4A453B); opacity: 0.78; transition: fill var(--dur-fast, 120ms), opacity var(--dur-fast, 120ms); }
+
+  /* Hover: darken toward full ink + a small lift. */
   .seal:hover,
-  .seal--hover {
-    opacity: 0.85;
-    transform: scale(1.1);
-  }
+  .seal--hover { transform: scale(1.08); }
+  .seal:hover .seal-ring,
+  .seal--hover .seal-ring { opacity: 1; }
+  .seal:hover .seal-drop,
+  .seal--hover .seal-drop { opacity: 1; }
 
+  /* Active: the field fills with ink, the droplet inverts to the surface color,
+     and a soft halo blooms around the seal. */
+  .seal--active .seal-fill { fill: var(--seal-ink, #4A453B); }
+  .seal--active .seal-ring { stroke: var(--seal-ink, #4A453B); opacity: 1; }
+  .seal--active .seal-drop { fill: var(--seal-on, #FFFFFF); opacity: 1; }
   .seal--active {
-    opacity: 1;
-    color: var(--accent, #3D6DA0);
-    animation: seal-bloom 600ms var(--ease-out, cubic-bezier(.22,.78,.28,1)) forwards;
-  }
-
-  .seal-svg {
-    width: 18px;
-    height: 18px;
-    flex: none;
+    animation: seal-bloom 600ms var(--ease-out, cubic-bezier(.22,.78,.28,1));
+    border-radius: 50%;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--seal-ink, #4A453B) 22%, transparent);
   }
 
   /* Ink-bloom pulse (TRAP 3: standalone @keyframes not suppressed by --dur-* tokens,

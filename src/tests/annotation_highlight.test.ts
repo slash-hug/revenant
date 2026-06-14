@@ -157,14 +157,14 @@ describe('refreshHighlights', () => {
     // In jsdom, CSS.highlights is absent → silent no-op.
     const el = makeEl('<p>Test paragraph</p>');
     const range = buildRange(el, 'Test');
-    expect(() => refreshHighlights(range ? [range] : [], range ?? null)).not.toThrow();
+    expect(() => refreshHighlights(range ?? null, null)).not.toThrow();
   });
 
-  it('does not throw when called with empty ranges', () => {
-    expect(() => refreshHighlights([], null)).not.toThrow();
+  it('does not throw when called with no ranges', () => {
+    expect(() => refreshHighlights(null, null)).not.toThrow();
   });
 
-  it('calls CSS.highlights.set when supported (mocked)', () => {
+  it('sets the active wash and clears hover when only an active range is given (mocked)', () => {
     const mockHighlights = {
       set: vi.fn(),
       delete: vi.fn(),
@@ -179,12 +179,30 @@ describe('refreshHighlights', () => {
 
     const el = makeEl('<p>Hello world</p>');
     const range = buildRange(el, 'Hello');
-    refreshHighlights(range ? [range] : [], range ?? null);
+    refreshHighlights(range ?? null, null);
 
-    // When there's only an active range, the wash set is empty (delete) and
-    // the active set is set.
-    expect(mockHighlights.delete).toHaveBeenCalledWith('annotation-wash');
+    // Active set is painted; the hover set is cleared (clean at rest).
     expect(mockHighlights.set).toHaveBeenCalledWith('annotation-wash-active', expect.anything());
+    expect(mockHighlights.delete).toHaveBeenCalledWith('annotation-wash-hover');
+
+    (global as Record<string, unknown>).CSS = original;
+    (global as Record<string, unknown>).Highlight = OriginalHighlight;
+  });
+
+  it('paints the hover wash for a distinct hovered range (mocked)', () => {
+    const mockHighlights = { set: vi.fn(), delete: vi.fn(), has: vi.fn() };
+    const original = (global as Record<string, unknown>).CSS;
+    (global as Record<string, unknown>).CSS = { highlights: mockHighlights };
+    const OriginalHighlight = (global as Record<string, unknown>).Highlight;
+    (global as Record<string, unknown>).Highlight = vi.fn(function() {});
+
+    const el = makeEl('<p>Hello world</p>');
+    const active = buildRange(el, 'Hello');
+    const hover = buildRange(el, 'world');
+    refreshHighlights(active ?? null, hover ?? null);
+
+    expect(mockHighlights.set).toHaveBeenCalledWith('annotation-wash-active', expect.anything());
+    expect(mockHighlights.set).toHaveBeenCalledWith('annotation-wash-hover', expect.anything());
 
     (global as Record<string, unknown>).CSS = original;
     (global as Record<string, unknown>).Highlight = OriginalHighlight;
@@ -209,8 +227,8 @@ describe('clearHighlights', () => {
 
     clearHighlights();
 
-    expect(mockHighlights.delete).toHaveBeenCalledWith('annotation-wash');
     expect(mockHighlights.delete).toHaveBeenCalledWith('annotation-wash-active');
+    expect(mockHighlights.delete).toHaveBeenCalledWith('annotation-wash-hover');
 
     (global as Record<string, unknown>).CSS = original;
   });

@@ -69,6 +69,16 @@ export function focusAnnotation(id: string, rect?: AnchorRect | null): void {
 }
 
 /**
+ * Update only the anchor rect for the currently-active annotation, without
+ * bumping scrollNonce or changing activeId. Called by whichever surface owns the
+ * visible annotation (PreviewPane / EditorPane) once it has measured the real
+ * span/line rect — so the popover anchors under the actual words, not the seal.
+ */
+export function setAnchorRect(rect: AnchorRect | null): void {
+  annotationFocus.update((s) => ({ ...s, anchorRect: rect }));
+}
+
+/**
  * Clear focus state (called on Esc, outside-click, and tab switch).
  * scrollNonce is intentionally left unchanged.
  */

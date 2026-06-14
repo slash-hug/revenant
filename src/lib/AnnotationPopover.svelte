@@ -51,6 +51,8 @@
   let panel: HTMLDivElement;
   let left = 0;
   let top = 0;
+  let placement: 'below' | 'above' = 'below';
+  let caretLeft = 24; // px from the popover's left edge — points at the span center
 
   // Two-step inline delete (replicates AnnotationDrawer.pendingDeleteId — no native confirm).
   let pendingDeleteId: string | null = null;
@@ -75,29 +77,29 @@
     const vh = window.innerHeight;
     const minTop = toolbarBottom + TOOLBAR_GAP;
 
-    if (anchorRect) {
-      // Horizontal: align to anchor left, clamped to viewport margins.
-      left = Math.min(
-        Math.max(VIEWPORT_MARGIN, anchorRect.x),
-        vw - POPOVER_WIDTH - VIEWPORT_MARGIN,
-      );
+    if (!anchorRect) return; // hidden until a surface measures the span (see render gate)
 
-      // Vertical: default below, flip above when it would overflow viewport.
-      const belowTop = anchorRect.bottom + GAP;
-      const aboveTop = anchorRect.y - actualHeight - GAP;
+    // Horizontal: align to anchor left, clamped to viewport margins.
+    left = Math.min(
+      Math.max(VIEWPORT_MARGIN, anchorRect.x),
+      vw - POPOVER_WIDTH - VIEWPORT_MARGIN,
+    );
 
-      if (belowTop + actualHeight > vh) {
-        // Flip above — but clamp so we don't go under the toolbar.
-        top = Math.max(minTop, aboveTop);
-      } else {
-        // Below — clamp to toolbar bottom just in case anchor is near top.
-        top = Math.max(minTop, belowTop);
-      }
+    // Vertical: default below the span, flip above when it would overflow the
+    // viewport AND there's room above (clamped below the toolbar either way).
+    const belowTop = anchorRect.bottom + GAP;
+    const aboveTop = anchorRect.y - actualHeight - GAP;
+    if (belowTop + actualHeight > vh && aboveTop >= minTop) {
+      placement = 'above';
+      top = Math.max(minTop, aboveTop);
     } else {
-      // No anchor rect (drawer-triggered open): centre horizontally, near top.
-      left = Math.max(VIEWPORT_MARGIN, (vw - POPOVER_WIDTH) / 2);
-      top = minTop + GAP;
+      placement = 'below';
+      top = Math.max(minTop, belowTop);
     }
+
+    // Caret points at the span's horizontal centre, clamped within the popover.
+    const anchorCenterX = anchorRect.x + anchorRect.width / 2;
+    caretLeft = Math.min(Math.max(14, anchorCenterX - left), POPOVER_WIDTH - 14);
   }
 
   // ── Keyboard + outside-click dismissal ───────────────────────────────────────
@@ -181,15 +183,18 @@
   }
 </script>
 
-{#if annotation}
+{#if annotation && anchorRect}
   <div
     bind:this={panel}
     class="popover"
+    class:placement-above={placement === 'above'}
     style="left: {left}px; top: {top}px; width: {POPOVER_WIDTH}px;"
     role="dialog"
     aria-label="Annotation"
     aria-modal="false"
   >
+    <!-- Caret tying the popover to the span it's about. -->
+    <span class="pop-caret" style="left: {caretLeft}px;" aria-hidden="true"></span>
     <!-- Header: line chip + status badge + delete action -->
     <div class="pop-top">
       <span class="chip">{anchorLabel(annotation)}</span>
@@ -250,6 +255,27 @@
     to   { opacity: 1; transform: none; }
   }
   @media (prefers-reduced-motion: reduce) { .popover { animation: none; } }
+
+  /* Caret tying the popover to the span. Sits on the top edge by default,
+     flips to the bottom edge when the popover opens above the span. */
+  .pop-caret {
+    position: absolute;
+    top: -7px;
+    width: 12px;
+    height: 12px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    border-top: 1px solid var(--border);
+    transform: translateX(-50%) rotate(45deg);
+  }
+  .placement-above .pop-caret {
+    top: auto;
+    bottom: -7px;
+    border-left: none;
+    border-top: none;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
 
   .pop-top { display: flex; align-items: center; gap: var(--sp-2); }
   .spacer { flex: 1; }

@@ -34,11 +34,13 @@
   import {
     annotationFocus,
     clearFocus,
+    setAnchorRect,
   } from './stores/annotationFocus';
   import {
     buildRange,
     refreshHighlights,
     clearHighlights,
+    isHighlightSupported,
   } from './annotationHighlight';
   import { annotationsStore } from './stores/annotations';
   import { resolveBlock } from './annotationResolve';
@@ -71,12 +73,19 @@
   let resizeObserver: ResizeObserver | null = null;
 
   // ── annotationFocus subscription (T2.6) ─────────────────────────────────────
-  // Track scrollNonce to scroll active seal into view on focus change.
+  // Repaint the wash whenever the active/hovered annotation changes, and scroll
+  // + re-anchor the popover whenever a navigation (scrollNonce bump) occurs.
   let prevScrollNonce = -1;
+  let prevActiveId: string | null = null;
+  let prevHoverId: string | null = null;
   const unsubFocus = annotationFocus.subscribe((state) => {
+    if (state.activeId !== prevActiveId || state.hoverId !== prevHoverId) {
+      prevActiveId = state.activeId;
+      prevHoverId = state.hoverId;
+      refreshAnnotationWash();
+    }
     if (state.scrollNonce !== prevScrollNonce && prevScrollNonce !== -1) {
-      // scrollNonce bumped — scroll to the active annotation.
-      void scrollToActiveSeal(state.activeId);
+      void scrollToActiveAndAnchor(state.activeId);
     }
     prevScrollNonce = state.scrollNonce;
   });
@@ -197,7 +206,7 @@
       // Recompute seals + refresh highlights at the tail of hydration (TRAP 2:
       // Mermaid/hljs hydration is async; compute offsetTop only after SVGs inject).
       triggerSealRecompute();
-      refreshAnnotationHighlights();
+      refreshAnnotationWash();
     }
   }
 
@@ -212,40 +221,66 @@
   }
 
   /**
-   * Refresh CSS Custom Highlight API wash for all active + focus annotations.
-   * Feature-detected in annotationHighlight.ts — no-op on unsupported environments.
+   * Repaint the inline ink wash. The prose is clean at rest — only the active
+   * span (full wash) and the hovered span (faint wash) are painted, via the CSS
+   * Custom Highlight API. Feature-detected — no-op on unsupported environments.
    */
-  function refreshAnnotationHighlights() {
-    if (!previewEl) return;
+  function refreshAnnotationWash() {
+    if (!previewEl || !isHighlightSupported()) return;
     const state = $annotationsStore;
     const focusState = $annotationFocus;
 
-    const activeAnnotations = state.annotations.filter(
-      (a) => a.status === 'anchored' || a.status === 'block_level',
-    );
-
-    const ranges: Range[] = [];
-    let activeRange: Range | null = null;
-
-    for (const ann of activeAnnotations) {
-      if (!ann.quoted_text) continue;
-
-      // Find the block element to search within.
+    const rangeForId = (id: string | null): Range | null => {
+      if (!id) return null;
+      const ann = state.annotations.find((a) => a.id === id);
+      if (!ann || !ann.quoted_text) return null;
       const blockEl = findBlockForAnnotation(ann);
-      if (!blockEl) continue;
+      if (!blockEl) return null;
+      return buildRange(blockEl, ann.quoted_text);
+    };
 
-      const range = buildRange(blockEl, ann.quoted_text);
-      if (!range) continue;
+    refreshHighlights(rangeForId(focusState.activeId), rangeForId(focusState.hoverId));
+  }
 
-      if (ann.id === focusState.activeId) {
-        activeRange = range;
-      } else {
-        ranges.push(range);
+  /**
+   * Measure the active annotation's span (or block, for block-level / unfound
+   * spans) and publish its viewport rect so AnnotationPopover anchors under the
+   * actual words. Runs after a smooth scroll settles (scrollend, with a timeout
+   * fallback) so the rect reflects the final on-screen position.
+   */
+  function anchorPopoverToActive(activeId: string, reduced: boolean) {
+    const measure = () => {
+      if ($annotationFocus.activeId !== activeId || !previewEl) return; // focus moved on
+      const ann = $annotationsStore.annotations.find((a) => a.id === activeId);
+      if (!ann) return;
+      const blockEl = findBlockForAnnotation(ann);
+      if (!blockEl) return;
+      let rect: DOMRect | null = null;
+      if (ann.quoted_text) {
+        const range = buildRange(blockEl, ann.quoted_text);
+        if (range) rect = range.getBoundingClientRect();
       }
-    }
+      if (!rect || rect.width === 0) rect = blockEl.getBoundingClientRect();
+      setAnchorRect({
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+        bottom: rect.bottom,
+      });
+    };
 
-    if (activeRange) ranges.push(activeRange);
-    refreshHighlights(ranges, activeRange);
+    if (reduced || !pvScrollEl) { measure(); return; }
+    let settled = false;
+    const onEnd = () => {
+      if (settled) return;
+      settled = true;
+      pvScrollEl?.removeEventListener('scrollend', onEnd);
+      measure();
+    };
+    pvScrollEl.addEventListener('scrollend', onEnd);
+    // Fallback: 'scrollend' may not fire if the element was already in position.
+    setTimeout(onEnd, 500);
   }
 
   /**
@@ -260,31 +295,28 @@
   }
 
   /**
-   * Scroll the active annotation's block into view (T2.6).
-   * Uses reduced-motion-aware scroll behavior (D2 / §8).
-   * Does NOT reuse syncScrollToLine's hardcoded smooth behavior.
+   * Scroll the active annotation's block into view, repaint its wash, and anchor
+   * the popover under the span (T2.6). Reduced-motion-aware (D2 / §8); does NOT
+   * reuse syncScrollToLine's hardcoded smooth behavior.
    */
-  async function scrollToActiveSeal(activeId: string | null) {
-    if (!activeId || !previewEl) return;
+  async function scrollToActiveAndAnchor(activeId: string | null) {
+    if (!activeId || !previewEl) { setAnchorRect(null); return; }
 
-    // Wait one tick so seals have recomputed positions.
+    // Wait one tick so seals/blocks have laid out.
     await tick();
 
-    const state = $annotationsStore;
-    const ann = state.annotations.find((a) => a.id === activeId);
+    const ann = $annotationsStore.annotations.find((a) => a.id === activeId);
     if (!ann) return;
 
     const blockEl = findBlockForAnnotation(ann);
     if (!blockEl) return;
 
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    blockEl.scrollIntoView({
-      behavior: prefersReducedMotion ? 'auto' : 'smooth',
-      block: 'center',
-    });
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    blockEl.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' });
 
-    // Refresh highlights so the active wash paints the focused annotation.
-    refreshAnnotationHighlights();
+    // Paint the active wash, then anchor the popover to the span once scroll settles.
+    refreshAnnotationWash();
+    anchorPopoverToActive(activeId, reduced);
   }
 
   /**
@@ -545,6 +577,26 @@
   /* D3: position:relative so AnnotationSeals overlay can use absolute positioning
      relative to this scroll container (seals scroll with content). */
   .pv-scroll { overflow: auto; flex: 1; min-height: 0; position: relative; }
+
+  /* Inline ink wash painted by the CSS Custom Highlight API (annotationHighlight.ts).
+     ::highlight() is document-global, so these must be :global rules; it also only
+     accepts a limited property set (no gradients) — the brush-stroke read comes from
+     a translucent ink fill plus an ink underline on the exact quoted words.
+     active = full ink; hover = a faint preview. */
+  :global(::highlight(annotation-wash-active)) {
+    background-color: color-mix(in srgb, var(--seal-ink) 20%, transparent);
+    text-decoration-line: underline;
+    text-decoration-color: var(--seal-ink);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 2px;
+  }
+  :global(::highlight(annotation-wash-hover)) {
+    background-color: color-mix(in srgb, var(--seal-ink) 11%, transparent);
+    text-decoration-line: underline;
+    text-decoration-color: color-mix(in srgb, var(--seal-ink) 50%, transparent);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 2px;
+  }
 
   /* "+ Add comment" affordance at the selection (viewport-fixed; preview scrolls) */
   .add-comment-affordance { position: fixed; z-index: var(--z-pop); pointer-events: auto; }

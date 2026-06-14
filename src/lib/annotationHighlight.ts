@@ -89,37 +89,36 @@ export function buildRange(blockEl: Element, quotedText: string): Range | null {
 }
 
 /**
- * Register or update the CSS Custom Highlight sets for annotation wash.
+ * Register or update the CSS Custom Highlight sets for the annotation wash.
  *
- * - "annotation-wash"        — one entry per non-active annotation range.
- * - "annotation-wash-active" — the single active annotation range (painted on top).
+ * The prose is CLEAN at rest — only the active and hovered spans are washed
+ * (matching the design: resting = seals only, hover = faint wash, active =
+ * full wash). We therefore paint exactly two sets:
+ *
+ * - "annotation-wash-active" — the focused annotation's span (full ink wash).
+ * - "annotation-wash-hover"  — the hovered annotation's span (faint preview).
  *
  * No-op when isHighlightSupported() is false (D-RISK-1 silent-skip).
  */
 export function refreshHighlights(
-  ranges: Range[],
   activeRange: Range | null,
+  hoverRange: Range | null,
 ): void {
   if (!isHighlightSupported()) return;
 
   const highlights = (CSS as unknown as { highlights: CSSHighlightMap }).highlights;
 
-  // Build the background wash set (all non-active ranges).
-  const washRanges = activeRange
-    ? ranges.filter((r) => r !== activeRange)
-    : ranges;
-
-  if (washRanges.length > 0) {
-    highlights.set('annotation-wash', new Highlight(...washRanges));
-  } else {
-    highlights.delete('annotation-wash');
-  }
-
-  // Build the active wash set.
   if (activeRange) {
     highlights.set('annotation-wash-active', new Highlight(activeRange));
   } else {
     highlights.delete('annotation-wash-active');
+  }
+
+  // Don't double-paint: a hovered span that is also active shows only the active wash.
+  if (hoverRange && hoverRange !== activeRange) {
+    highlights.set('annotation-wash-hover', new Highlight(hoverRange));
+  } else {
+    highlights.delete('annotation-wash-hover');
   }
 }
 
@@ -130,8 +129,8 @@ export function refreshHighlights(
 export function clearHighlights(): void {
   if (!isHighlightSupported()) return;
   const highlights = (CSS as unknown as { highlights: CSSHighlightMap }).highlights;
-  highlights.delete('annotation-wash');
   highlights.delete('annotation-wash-active');
+  highlights.delete('annotation-wash-hover');
 }
 
 // ─── TypeScript shim ───────────────────────────────────────────────────────
