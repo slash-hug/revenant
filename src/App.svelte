@@ -519,8 +519,8 @@
     will-change: filter, opacity, transform;
   }
   @keyframes ws-arrive {
-    from { filter: blur(13px); opacity: 0.72; transform: scale(1.014); }
-    60%  { opacity: 1; }
+    from { filter: blur(9px); opacity: 0.86; transform: scale(1.008); }
+    55%  { opacity: 1; }
     to   { filter: blur(0); opacity: 1; transform: none; }
   }
   @media (prefers-reduced-motion: reduce) {

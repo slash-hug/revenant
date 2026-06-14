@@ -167,21 +167,19 @@ void main () {
   fragColor = value * texture(uTexture, vUv);
 }`;
 
-// Display: transparent ink composited OVER the live workspace beneath the
-// canvas. Alpha = ink density (premultiplied dye stored as RGB=color*amount,
-// A=amount), plus a faint full-screen scrim so the document reads as gently
-// veiled. The whole canvas is then faded out via CSS to "arrive" in the doc.
+// Display: a translucent ink wash composited OVER the live (blurring) workspace
+// beneath the canvas. Dye is premultiplied (RGB = color*amount, A = amount);
+// alpha is the ink density scaled by uStrength so even the densest ink stays
+// see-through — a layer of ink in front of the focusing document, not an opaque
+// cloud. The whole canvas is faded out via CSS to "arrive" in the doc.
 const DISPLAY = F_HEADER + `
 uniform sampler2D uDye;
-uniform vec3 uScrim;
-uniform float uDim;
+uniform float uStrength;
 void main () {
   vec4 d = texture(uDye, vUv);
-  float ink = clamp(d.a, 0.0, 1.0);
+  float ink = clamp(d.a, 0.0, 1.0) * uStrength;
   vec3 inkColor = d.rgb / max(d.a, 0.0015);   // un-premultiply
-  vec3 col = mix(uScrim, inkColor, ink);
-  float alpha = max(uDim, ink);
-  fragColor = vec4(col, alpha);
+  fragColor = vec4(inkColor, ink);
 }`;
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
@@ -416,17 +414,16 @@ export class FluidSim {
   }
 
   /**
-   * Composite the ink over the transparent canvas (workspace shows through).
-   * scrim = bg color for the faint veil; dim = veil strength (0 = none);
-   * fade = global CSS opacity (1 → 0 dissolves the whole overlay).
+   * Composite the translucent ink over the transparent canvas (workspace shows
+   * through). strength = ink opacity ceiling (0..1); fade = global CSS opacity
+   * (1 → 0 dissolves the whole overlay).
    */
-  render(scrim: [number, number, number], fade: number, dim = 0.1) {
+  render(fade: number, strength = 0.6) {
     const gl = this.gl;
     const D = this.programs.display;
     D.bind();
     gl.uniform1i(D.uniforms['uDye'], this.dye.read.attach(0));
-    gl.uniform3f(D.uniforms['uScrim'], scrim[0], scrim[1], scrim[2]);
-    gl.uniform1f(D.uniforms['uDim'], dim);
+    gl.uniform1f(D.uniforms['uStrength'], strength);
     this.blit(null);
     this.canvas.style.opacity = String(fade);
   }

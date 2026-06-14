@@ -74,7 +74,6 @@
       return;
     }
 
-    const bg = cssColor('--bg'); // used as the faint veil/scrim over the live doc
     const inks: RGB[] = [
       cssColor('--text'),
       cssColor('--accent'),
@@ -108,7 +107,7 @@
       const t = now - start;
       sim!.step(0.016);
       const fade = hold ? 1 : t < SIM_MS ? 1 : Math.max(0, 1 - (t - SIM_MS) / FADE_MS);
-      sim!.render(bg, fade, 0); // no flat veil — the workspace blur carries the transition
+      sim!.render(fade, 0.58); // translucent ink — the workspace blur carries the transition
       if (!hold && t > SIM_MS + FADE_MS) { finish(); return; }
       raf = requestAnimationFrame(frame);
     };
