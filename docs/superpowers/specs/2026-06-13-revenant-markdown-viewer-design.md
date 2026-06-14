@@ -1,5 +1,6 @@
 # Revenant — Markdown Viewer & Review Companion
 
+oh man randy hi!!
 **Status:** Approved design (pending spec review)
 **Date:** 2026-06-13
 **Author:** Randy (clogic@gmail.com) with Claude

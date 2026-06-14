@@ -525,6 +525,24 @@
     dispatch('addAnnotation', { anchor: pendingAnchor, x: btnX, y: btnY, quoted: pendingQuoted });
     showAddComment = false;
   }
+
+  // ⌘⌥M → add a comment on the current preview selection (#10). Guarded to only
+  // act when the selection is inside THIS preview, so it doesn't fire for an
+  // editor selection (the editor has its own ⌘⌥M keymap). Uses e.code so the
+  // macOS Option-character remap (⌥M → µ) doesn't break the match.
+  function handleAddCommentKeydown(e: KeyboardEvent) {
+    if (!((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'KeyM')) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !previewEl) return;
+    if (!previewEl.contains(sel.getRangeAt(0).commonAncestorContainer)) return;
+    e.preventDefault();
+    handlePreviewMouseUp(); // builds pendingAnchor from the current selection
+    handleAddCommentClick();
+  }
+  onMount(() => {
+    window.addEventListener('keydown', handleAddCommentKeydown);
+    return () => window.removeEventListener('keydown', handleAddCommentKeydown);
+  });
 </script>
 
 <div class="preview-pane">
