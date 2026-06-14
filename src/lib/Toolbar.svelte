@@ -44,11 +44,12 @@
     </span>
 
     <div class="seg" role="group" aria-label="View mode">
-      {#each modes as m (m.id)}
+      {#each modes as m, i (m.id)}
         <button
           type="button"
           class:active={viewMode === m.id}
           aria-pressed={viewMode === m.id}
+          title={`${m.label} (⌘${i + 1})`}
           on:click={() => setMode(m.id)}
         >{m.label}</button>
       {/each}
@@ -60,7 +61,7 @@
       type="button"
       class="btn btn-primary"
       on:click={() => dispatch('generateReview')}
-      title="Generate a .review.md file from your annotations"
+      title="Generate a .review.md file from your annotations (⌘⇧R)"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M5 21V5a2 2 0 0 1 2-2h7l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2Z" /><path d="m9 14 2 2 4-4" />

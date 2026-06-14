@@ -18,6 +18,7 @@
   import PreviewPane from './lib/PreviewPane.svelte';
   import AnnotationDrawer from './lib/AnnotationDrawer.svelte';
   import ConflictModal from './lib/ConflictModal.svelte';
+  import AnnotationComposer from './lib/AnnotationComposer.svelte';
   import ThemeToggle from './lib/ThemeToggle.svelte';
   import Suminagashi from './lib/Suminagashi.svelte';
 
@@ -36,6 +37,8 @@
   let toast = $state<string>('');
   let recentFiles = $state<string[]>(loadRecent());
   let bloom = $state(false); // suminagashi open-transition overlay
+  // Styled annotation composer popover (replaces window.prompt); null = closed.
+  let compose = $state<{ anchor: AnchorV1; x: number; y: number; quoted: string } | null>(null);
 
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
   let loadedPath: string | null = null;
@@ -132,20 +135,27 @@
     conflict = { open: true, path };
   }
 
-  async function handleAddAnnotation(anchor: AnchorV1) {
-    const tab = $activeTab;
-    if (!tab) return;
-    const body = window.prompt('Add a comment:');
-    if (body == null || body.trim() === '') return;
+  /** A pane requested a comment: open the styled composer at the selection. */
+  function requestAnnotation(detail: { anchor: AnchorV1; x: number; y: number; quoted: string }) {
+    if (!$activeTab) return;
+    compose = detail;
+  }
+
+  /** Composer saved: create the annotation with the typed body. */
+  async function commitAnnotation(body: string) {
+    const detail = compose;
+    compose = null;
+    if (!detail || !$activeTab) return;
+    const anchor = detail.anchor;
 
     if (anchor.type === 'source') {
       const a = anchor.anchor;
       await annotationsStore.addAnnotation(
-        a.start_line, a.end_line, a.start_char, a.end_char, a.quoted_text, body.trim(), 'anchored',
+        a.start_line, a.end_line, a.start_char, a.end_char, a.quoted_text, body, 'anchored',
       );
     } else {
       // Block-level anchor (Mermaid/table): no precise source range available.
-      await annotationsStore.addAnnotation(0, 0, 0, 0, anchor.anchor.quoted_text, body.trim(), 'block_level');
+      await annotationsStore.addAnnotation(0, 0, 0, 0, anchor.anchor.quoted_text, body, 'block_level');
     }
     drawerOpen = true;
   }
@@ -172,6 +182,10 @@
     const tab = $activeTab;
     if (!tab) return;
     const s = $annotationsStore;
+    if (s.annotations.length === 0 && !s.generalNotes.trim()) {
+      showToast('Nothing to export yet — add a comment or a general note first.');
+      return;
+    }
     const sidecar: Sidecar = {
       schema_version: 1,
       doc_content_hash: s.docContentHash,
@@ -262,12 +276,35 @@
       else if (event.payload.paths.length) showToast('Only .md files can be opened.');
     });
 
+    // Chrome accelerators (the editor owns its own keys via CodeMirror; these
+    // combos aren't in its keymap, so they bubble to the window).
+    //   ⌘/Ctrl 1·2·3 → Source · Split · Preview
+    //   ⌘/Ctrl \      → toggle the annotation drawer
+    //   ⌘/Ctrl ⇧ R    → generate review
+    window.addEventListener('keydown', handleGlobalKeydown);
+
     return () => {
       unlisteners.forEach((p) => void p.then((f) => f()));
       void dnd.then((f) => f());
+      window.removeEventListener('keydown', handleGlobalKeydown);
       if (toastTimer) clearTimeout(toastTimer);
     };
   });
+
+  function handleGlobalKeydown(e: KeyboardEvent) {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+    if ($tabList.length === 0) return;
+    if (e.shiftKey) {
+      if (e.code === 'KeyR') { e.preventDefault(); void handleGenerateReview(); }
+      return;
+    }
+    switch (e.key) {
+      case '1': e.preventDefault(); viewMode = 'source'; break;
+      case '2': e.preventDefault(); viewMode = 'split'; break;
+      case '3': e.preventDefault(); viewMode = 'preview'; break;
+      case '\\': e.preventDefault(); drawerOpen = !drawerOpen; break;
+    }
+  }
 </script>
 
 <main class="app-root">
@@ -348,7 +385,7 @@
                     on:saved={(e) => handleSaved(e.detail.newHash)}
                     on:conflict={(e) => handleConflict(e.detail.filePath)}
                     on:saveError={(e) => showToast(e.detail.message)}
-                    on:addAnnotation={(e) => handleAddAnnotation(e.detail.anchor)}
+                    on:addAnnotation={(e) => requestAnnotation(e.detail)}
                   />
                 </div>
               {/if}
@@ -356,7 +393,7 @@
                 <div class="pane preview-wrap">
                   <PreviewPane
                     content={$activeTab.content}
-                    on:addAnnotation={(e) => handleAddAnnotation(e.detail.anchor)}
+                    on:addAnnotation={(e) => requestAnnotation(e.detail)}
                   />
                 </div>
               {/if}
@@ -383,6 +420,16 @@
   {/if}
 
   <ConflictModal open={conflict.open} filePath={conflict.path} on:reload={handleReload} on:keepMine={handleKeepMine} />
+
+  {#if compose}
+    <AnnotationComposer
+      x={compose.x}
+      y={compose.y}
+      quotedText={compose.quoted}
+      on:submit={(e) => commitAnnotation(e.detail.body)}
+      on:cancel={() => (compose = null)}
+    />
+  {/if}
 
   {#if bloom}
     <Suminagashi on:done={() => (bloom = false)} />

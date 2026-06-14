@@ -36,8 +36,15 @@
 
   const dispatch = createEventDispatcher<{
     blockMap: Map<string, number>;
-    addAnnotation: { anchor: AnchorV1 };
+    addAnnotation: { anchor: AnchorV1; x: number; y: number; quoted: string };
   }>();
+
+  // "+ Add comment" affordance shown at the selection (mirrors EditorPane).
+  let showAddComment = false;
+  let pendingAnchor: AnchorV1 | null = null;
+  let pendingQuoted = '';
+  let btnX = 0;
+  let btnY = 0;
 
   const LARGE_FILE_THRESHOLD = 2000; // lines
 
@@ -223,20 +230,23 @@
    */
   function handlePreviewMouseUp() {
     const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || !previewEl) return;
+    // A plain click (collapsed selection) dismisses the affordance instead of
+    // firing — selecting text to copy must not trigger the comment flow.
+    if (!sel || sel.isCollapsed || !previewEl) { showAddComment = false; return; }
 
     const range = sel.getRangeAt(0);
-    if (!previewEl.contains(range.commonAncestorContainer)) return;
+    if (!previewEl.contains(range.commonAncestorContainer)) { showAddComment = false; return; }
 
-    // Walk up to find the nearest block with data-block-id.
+    const quotedText = sel.toString();
+
+    // Walk up to find the nearest block with data-block-id and build an anchor.
+    let anchor: AnchorV1 | null = null;
     let node: Node | null = range.commonAncestorContainer;
     while (node && node !== previewEl) {
       if (node instanceof HTMLElement) {
         const blockId = node.dataset.blockId;
         const blockType = node.dataset.blockType;
         if (blockId) {
-          const quotedText = sel.toString();
-
           // Transformed blocks → block-level anchor (C8 degradation rule).
           if (blockType === 'mermaid' || blockType === 'table') {
             const blockAnchor: BlockAnchor = {
@@ -244,36 +254,45 @@
               block_type: blockType as BlockAnchor['block_type'],
               quoted_text: quotedText,
             };
-            dispatch('addAnnotation', {
-              anchor: { type: 'block', anchor: blockAnchor },
-            });
-            return;
+            anchor = { type: 'block', anchor: blockAnchor };
+            break;
           }
-
-          // Regular block: use source-line from data attribute to build
-          // a coarse source anchor (line-level, not char-level from preview).
+          // Regular block: coarse source anchor from the data-source-line.
           const sourceLine = parseInt(node.dataset.sourceLine ?? '0', 10);
           if (sourceLine > 0) {
-            dispatch('addAnnotation', {
+            anchor = {
+              type: 'source',
               anchor: {
-                type: 'source',
-                anchor: {
-                  start_line: sourceLine,
-                  start_char: 0,
-                  end_line: sourceLine,
-                  end_char: quotedText.length,
-                  quoted_text: quotedText,
-                  context_before: '',
-                  context_after: '',
-                },
+                start_line: sourceLine,
+                start_char: 0,
+                end_line: sourceLine,
+                end_char: quotedText.length,
+                quoted_text: quotedText,
+                context_before: '',
+                context_after: '',
               },
-            });
-            return;
+            };
+            break;
           }
         }
       }
       node = node.parentNode;
     }
+
+    if (!anchor) { showAddComment = false; return; }
+
+    const rect = range.getBoundingClientRect();
+    pendingAnchor = anchor;
+    pendingQuoted = quotedText;
+    btnX = rect.right;
+    btnY = rect.bottom;
+    showAddComment = true;
+  }
+
+  function handleAddCommentClick() {
+    if (!pendingAnchor) return;
+    dispatch('addAnnotation', { anchor: pendingAnchor, x: btnX, y: btnY, quoted: pendingQuoted });
+    showAddComment = false;
   }
 </script>
 
@@ -318,6 +337,14 @@
       >{@html html}</div>
     </article>
   </div>
+
+  {#if showAddComment}
+    <div class="add-comment-affordance" style="left: {btnX}px; top: {btnY + 6}px;" role="tooltip">
+      <button class="add-comment-btn" type="button" on:click={handleAddCommentClick}>
+        + Add comment
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -330,6 +357,37 @@
     color: var(--text);
   }
   .pv-scroll { overflow: auto; flex: 1; min-height: 0; }
+
+  /* "+ Add comment" affordance at the selection (viewport-fixed; preview scrolls) */
+  .add-comment-affordance { position: fixed; z-index: var(--z-pop); pointer-events: auto; }
+  .add-comment-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border: none;
+    border-radius: var(--r-md);
+    padding: 6px 11px;
+    font-family: var(--font-ui);
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-medium);
+    cursor: pointer;
+    box-shadow: var(--shadow-pop);
+    white-space: nowrap;
+  }
+  .add-comment-btn::before {
+    content: '';
+    position: absolute;
+    left: 16px;
+    top: -4px;
+    width: 9px;
+    height: 9px;
+    background: var(--accent);
+    transform: rotate(45deg);
+  }
+  .add-comment-btn:hover { background: var(--accent-hover); }
 
   /* info / best-effort banner */
   .banner {

@@ -69,8 +69,10 @@
     conflict: { filePath: string };
     /** Fired when a save failed for a non-conflict reason (I/O, permissions). */
     saveError: { message: string };
-    /** Fired when user triggers "Add comment" from a selection. */
-    addAnnotation: { anchor: AnchorV1 };
+    /** Fired when user triggers "Add comment" from a selection. Carries the
+     *  selection's viewport coordinates + quoted text so the parent can anchor
+     *  the styled composer popover there. */
+    addAnnotation: { anchor: AnchorV1; x: number; y: number; quoted: string };
   }>();
 
   let editorEl: HTMLDivElement;
@@ -84,6 +86,8 @@
   let showAddComment = false;
   let addCommentX = 0;
   let addCommentY = 0;
+  let selViewX = 0; // selection coords in viewport space, for the composer popover
+  let selViewY = 0;
   let pendingAnchor: AnchorV1 | null = null;
 
   // -------------------------------------------------------------------------
@@ -248,6 +252,8 @@
         const rect = editorEl.getBoundingClientRect();
         addCommentX = coords.right - rect.left;
         addCommentY = coords.bottom - rect.top;
+        selViewX = coords.right;
+        selViewY = coords.bottom;
         showAddComment = true;
       }
     } catch {
@@ -257,7 +263,12 @@
 
   function handleAddCommentClick() {
     if (pendingAnchor) {
-      dispatch('addAnnotation', { anchor: pendingAnchor });
+      dispatch('addAnnotation', {
+        anchor: pendingAnchor,
+        x: selViewX,
+        y: selViewY,
+        quoted: pendingAnchor.anchor.quoted_text,
+      });
       showAddComment = false;
     }
   }

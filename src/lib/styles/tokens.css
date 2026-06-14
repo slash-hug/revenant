@@ -73,7 +73,7 @@
   /* Text */
   --text: #221F1A;
   --text-muted: #67625A;
-  --text-faint: #A39C90;
+  --text-faint: #6E675D;   /* AA on Paper surfaces (≥4.5:1) — carries status bar, paths, labels */
   --text-on-accent: #FFFFFF;
 
   /* Lines & focus */
@@ -140,7 +140,7 @@
 
   --text: #D6D7DA;
   --text-muted: #8C8E93;
-  --text-faint: #5A5C60;
+  --text-faint: #868990;   /* AA on Graphite surfaces (≥4.5:1) — carries status bar, paths, labels */
   --text-on-accent: #0A1019;
 
   --border: #2A2B2F;

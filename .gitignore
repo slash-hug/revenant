@@ -32,3 +32,6 @@ src-tauri/gen/
 
 # Vendored WebView2 fixed-version runtime (downloaded for locked-down Windows builds)
 src-tauri/Microsoft.WebView2.FixedVersionRuntime.*/
+
+# Impeccable critique snapshots (local design-review cache)
+.impeccable/
