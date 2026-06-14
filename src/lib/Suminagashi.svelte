@@ -115,10 +115,17 @@
     const wsEl = document.querySelector('.ws') as HTMLElement | null;
     let docSource: TexImageSource | null = null;
 
-    // Let the just-opened workspace fully lay out + paint before capturing it.
-    // This matters for a clean hand-off: the snapshot must match the FINAL live
-    // layout, or the end cut visibly settles (the preview's prose reflows as
-    // Literata applies, drifting the lower lines).
+    // Cover the live document IMMEDIATELY and keep the canvas OPAQUE the whole time
+    // — zero flash of the sharp doc. The native WKWebView snapshot does not
+    // composite the WebGL canvas layer, so it still reads the live .ws underneath
+    // the opaque cover; html-to-image reads the DOM directly. Either way the doc is
+    // never shown bare before the ink. (Previously the native path went transparent
+    // for the capture, exposing the raw rendered doc — the flicker.)
+    sim.fillBackground(cssColor('--bg'));
+
+    // Let the workspace fully lay out + paint before capturing it — hidden behind
+    // the cover, so this wait shows nothing. A faithful snapshot keeps the end
+    // hand-off aligned (the preview reflows as Literata loads).
     if (document.fonts?.ready) { try { await document.fonts.ready; } catch { /* ignore */ } }
     await nextPaint(4);
     if (!sim) return; // disposed/finished while awaiting
@@ -132,17 +139,15 @@
 
     if (isMac) {
       try {
-        const dataUrl = await snapshotWebview();
+        const dataUrl = await snapshotWebview(); // reads .ws beneath the opaque canvas
         const img = new Image();
         img.src = dataUrl;
         await img.decode();
         docSource = img;
       } catch { docSource = null; }
       if (!sim) return;
-      sim.fillBackground(cssColor('--bg')); // cover now that the capture is done
       if (!docSource) docSource = await htmlToImageCapture(); // native unavailable → fall back
     } else {
-      sim.fillBackground(cssColor('--bg')); // cover first — no flash on Chromium/WebView2
       docSource = await htmlToImageCapture();
     }
 

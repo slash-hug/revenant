@@ -100,6 +100,15 @@ visual judgment had to come from the user):
   CSS viewport, and includes no native chrome; content is top-flush. Map it to the
   live viewport by cropping the BOTTOM excess (`naturalHeight − innerHeight×scale`),
   derived from the snapshot's own backing scale so it survives a capped canvas DPR.
+- **`WKWebView.takeSnapshot` does NOT composite the WebGL canvas layer** — it reads
+  the live web content *underneath* an accelerated `<canvas>`. So for the open
+  transition, keep the GL cover canvas **fully opaque the entire time** (`fillBackground`
+  before the fonts/layout wait); the snapshot still captures the real `.ws` beneath it.
+  The earlier code went *transparent* for the capture to "see `.ws` through" the
+  canvas — that exposed the raw sharp doc for the whole fonts.ready + nextPaint +
+  snapshot window = a visible flicker before the ink. Never reveal the canvas to
+  snapshot; the WebGL layer is invisible to `takeSnapshot` regardless. (Confirmed
+  2026-06-14: opaque-cover = zero flash + correct capture.)
 - New IPC commands go in BOTH `ipc.rs` and `ipc.ts` (+ contract test) and are
   registered in `lib.rs`; macOS-only native deps go under
   `[target.'cfg(target_os = "macos")'.dependencies]`, pinned to the objc2 versions
