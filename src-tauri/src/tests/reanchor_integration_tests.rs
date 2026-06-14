@@ -6,6 +6,17 @@
 //! 1. R-OFFSET-TEST: After inserting N lines above an anchored position, the
 //!    re-anchored line numbers are exactly `stored_line + N` (not just "anchored").
 //! 2. Deleting the anchored text causes the annotation to be Detached.
+//!
+//! FIDELITY GAP (known, acceptable): `load_and_reanchor` in this file
+//! duplicates the re-anchor logic from `ipc::load_annotations` (the real async
+//! #[tauri::command]) rather than calling it directly, because Tauri commands
+//! cannot be invoked without a live `AppHandle`.  The duplication is intentional
+//! for testability.  **Trade-off**: a regression in the actual IPC handler body
+//! (e.g. a hash-comparison inversion or wrong branch taken) would NOT be caught
+//! by these tests — only the underlying `annotations` + `reanchor` module logic
+//! is exercised.  The acceptance criteria (R-OFFSET-TEST exact line numbers,
+//! Detached on deletion) ARE satisfied; the IPC wiring gap is a known limit of
+//! this test layer.
 
 use std::fs;
 use tempfile::TempDir;

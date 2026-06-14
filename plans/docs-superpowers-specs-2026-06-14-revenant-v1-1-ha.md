@@ -7,6 +7,7 @@
 ### Ratified decisions (human rulings on §2)
 - **C-LOAD-WRITE → in-memory, persist-on-next-save.** `load_annotations` re-anchors and returns positions but does NOT write the sidecar; the next normal save persists them. Eliminates the load-vs-save race; `load` stays a pure read (no `ensure_gitignore_entry`/watcher state on load). Tasks T1.3 already encode this variant.
 - **R-MERMAID-SET / R-D3-TRANSITIVE → common set, validate d3 empirically.** Register `flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, pie, gitGraph`. Drop `katex`, `cytoscape`, `roughjs` for certain; keep `d3` only if the `vite build` chunk report shows flowchart needs it (record the achieved trim; do not break a used diagram). No silent full-bundle fallback.
+  > **⚠ IMPLEMENTATION FINDING — RE-RATIFICATION REQUIRED (2026-06-14):** The WS-3 implementer confirmed via the `npm run build` chunk report that Mermaid v11 uses `registerLazyLoadedDiagrams` internally and does NOT expose a consumer-level per-diagram registration API. All diagram types are registered at module init; consumers cannot selectively exclude them without forking the package. As a result: `katex` (261 kB), `cytoscape` (442 kB), and `rough` (inside `architectureDiagram` 149 kB / `c4Diagram` 70 kB) are still emitted as separate Vite chunks. **However**, they are lazy chunks only — not in the startup graph — and load only when a diagram of the matching type is first rendered. The hljs trim (curated 87 kB named chunk) WAS fully achieved. The implementer documented this in the `markdown.ts` header and did NOT silently absorb the deviation; re-ratification is required. **Human decision needed:** (a) Accept the lazy-chunk status quo (no startup penalty; `architecture` / `c4` diagram types remain available), or (b) exclude the `architecture` and `c4` diagram types from the registered set to eliminate cytoscape + rough from the build entirely. Option (b) sheds ~220 kB of lazy chunks; option (a) keeps those diagram types available. `katex` cannot be shed without also excluding math-equation blocks, which are not in the ratified diagram set anyway — its presence is an internal mermaid transitive; confirm whether excluding `architecture`/`c4` also removes it.
 - **All other recommended resolutions accepted as written:** A3 two-pass `Value` schema parse (C-PEEK-1/C-SCHEMA-NULL/C-PEEK-VALUE); A2 Rust `save_annotations` re-derives context (C-DOUBLE-KILL); C-IPC-TYPE narrow `SourceAnchor` in `ipc.ts`; A11 promote `quadBuf` to a field (C-QUAD/R-QUAD-DECISION); C-FLUSH-TABID capture `tabId` at mount; A8 save-chain reset-on-error (R-SAVECHAIN-RECOVERY); A9 CRLF regression via the `merge_into_doc` export path (C-CRLF-BLAST); R-FDLOCK-CHOICE `fd-lock` (fallback `fs2`); A1 sequenced DATA worktree; A13 mandatory `cargo tauri dev` launch smoke per worktree.
 - **Deferred (not this round):** R-REANCHOR-LOADING ("Re-anchoring…" drawer state) — defer; R-LOAD-SAVE-RACE merge — moot under the in-memory variant.
 
@@ -266,9 +267,9 @@ Replace `import('highlight.js')` with `import('highlight.js/lib/core')` + explic
 Add `build.rollupOptions.output.manualChunks` splitting hljs and mermaid into named chunks so the report is readable. (WS-A-owned, additive — flag.)
 *Verify:* `npm run build` → succeeds; chunk report shows distinct hljs/mermaid chunks.
 
-**T3.4 — Bundle-report acceptance (A12/R-MERMAID-TREESHAKE/R-D3-TRANSITIVE).**
-`npm run build` and read the chunk report. Acceptance: `katex`, `cytoscape`, `roughjs` absent; hljs chunk a fraction of prior size. For `d3`: if present only because flowchart needs it, keep flowchart and record the achievable trim (human ratifies). If absent, all four gone.
-*Verify:* `npm run build` report inspected; the agreed packages are gone; record before/after chunk sizes.
+**T3.4 — Bundle-report acceptance (A12/R-MERMAID-TREESHAKE/R-D3-TRANSITIVE). [COMPLETED WITH DEVIATION — SEE RE-RATIFICATION ABOVE]**
+`npm run build` chunk report confirmed. **Achieved trim:** hljs chunk curated to ~87 kB named chunk (full goal met). **Deviation from original acceptance:** `katex` (261 kB), `cytoscape` (442 kB), and `rough` (149 kB + 70 kB inside architecture/c4 lazy chunks) remain in the build — as **lazy chunks only** (not startup-graph), emitted because mermaid v11 registers all diagram types internally with no consumer-level exclusion API. The implementer surfaced this correctly; human re-ratification is pending (see Ratified decisions note above). Once ratified, update the acceptance criterion here to reflect the agreed final set.
+*Verify:* Done (`npm run build` inspected). Re-ratification gate open.
 
 **T3.5 — Complete WebGL dispose (`fx/fluid.ts`).**
 Add `private quadBuf!: WebGLBuffer` and store the quad buffer at construction (A11/C-QUAD; line ~303). In `dispose()`: `deleteTexture`/`deleteFramebuffer` every FBO (velocity, dye, divergence, curl, pressure, coverage read+write), `docTex`, `docBlur` read+write; `deleteProgram` every program (splat, advection, divergence, curl, vorticity, pressure, gradient, clear, display, blur, cover); `deleteVertexArray(quadVao)`; `deleteBuffer(quadBuf)`; THEN `loseContext()` (may be null on WebView2/ANGLE — deletion must not depend on it).
@@ -283,10 +284,12 @@ Add `private quadBuf!: WebGLBuffer` and store the quad buffer at construction (A
 cargo test --manifest-path src-tauri/Cargo.toml   # WS-1 integration + WS-2 schema/CRLF/lock tests
 npm test                                           # store serialization + unmount flush
 npx tsc --noEmit                                   # SourceAnchor narrowing clean (svelte-check equivalent)
-npm run build                                      # chunk report: katex/cytoscape/roughjs gone, hljs shrunk
+npm run build                                      # chunk report: hljs shrunk (done); katex/cytoscape/rough remain as LAZY chunks — re-ratification pending
 cargo build --manifest-path src-tauri/Cargo.toml   # fd-lock + async load_annotations compile
 ```
 Plus the mandatory `cargo tauri dev` launch smoke (A13) — the app boots, renders a doc, re-anchors on open, saves under the lock, and the transition disposes cleanly.
+
+> **⚠ A13 LAUNCH SMOKE — GATE OPEN (2026-06-14):** This round introduces `load_annotations` as async, a new `save_annotations` doc-read, and `fd-lock` as a new Cargo dependency. Green CI (`cargo build` + `cargo test` + `npm test`) does NOT prove the binary boots or that the window opens. Per `tasks/lessons.md` the mandatory `cargo tauri dev` window-open smoke must be confirmed on the actual macOS target before this branch is merged. Status: **pending human confirmation.** The reviewer (finding A13/ipc.rs) flagged this as an open gate.
 
 ---
 

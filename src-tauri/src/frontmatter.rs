@@ -45,6 +45,17 @@ pub struct ParsedDoc {
 impl fmt::Display for ParsedDoc {
     /// Reassemble by delegating to `reassemble` so there is exactly one
     /// reassembly route (A10).
+    ///
+    /// NOTE — non-mapping frontmatter (e.g. a top-level YAML sequence
+    /// `---\n- a\n- b\n---\nbody`): `parse()` sets `mapping: None` for any
+    /// YAML that does not deserialize to a `Mapping`.  `reassemble` interprets
+    /// `None` as "no frontmatter" and returns only the body, **silently
+    /// dropping the original YAML block**.  This is not a live regression
+    /// because the only production caller (`obsidian.rs` → `merge_into_doc`)
+    /// always supplies a real `Some(merged_mapping)`, and `Display`/`to_string`
+    /// have no production callers.  If a future caller invokes `to_string()` on
+    /// a `ParsedDoc` whose frontmatter was a non-mapping type, the YAML block
+    /// will be silently lost.  Add a guard here before extending callers.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match reassemble(self.mapping.as_ref(), &self.body, self.line_ending) {
             Ok(s) => write!(f, "{}", s),
@@ -63,6 +74,12 @@ impl fmt::Display for ParsedDoc {
 /// `split_inclusive('\n')` to avoid `+1` drift on CRLF files.
 pub fn parse(content: &str) -> Result<ParsedDoc, FrontmatterError> {
     // Detect whether the document uses CRLF or LF line endings.
+    // NOTE — whole-document scan: if the document has LF frontmatter but even
+    // a single CRLF anywhere in the *body*, this will classify the document as
+    // CRLF and rewrite the YAML-block fences to CRLF while the body keeps its
+    // mixed endings.  For pathological/mixed-ending inputs this is cosmetically
+    // inconsistent, though it does not corrupt data.  Real-world docs are
+    // homogeneous; this is acceptable for the current scope.
     let line_ending: &'static str = if content.contains("\r\n") { "\r\n" } else { "\n" };
 
     // Check for opening fence: "---\n" or "---\r\n".

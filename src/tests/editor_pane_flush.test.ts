@@ -19,6 +19,16 @@
  *
  * We test this via a purpose-built simulation that mirrors the EditorPane
  * pattern precisely.
+ *
+ * FIDELITY GAP (known, acceptable): these tests reproduce the onDestroy flush
+ * logic against the store directly rather than mounting a real EditorPane
+ * component.  The underlying store behaviour and the flush pattern are both
+ * verified here (satisfying C-FLUSH-TABID / T2.6).  **Trade-off**: a regression
+ * in the actual EditorPane `onDestroy` wiring (e.g. the guard condition being
+ * inverted, or `myTabId` not captured at mount time) would NOT be caught by
+ * these tests.  A full component-mount test would require a live CodeMirror
+ * instance and Svelte testing library integration that is out of scope for this
+ * round; log the gap here so a future test pass can fill it.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

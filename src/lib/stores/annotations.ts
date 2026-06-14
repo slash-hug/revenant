@@ -126,13 +126,21 @@ function createAnnotationsStore() {
   }
 
   /**
-   * Public save — enqueues onto the chain and returns the settled promise.
-   * Callers that need to know when the save settles can await this.
+   * Public save — enqueues onto the serialized chain and returns the settled
+   * promise so callers can await completion.
+   *
+   * IMPORTANT: this must enqueue behind `saveChain` (not start `runSave`
+   * immediately) to preserve the serialized-write invariant (T2.5/A8).
+   * The previous implementation called `runSave()` immediately and only added
+   * the already-started promise to the chain, which allowed concurrent IPC
+   * writes if an enqueued save was still in flight — exactly the hazard the
+   * chain exists to prevent.
    */
   async function save(): Promise<void> {
-    const pending = runSave();
-    saveChain = saveChain.then(() => pending).catch(() => {});
-    return pending;
+    saveChain = saveChain.then(runSave).catch(() => {
+      // Error already handled in runSave (surfaced + chain reset).
+    });
+    return saveChain;
   }
 
   /**
