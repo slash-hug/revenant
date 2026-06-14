@@ -58,6 +58,24 @@ describe('findSpan', () => {
     expect(findSpan('hello world', 'absent phrase', false)).toBeNull();
     expect(findSpan('hello world', '', false)).toBeNull();
   });
+
+  it('without nearOffset, a repeated needle resolves to the first match', () => {
+    // "C" appears in "Code" (idx 2) and "C++" (idx 13).
+    const hay = 'a Code line\nC++ later';
+    const span = findSpan(hay, 'C', false);
+    expect(span).toEqual({ from: 2, to: 3 }); // the C in "Code"
+  });
+
+  it('with nearOffset, a repeated needle resolves to the nearest occurrence', () => {
+    // The same short anchor should land near its stored line, not the first match.
+    const hay = 'a Code line\nC++ later';
+    const cppIdx = hay.indexOf('C++'); // 12
+    const span = findSpan(hay, 'C', false, cppIdx);
+    expect(span).toEqual({ from: cppIdx, to: cppIdx + 1 }); // the C in "C++"
+
+    // A nearOffset close to the first occurrence still picks the first.
+    expect(findSpan(hay, 'C', false, 0)).toEqual({ from: 2, to: 3 });
+  });
 });
 
 // ── isHighlightSupported ─────────────────────────────────────────────────────

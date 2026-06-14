@@ -49,20 +49,43 @@ function normalizeWithMap(text: string, stripMarkdown: boolean): { norm: string;
  * rendered DOM keeps source newlines that selection.toString() turns into spaces)
  * and — when `stripMarkdown` is set — of inline markdown syntax in the source.
  * Returns original-offset {from, to} into `haystack`, or null.
+ *
+ * When `nearOffset` is given, the occurrence whose source position is *closest*
+ * to it is returned instead of the first one. This is what keeps an annotation's
+ * seal/wash anchored near its stored line_start: a short or repeated quoted_text
+ * (e.g. a single "C") would otherwise resolve to the first match anywhere in the
+ * document rather than the one the user actually annotated.
  */
 export function findSpan(
   haystack: string,
   needle: string,
   stripMarkdown = false,
+  nearOffset?: number,
 ): { from: number; to: number } | null {
   if (!needle) return null;
   const H = normalizeWithMap(haystack, stripMarkdown);
   const needleNorm = normalizeWithMap(needle, stripMarkdown).norm.trim();
   if (!needleNorm) return null;
-  const idx = H.norm.indexOf(needleNorm);
-  if (idx === -1) return null;
-  const lastIdx = idx + needleNorm.length - 1;
-  return { from: H.map[idx], to: H.map[lastIdx] + 1 };
+
+  if (nearOffset == null) {
+    const idx = H.norm.indexOf(needleNorm);
+    if (idx === -1) return null;
+    const lastIdx = idx + needleNorm.length - 1;
+    return { from: H.map[idx], to: H.map[lastIdx] + 1 };
+  }
+
+  // Pick the occurrence whose source start is nearest `nearOffset`.
+  let best: { from: number; to: number } | null = null;
+  let bestDist = Infinity;
+  for (let idx = H.norm.indexOf(needleNorm); idx !== -1; idx = H.norm.indexOf(needleNorm, idx + 1)) {
+    const from = H.map[idx];
+    const dist = Math.abs(from - nearOffset);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = { from, to: H.map[idx + needleNorm.length - 1] + 1 };
+    }
+  }
+  return best;
 }
 
 /**

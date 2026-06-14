@@ -130,7 +130,13 @@
       // spaces where the source has newlines, and no backticks/asterisks where the
       // source has inline markdown. findSpan normalizes both so the source span is
       // found even for multi-line / formatted selections.
-      const span = findSpan(doc.toString(), q, true);
+      //
+      // Bias the search to the occurrence nearest the stored line_start, so a short
+      // or repeated quoted_text (e.g. a single "C") anchors to the span the user
+      // annotated rather than the first match anywhere in the document.
+      const lineNum = Math.min(Math.max(ann.line_start + 1, 1), doc.lines);
+      const nearOffset = doc.line(lineNum).from + Math.max(0, ann.char_start);
+      const span = findSpan(doc.toString(), q, true, nearOffset);
       if (span) return span;
     }
     // Fallback: stored line/char offsets.

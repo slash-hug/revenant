@@ -203,6 +203,13 @@
       ...rectsForAnnotation(focus.activeId, true, sealList),
     ];
   }
+  // Rebuild seals whenever the annotation set changes (add / delete / re-anchor),
+  // not only on PreviewPane's afterUpdate. Deleting an annotation doesn't change
+  // `content`, so the preview's post-render pipeline wouldn't otherwise re-run and
+  // the removed annotation's seal would linger. The content DOM is unchanged here,
+  // so the block positions recompute reads are valid.
+  $: ($annotationsStore.annotations, recompute());
+
   $: washRects = buildWashRects($annotationFocus, seals);
 
   // ── Seal click/hover handlers ────────────────────────────────────────────
@@ -238,7 +245,11 @@
      below the words in the layer behind the prose. A hand-inked, tapered stroke
      (not a box); active = full, hover = faint. -->
 <div class="wash-layer" aria-hidden="true">
-  {#each washRects as w (w.left + ':' + w.top + ':' + w.active)}
+  <!-- Key by index, not geometry: a multi-line span's getClientRects() can return
+       two coincident rects (same left/top), and a geometry key would collide and
+       throw Svelte's each_key_duplicate, aborting the wash render. washRects is
+       recomputed wholesale and the brushes hold no state, so index is correct. -->
+  {#each washRects as w, i (i)}
     <svg
       class="brush"
       class:brush--active={w.active}
