@@ -55,6 +55,7 @@
   let caretLeft = 24; // px from the popover's left edge — points at the span center
 
 
+
   const dispatch = createEventDispatcher<{ delete: { id: string } }>();
 
   function anchorLabel(ann: Annotation): string {
@@ -190,18 +191,18 @@
         <span class="badge badge-open">Anchored</span>
       {/if}
       <span class="spacer"></span>
-        <button
-          class="pop-del"
-          type="button"
-          on:click={() => dispatch('delete', { id: annotation!.id })}
-          aria-label="Delete annotation"
-          title="Delete"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12" />
-          </svg>
-        </button>
+      <button
+        class="pop-icon pop-del"
+        type="button"
+        on:click={() => dispatch('delete', { id: annotation!.id })}
+        aria-label="Delete annotation"
+        title="Delete"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12" />
+        </svg>
+      </button>
     </div>
 
     <!-- Quoted snippet (italic Literata, ink-left-border) -->
@@ -209,7 +210,7 @@
       <blockquote class="pop-snippet">{annotation.quoted_text}</blockquote>
     {/if}
 
-    <!-- Comment body -->
+    <!-- Comment body (read-only; editing lives in the drawer — single source). -->
     <p class="pop-body">{annotation.body}</p>
   </div>
 {/if}
@@ -284,7 +285,7 @@
   .badge-open    { color: var(--success-text); background: var(--success-soft); }
   .badge-neutral { color: var(--text-muted);   background: var(--surface-2); }
 
-  .pop-del {
+  .pop-icon {
     color: var(--text-faint);
     display: inline-flex;
     padding: 3px;
@@ -295,7 +296,8 @@
     transition: color var(--dur-fast), background var(--dur-fast);
     flex: none;
   }
-  .pop-del svg { width: 14px; height: 14px; }
+  .pop-icon svg { width: 14px; height: 14px; }
+  .pop-icon:hover { color: var(--text); background: var(--surface-2); }
   .pop-del:hover { color: var(--danger-text); background: var(--danger-soft); }
 
   .pop-snippet {
