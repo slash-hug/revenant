@@ -56,3 +56,51 @@ zero-size Dock/app icon at launch; older macOS silently tolerated it.
   chase Rust code; catch the throw under lldb (`objc_exception_throw` /
   `__cxa_throw`) to get the real reason. (Here it sent us down a false
   `MainThreadMarker`/objc2 trail — tao#1171 — that wasn't our bug.)
+
+## The open-transition document snapshot must come from the real renderer (2026-06-14)
+
+**What happened:** The suminagashi open transition captured the document with
+`html-to-image` (DOM → SVG `<foreignObject>` → `<img>` → canvas) to feed the GPU
+ink reveal. On macOS the editor's JetBrains Mono "snapped" when the reveal handed
+off to the live DOM. Root cause: **WebKit does not render `@font-face` fonts inside
+the SVG-foreignObject rasteriser**, so the snapshot fell back to a system font.
+Chromium / WebView2 render it correctly — which is exactly why it never reproduced
+in the headless Chromium harness or on Windows. Fixed by capturing from the real
+renderer: a native macOS `WKWebView.takeSnapshot` command (`src-tauri/src/snapshot.rs`,
+objc2), with html-to-image kept as the cross-platform fallback.
+
+Then a cascade of subtler artifacts, each pinned by a console diagnostic rather
+than guesswork (the WKWebView font issue is invisible in the Chromium harness, so
+visual judgment had to come from the user):
+- **Ghosting** during the hand-off → the slow cross-fade overlapped two layers;
+  replaced with a short crossfade / opaque hold.
+- **Sharpness pop** → the fluid canvas was capped at 1.5× DPR while the live DOM
+  renders at native 2×; render the transition canvas at native DPR.
+- **Positional shift** → `takeSnapshot` returns the **webview BOUNDS**, which are
+  ~32 CSS px TALLER than the layout viewport. The web content is **top-flush**
+  (CSS origin = webview top-left, NO native title bar in the capture — proven by
+  landmarking the accent-blue button: its snapshot row ÷ backing-scale == its live
+  CSS top, so contentTopRow == 0); the excess is at the BOTTOM. Crop the bottom
+  excess, keep the top `innerHeight × backingScale` rows. (Cropping the top was the
+  bug that shoved the page up ~32px.)
+- **End flash** → softening (blurring) the snapshot out during the dissolve made
+  the canvas *brighter* (blurred paper-over-text is lighter). With pixel-perfect
+  alignment the soften is unnecessary; a plain opacity crossfade between identical
+  images is invisible.
+
+**Rules:**
+- Don't rasterise the DOM with html-to-image on WebKit/WKWebView when fonts matter
+  — it silently drops `@font-face`. Use the platform's real snapshot
+  (`WKWebView.takeSnapshot`); keep html-to-image only for Chromium/WebView2.
+- The Chromium screenshot harness can't reproduce WKWebView-specific rendering
+  (fonts, snapshot geometry). For those, instrument with `console.log` and have the
+  human read it off `cargo tauri dev` — measuring beats guessing, especially for a
+  taste/visual call you can't see headlessly.
+- `WKWebView.takeSnapshot` (nil config) captures the webview **bounds**, not the
+  CSS viewport, and includes no native chrome; content is top-flush. Map it to the
+  live viewport by cropping the BOTTOM excess (`naturalHeight − innerHeight×scale`),
+  derived from the snapshot's own backing scale so it survives a capped canvas DPR.
+- New IPC commands go in BOTH `ipc.rs` and `ipc.ts` (+ contract test) and are
+  registered in `lib.rs`; macOS-only native deps go under
+  `[target.'cfg(target_os = "macos")'.dependencies]`, pinned to the objc2 versions
+  `wry` already locks so no extra crates enter the tree.
