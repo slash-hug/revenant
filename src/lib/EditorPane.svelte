@@ -11,13 +11,43 @@
    *        a passed-through store (PreviewPane feeds block-id → source-line mapping).
    */
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
-  import { EditorView, keymap } from '@codemirror/view';
+  import {
+    EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter,
+  } from '@codemirror/view';
   import { EditorState } from '@codemirror/state';
   import { defaultKeymap, historyKeymap, history, indentWithTab } from '@codemirror/commands';
   import { markdown } from '@codemirror/lang-markdown';
+  import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+  import { tags as t } from '@lezer/highlight';
   import { tabsStore } from './stores/tabs';
   import { saveFile } from './types/ipc';
   import type { SourceAnchor, AnchorV1, IpcError } from './types/ipc';
+
+  // Editor chrome themed off the design tokens (resolves live with light/dark).
+  const rvTheme = EditorView.theme({
+    '&': { height: '100%', fontSize: '12.5px', backgroundColor: 'var(--editor-bg)', color: 'var(--text)' },
+    '.cm-scroller': { overflow: 'auto', fontFamily: 'var(--font-mono)', lineHeight: '1.95' },
+    '.cm-content': { caretColor: 'var(--accent)', padding: '12px 0 64px' },
+    '.cm-gutters': { backgroundColor: 'var(--editor-bg)', color: 'var(--text-faint)', border: 'none' },
+    '.cm-lineNumbers .cm-gutterElement': { padding: '0 14px 0 18px', minWidth: '46px' },
+    '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--text) 3.5%, transparent)' },
+    '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--text-muted)' },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
+    '.cm-foldPlaceholder': { backgroundColor: 'var(--surface-2)', color: 'var(--text-muted)', border: 'none' },
+  });
+
+  const rvHighlight = HighlightStyle.define([
+    { tag: t.heading, color: 'var(--syn-heading)', fontWeight: '600' },
+    { tag: t.strong, fontWeight: '600', color: 'var(--text)' },
+    { tag: t.emphasis, fontStyle: 'italic' },
+    { tag: [t.link, t.url], color: 'var(--accent-text)' },
+    { tag: t.quote, color: 'var(--text-muted)', fontStyle: 'italic' },
+    { tag: [t.monospace, t.string], color: 'var(--syn-string)' },
+    { tag: t.list, color: 'var(--accent)' },
+    { tag: [t.processingInstruction, t.contentSeparator], color: 'var(--syn-punct)' },
+    { tag: [t.meta, t.comment], color: 'var(--syn-comment)' },
+    { tag: t.keyword, color: 'var(--syn-key)' },
+  ]);
 
   /** The active tab id we are editing. */
   export let tabId: string;
@@ -64,8 +94,12 @@
     const state = EditorState.create({
       doc: content,
       extensions: [
+        lineNumbers(),
+        highlightActiveLine(),
+        highlightActiveLineGutter(),
         history(),
         markdown(),
+        syntaxHighlighting(rvHighlight),
         keymap.of([
           ...defaultKeymap,
           ...historyKeymap,
@@ -87,11 +121,7 @@
             handleSelectionChange(update.view);
           }
         }),
-        EditorView.theme({
-          '&': { height: '100%', fontSize: '14px' },
-          '.cm-scroller': { overflow: 'auto' },
-          '.cm-content': { fontFamily: 'var(--editor-font, "JetBrains Mono", monospace)' },
-        }),
+        rvTheme,
       ],
     });
 
@@ -254,28 +284,45 @@
     position: relative;
     width: 100%;
     height: 100%;
+    min-height: 0;
     overflow: hidden;
+    background: var(--editor-bg);
   }
 
   .add-comment-affordance {
     position: absolute;
-    z-index: 50;
+    z-index: var(--z-pop);
     pointer-events: auto;
+    transform: translateY(6px);
   }
 
   .add-comment-btn {
-    background: var(--accent, #0066cc);
-    color: #fff;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent);
+    color: var(--text-on-accent);
     border: none;
-    border-radius: 4px;
-    padding: 4px 10px;
-    font-size: 12px;
+    border-radius: var(--r-md);
+    padding: 6px 11px;
+    font-family: var(--font-ui);
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-medium);
     cursor: pointer;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    box-shadow: var(--shadow-pop);
     white-space: nowrap;
   }
-
-  .add-comment-btn:hover {
-    background: var(--accent-dark, #0052a3);
+  /* up-pointing arrow toward the selection */
+  .add-comment-btn::before {
+    content: '';
+    position: absolute;
+    left: 16px;
+    top: -4px;
+    width: 9px;
+    height: 9px;
+    background: var(--accent);
+    transform: rotate(45deg);
   }
+  .add-comment-btn:hover { background: var(--accent-hover); }
 </style>

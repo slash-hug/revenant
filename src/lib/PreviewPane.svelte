@@ -70,6 +70,14 @@
   }
 
   $: frontmatterHeader = parseFrontmatterHeader(content);
+  $: fmTitle = frontmatterHeader?.title as string | undefined;
+  $: fmMeta = frontmatterHeader
+    ? Object.entries(frontmatterHeader).filter(([k]) => k !== 'title')
+    : [];
+
+  function initials(name: string): string {
+    return name.trim().split(/\s+/).map((w) => w[0] ?? '').slice(0, 2).join('').toUpperCase();
+  }
 
   // -------------------------------------------------------------------------
   // Render + hydrate pipeline
@@ -271,34 +279,45 @@
 
 <div class="preview-pane">
   {#if syncDegraded}
-    <div class="sync-degraded-banner" role="status" aria-live="polite">
-      Large file — scroll sync is best-effort only.
+    <div class="banner" role="status" aria-live="polite">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" />
+      </svg>
+      <span>Large file — scroll sync is best-effort.</span>
     </div>
   {/if}
 
-  {#if frontmatterHeader}
-    <header class="frontmatter-header" aria-label="Document metadata">
-      {#if frontmatterHeader.title}
-        <h1 class="fm-title">{frontmatterHeader.title}</h1>
+  <div class="pv-scroll">
+    <article class="prose">
+      {#if frontmatterHeader}
+        <header class="pv-header" aria-label="Document metadata">
+          {#if fmTitle}<h1 class="pv-title">{fmTitle}</h1>{/if}
+          {#if fmMeta.length}
+            <div class="pv-meta">
+              {#each fmMeta as [key, value], i (key)}
+                {#if i > 0}<span class="pv-dot" aria-hidden="true">·</span>{/if}
+                {#if key === 'author'}
+                  <span class="pv-author">
+                    <span class="pv-avatar" aria-hidden="true">{initials(String(value))}</span>
+                    {value}
+                  </span>
+                {:else}
+                  <span class="pv-meta-item">{value}</span>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        </header>
       {/if}
-      <dl class="fm-meta">
-        {#each Object.entries(frontmatterHeader).filter(([k]) => k !== 'title') as [key, value]}
-          <div class="fm-row">
-            <dt>{key}</dt>
-            <dd>{String(value)}</dd>
-          </div>
-        {/each}
-      </dl>
-    </header>
-  {/if}
 
-  <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div
-    class="preview-content"
-    bind:this={previewEl}
-    on:mouseup={handlePreviewMouseUp}
-  >{@html html}</div>
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div
+        class="preview-content"
+        bind:this={previewEl}
+        on:mouseup={handlePreviewMouseUp}
+      >{@html html}</div>
+    </article>
+  </div>
 </div>
 
 <style>
@@ -306,120 +325,218 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    overflow-y: auto;
-    background: var(--preview-bg, #fff);
-    color: var(--preview-fg, #222);
-    padding: 24px 32px;
-    font-family: var(--prose-font, Georgia, serif);
-    font-size: 16px;
-    line-height: 1.7;
+    min-height: 0;
+    background: var(--preview-bg);
+    color: var(--text);
+  }
+  .pv-scroll { overflow: auto; flex: 1; min-height: 0; }
+
+  /* info / best-effort banner */
+  .banner {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    margin: 12px 16px 0;
+    padding: 9px 14px;
+    font-size: var(--fs-sm);
+    border-radius: var(--r-md);
+    background: var(--warn-soft);
+    color: var(--warn-text);
+    border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  }
+  .banner svg { width: 15px; height: 15px; flex: none; }
+
+  /* reading column */
+  .prose {
+    padding: 32px 44px 64px;
+    font-family: var(--font-prose);
+    max-width: 760px;
+    color: var(--text);
   }
 
-  .sync-degraded-banner {
-    background: var(--warning-bg, #fff7e0);
-    border: 1px solid var(--warning-border, #e6c200);
-    border-radius: 4px;
-    padding: 6px 12px;
-    font-size: 12px;
-    color: var(--warning-fg, #5c4e00);
-    margin-bottom: 12px;
-    flex-shrink: 0;
+  .pv-header { margin-bottom: 28px; }
+  .pv-title {
+    font-size: var(--ps-h1);
+    font-weight: var(--fw-semibold);
+    line-height: var(--lh-tight);
+    letter-spacing: -.012em;
+    margin: 0 0 12px;
+    text-wrap: balance;
   }
-
-  .frontmatter-header {
-    border-bottom: 1px solid var(--border-color, #ddd);
-    margin-bottom: 24px;
-    padding-bottom: 16px;
+  .pv-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-family: var(--font-ui);
+    font-size: var(--fs-sm);
+    color: var(--text-muted);
   }
-
-  .fm-title {
-    font-size: 1.8em;
-    font-weight: 700;
-    margin: 0 0 8px 0;
+  .pv-author { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text); font-weight: var(--fw-medium); }
+  .pv-avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent-text);
+    font-size: 9.5px;
+    font-weight: var(--fw-bold);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    letter-spacing: .02em;
   }
+  .pv-dot { color: var(--text-faint); }
 
-  .fm-meta {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 2px 12px;
-    font-size: 13px;
-    color: var(--muted, #666);
-    margin: 0;
+  /* ---- rendered markdown ---- */
+  .preview-content :global(h1) {
+    font-size: var(--ps-h1);
+    font-weight: var(--fw-semibold);
+    line-height: var(--lh-tight);
+    letter-spacing: -.012em;
+    margin: 34px 0 14px;
+    text-wrap: balance;
   }
-
-  .fm-row {
-    display: contents;
+  .preview-content :global(h2) {
+    font-family: var(--font-ui);
+    font-size: var(--ps-h2);
+    font-weight: var(--fw-semibold);
+    margin: 30px 0 11px;
+    color: var(--text);
+    text-wrap: balance;
   }
-
-  dt {
-    font-weight: 600;
-  }
-
-  dd {
-    margin: 0;
-  }
-
-  .preview-content :global(h1),
-  .preview-content :global(h2),
   .preview-content :global(h3),
-  .preview-content :global(h4),
-  .preview-content :global(h5),
-  .preview-content :global(h6) {
-    margin-top: 1.5em;
-    margin-bottom: 0.5em;
-    line-height: 1.3;
+  .preview-content :global(h4) {
+    font-family: var(--font-ui);
+    font-size: var(--fs-base);
+    font-weight: var(--fw-semibold);
+    color: var(--text-muted);
+    margin: 24px 0 8px;
+  }
+  .preview-content :global(p) {
+    font-size: var(--ps-base);
+    line-height: 1.62;
+    margin: 0 0 14px;
+    color: var(--text);
+    text-wrap: pretty;
+  }
+  .preview-content :global(ul),
+  .preview-content :global(ol) { margin: 0 0 16px; padding-left: 22px; }
+  .preview-content :global(li) { font-size: var(--ps-base); line-height: 1.7; color: var(--text); }
+  .preview-content :global(li::marker) { color: var(--accent); }
+  .preview-content :global(a) { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+  .preview-content :global(strong) { font-weight: var(--fw-semibold); }
+  .preview-content :global(hr) { border: none; height: 1px; background: var(--border); margin: 28px 0; }
+
+  /* inline code */
+  .preview-content :global(:not(pre) > code) {
+    font-family: var(--font-mono);
+    font-size: .86em;
+    background: var(--surface-2);
+    border-radius: var(--r-xs);
+    padding: 1px 5px;
+    color: var(--text);
   }
 
+  /* code blocks */
   .preview-content :global(pre) {
-    background: var(--code-bg, #f6f6f6);
-    border-radius: 4px;
-    padding: 12px 16px;
-    overflow-x: auto;
-    font-size: 13px;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: 15px 17px;
+    margin: 0 0 18px;
+    overflow: auto;
+  }
+  .preview-content :global(pre code) {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--text);
+    background: none;
+    padding: 0;
   }
 
-  .preview-content :global(code) {
-    font-family: var(--editor-font, "JetBrains Mono", monospace);
-    font-size: 0.9em;
+  /* highlight.js token palette mapped onto our syntax roles */
+  .preview-content :global(.hljs-keyword),
+  .preview-content :global(.hljs-selector-tag),
+  .preview-content :global(.hljs-built_in) { color: var(--accent-text); }
+  .preview-content :global(.hljs-string),
+  .preview-content :global(.hljs-attr),
+  .preview-content :global(.hljs-symbol) { color: var(--success-text); }
+  .preview-content :global(.hljs-title),
+  .preview-content :global(.hljs-title.function_),
+  .preview-content :global(.hljs-section) { color: var(--success-text); font-weight: var(--fw-medium); }
+  .preview-content :global(.hljs-type),
+  .preview-content :global(.hljs-number),
+  .preview-content :global(.hljs-literal),
+  .preview-content :global(.hljs-class .hljs-title) { color: var(--warn-text); }
+  .preview-content :global(.hljs-comment),
+  .preview-content :global(.hljs-quote) { color: var(--text-faint); font-style: italic; }
+  .preview-content :global(.hljs-punctuation),
+  .preview-content :global(.hljs-operator) { color: var(--text-faint); }
+
+  /* blockquote */
+  .preview-content :global(blockquote) {
+    margin: 0 0 18px;
+    padding: 4px 0 4px 18px;
+    border-left: 3px solid var(--accent);
+    font-size: var(--ps-quote);
+    line-height: 1.55;
+    color: var(--text-muted);
+    font-style: italic;
   }
 
+  /* tables */
   .preview-content :global(table) {
     border-collapse: collapse;
     width: 100%;
-    margin: 1em 0;
+    margin: 0 0 18px;
+    font-family: var(--font-ui);
+    font-size: var(--fs-base);
   }
-
   .preview-content :global(th),
-  .preview-content :global(td) {
-    border: 1px solid var(--border-color, #ddd);
-    padding: 6px 12px;
-    text-align: left;
-  }
+  .preview-content :global(td) { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .preview-content :global(th) { color: var(--text-muted); font-weight: var(--fw-semibold); border-bottom-color: var(--border-strong); }
+  .preview-content :global(td) { color: var(--text); }
+  .preview-content :global(tbody tr:hover td) { background: var(--surface-2); }
 
-  .preview-content :global(blockquote) {
-    border-left: 4px solid var(--accent, #0066cc);
-    margin: 0;
-    padding: 4px 16px;
-    color: var(--muted, #555);
-  }
-
-  .preview-content :global(.mermaid-error) {
-    background: var(--error-bg, #fff0f0);
-    border: 1px solid var(--error-border, #f08080);
-    border-radius: 4px;
-    padding: 8px 12px;
-    font-size: 13px;
-    color: var(--error-fg, #800);
-  }
-
-  .preview-content :global([data-mermaid-pending]) {
-    background: var(--skeleton-bg, #f0f0f0);
-    border-radius: 4px;
-    min-height: 80px;
+  /* mermaid figure */
+  .preview-content :global([data-block-type="mermaid"]) {
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    padding: 22px;
+    margin: 0 0 18px;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--muted, #999);
-    font-size: 13px;
+    overflow: auto;
   }
+  .preview-content :global([data-mermaid-pending]) {
+    min-height: 96px;
+    background: linear-gradient(100deg,
+      var(--surface-2) 30%,
+      color-mix(in srgb, var(--surface-2) 60%, var(--surface)) 50%,
+      var(--surface-2) 70%);
+    background-size: 200% 100%;
+    animation: pv-shimmer 1.4s var(--ease-in-out) infinite;
+    color: transparent;
+  }
+  @keyframes pv-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .preview-content :global([data-mermaid-pending]) { animation: none; }
+  }
+
+  /* diagram error card */
+  .preview-content :global(.mermaid-error) {
+    border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
+    background: var(--danger-soft);
+    border-radius: var(--r-lg);
+    padding: 14px 16px;
+    margin: 0 0 18px;
+    font-size: var(--fs-base);
+    font-family: var(--font-ui);
+    color: var(--text);
+  }
+  .preview-content :global(.mermaid-error strong) { color: var(--danger-text); }
 </style>

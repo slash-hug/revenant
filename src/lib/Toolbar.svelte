@@ -1,18 +1,13 @@
 <script lang="ts">
   /**
    * Toolbar.svelte — top action bar.
-   *
-   * Decisions implemented:
-   *  - View-mode toggle: source / preview / split.
-   *  - "Generate review" button (agent-agnostic label — TRAP 2: never "Claude").
-   *  - Export-to-Obsidian button.
-   *
-   * Events:
-   *  - viewMode    : { mode: ViewMode }
-   *  - generateReview  : void
-   *  - exportObsidian  : void
+   *  - Brand mark + segmented view-mode toggle (source / preview / split)
+   *  - "Generate review" (primary) + "Export to Obsidian" (secondary)
+   *  - Theme toggle
+   * Decisions: agent-agnostic label — never "Claude" (TRAP 2).
    */
   import { createEventDispatcher } from 'svelte';
+  import ThemeToggle from './ThemeToggle.svelte';
 
   type ViewMode = 'source' | 'preview' | 'split';
 
@@ -24,6 +19,12 @@
     exportObsidian: void;
   }>();
 
+  const modes: { id: ViewMode; label: string }[] = [
+    { id: 'source', label: 'Source' },
+    { id: 'split', label: 'Split' },
+    { id: 'preview', label: 'Preview' },
+  ];
+
   function setMode(mode: ViewMode) {
     if (viewMode === mode) return;
     viewMode = mode;
@@ -31,147 +32,157 @@
   }
 </script>
 
-<header class="toolbar" role="toolbar" aria-label="Document actions">
-  <!-- View-mode toggles -->
-  <div class="btn-group" role="group" aria-label="View mode">
-    <button
-      class="btn-mode"
-      class:active={viewMode === 'source'}
-      on:click={() => setMode('source')}
-      aria-pressed={viewMode === 'source'}
-      title="Source editor only"
-    >Source</button>
-    <button
-      class="btn-mode"
-      class:active={viewMode === 'split'}
-      on:click={() => setMode('split')}
-      aria-pressed={viewMode === 'split'}
-      title="Side-by-side editor and preview"
-    >Split</button>
-    <button
-      class="btn-mode"
-      class:active={viewMode === 'preview'}
-      on:click={() => setMode('preview')}
-      aria-pressed={viewMode === 'preview'}
-      title="Preview only"
-    >Preview</button>
+<header class="ws-toolbar" role="toolbar" aria-label="Document actions">
+  <div class="left">
+    <span class="brand" aria-label="Revenant">
+      <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="2.5" y="2.5" width="19" height="19" rx="5.5" fill="var(--accent)" />
+        <path d="M8.5 16.5V8.4a.9.9 0 0 1 .9-.9h2.9a2.6 2.6 0 0 1 0 5.2H9.4M12.6 12.7l3 3.8"
+          stroke="var(--text-on-accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <span class="brand-word">Revenant</span>
+    </span>
+
+    <div class="seg" role="group" aria-label="View mode">
+      {#each modes as m (m.id)}
+        <button
+          type="button"
+          class:active={viewMode === m.id}
+          aria-pressed={viewMode === m.id}
+          on:click={() => setMode(m.id)}
+        >{m.label}</button>
+      {/each}
+    </div>
   </div>
 
-  <div class="toolbar-spacer" aria-hidden="true"></div>
-
-  <!-- Review + export actions -->
-  <div class="toolbar-actions">
-    <!-- Agent-agnostic label: "Generate review" (TRAP 2 — never hardcode "Claude") -->
+  <div class="right">
     <button
-      class="btn-action btn-review"
+      type="button"
+      class="btn btn-primary"
       on:click={() => dispatch('generateReview')}
       title="Generate a .review.md file from your annotations"
     >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M5 21V5a2 2 0 0 1 2-2h7l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2Z" /><path d="m9 14 2 2 4-4" />
+      </svg>
       Generate review
     </button>
 
     <button
-      class="btn-action btn-obsidian"
+      type="button"
+      class="btn btn-secondary"
       on:click={() => dispatch('exportObsidian')}
       title="Export review to your Obsidian vault"
     >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3 4 9v6l8 6 8-6V9l-8-6Z" /><path d="M12 3v18" />
+      </svg>
       Export to Obsidian
     </button>
+
+    <div class="tb-divider" aria-hidden="true"></div>
+    <ThemeToggle />
   </div>
 </header>
 
 <style>
-  .toolbar {
+  .ws-toolbar {
+    height: 54px;
+    flex: none;
     display: flex;
-    flex-direction: row;
     align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    background: var(--toolbar-bg, #f0f0f0);
-    border-bottom: 1px solid var(--border-color, #ddd);
-    min-height: 42px;
-    flex-shrink: 0;
+    justify-content: space-between;
+    gap: var(--sp-4);
+    padding: 0 var(--sp-3);
+    background: var(--toolbar);
+    border-bottom: 1px solid var(--border);
   }
+  .left, .right { display: flex; align-items: center; gap: var(--sp-3); }
 
-  .btn-group {
-    display: flex;
-    border: 1px solid var(--border-color, #ccc);
-    border-radius: 6px;
-    overflow: hidden;
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-size: var(--fs-md);
+    font-weight: var(--fw-semibold);
+    letter-spacing: -.01em;
+    color: var(--text);
+    padding-right: var(--sp-1);
   }
+  .brand-mark { width: 22px; height: 22px; flex: none; }
 
-  .btn-mode {
+  /* Segmented toggle */
+  .seg {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: var(--r-md);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  .seg button {
+    font: inherit;
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-medium);
+    cursor: pointer;
+    padding: 5px 13px;
+    border-radius: var(--r-sm);
     border: none;
     background: transparent;
-    padding: 5px 14px;
-    font-size: 12px;
-    cursor: pointer;
-    color: var(--btn-fg, #444);
-    border-right: 1px solid var(--border-color, #ccc);
-    transition: background 0.1s;
+    color: var(--text-muted);
+    transition: color var(--dur-fast), background var(--dur-fast);
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button.active {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
   }
 
-  .btn-mode:last-child {
-    border-right: none;
-  }
-
-  .btn-mode:hover {
-    background: var(--btn-hover, #e0e0e0);
-  }
-
-  .btn-mode.active {
-    background: var(--accent, #0066cc);
-    color: #fff;
-    font-weight: 600;
-  }
-
-  .toolbar-spacer {
-    flex: 1;
-  }
-
-  .toolbar-actions {
-    display: flex;
-    gap: 8px;
+  /* Buttons */
+  .btn {
+    font: inherit;
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-medium);
+    line-height: 1;
+    display: inline-flex;
     align-items: center;
-  }
-
-  .btn-action {
-    border: 1px solid var(--border-color, #ccc);
-    border-radius: 6px;
-    padding: 6px 14px;
-    font-size: 12px;
-    font-weight: 500;
+    gap: var(--sp-2);
     cursor: pointer;
-    background: var(--btn-bg, #fff);
-    color: var(--btn-fg, #333);
-    transition: background 0.1s, border-color 0.1s;
+    padding: 8px 14px;
+    border-radius: var(--r-md);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text);
     white-space: nowrap;
+    transition: background var(--dur-fast) var(--ease-out),
+      border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  }
+  .btn svg { width: 14px; height: 14px; }
+  .btn-primary {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    font-weight: var(--fw-semibold);
+    box-shadow: var(--accent-shadow);
+  }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:active { background: var(--accent-press); }
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text);
+    border-color: var(--border);
+    box-shadow: var(--shadow-sm);
+  }
+  .btn-secondary:hover { border-color: var(--border-strong); }
+
+  .tb-divider {
+    width: 1px;
+    height: 22px;
+    background: var(--border);
+    margin: 0 var(--sp-1);
   }
 
-  .btn-action:hover {
-    background: var(--btn-hover, #e8e8e8);
-    border-color: var(--btn-fg, #333);
-  }
-
-  .btn-review {
-    background: var(--accent, #0066cc);
-    color: #fff;
-    border-color: var(--accent, #0066cc);
-  }
-
-  .btn-review:hover {
-    background: var(--accent-dark, #0052a3);
-    border-color: var(--accent-dark, #0052a3);
-  }
-
-  .btn-obsidian {
-    background: var(--obsidian-bg, #7c3aed);
-    color: #fff;
-    border-color: var(--obsidian-bg, #7c3aed);
-  }
-
-  .btn-obsidian:hover {
-    background: var(--obsidian-dark, #6d28d9);
-    border-color: var(--obsidian-dark, #6d28d9);
+  @media (max-width: 1080px) {
+    .brand-word { display: none; }
   }
 </style>

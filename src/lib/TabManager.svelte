@@ -1,19 +1,15 @@
 <script lang="ts">
   /**
-   * TabManager.svelte — horizontal tab bar.
-   *
-   * Decisions: C1 — tab open/close/switch, dirty dot, focus-existing on duplicate.
-   * The store holds all tab state; this component just renders + dispatches.
+   * TabManager.svelte — horizontal tab strip.
+   * C1 — open/close/switch, dirty dot, focus-existing on duplicate.
    */
   import { tabsStore, tabList, activeTab } from './stores/tabs';
   import { basename } from './util/path';
 
-  // Close a tab, guarding dirty state.
   function handleClose(e: MouseEvent, id: string) {
     e.stopPropagation();
     const tab = $tabList.find((t) => t.id === id);
     if (tab?.dirty) {
-      // Browser confirm is a quick guard; a proper unsaved-changes modal is v1.1.
       if (!confirm(`"${fileName(tab.path)}" has unsaved changes. Close anyway?`)) return;
     }
     tabsStore.closeTab(id);
@@ -29,14 +25,13 @@
 </script>
 
 <!-- svelte-ignore a11y-no-noninteractive-element-to-interactive-role -->
-<nav class="tab-bar" aria-label="Open documents" role="tablist">
+<nav class="ws-tabs" aria-label="Open documents" role="tablist">
   {#each $tabList as tab (tab.id)}
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
       class="tab"
       class:active={tab.id === $activeTab?.id}
-      class:dirty={tab.dirty}
       role="tab"
       tabindex="0"
       aria-selected={tab.id === $activeTab?.id}
@@ -44,99 +39,97 @@
       on:click={() => handleSwitch(tab.id)}
       on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSwitch(tab.id); } }}
     >
-      <span class="tab-label">{fileName(tab.path)}</span>
       {#if tab.dirty}
-        <span class="dirty-dot" aria-label="unsaved changes" title="Unsaved changes">●</span>
+        <span class="dot" aria-label="Unsaved changes" title="Unsaved changes"></span>
       {/if}
+      <span class="tab-label">{fileName(tab.path)}</span>
       <button
-        class="close-btn"
+        class="tab-x"
         on:click={(e) => handleClose(e, tab.id)}
         aria-label={`Close ${fileName(tab.path)}`}
         title="Close tab"
-      >×</button>
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <path d="M6 6l12 12M18 6 6 18" />
+        </svg>
+      </button>
     </div>
   {/each}
 
   {#if $tabList.length === 0}
-    <div class="tab-bar-empty">No files open</div>
+    <div class="tabs-empty">No files open</div>
   {/if}
 </nav>
 
 <style>
-  .tab-bar {
+  .ws-tabs {
+    height: 39px;
+    flex: none;
     display: flex;
-    flex-direction: row;
-    align-items: stretch;
-    background: var(--tab-bar-bg, #f5f5f5);
-    border-bottom: 1px solid var(--border-color, #ddd);
+    align-items: flex-end;
+    gap: 3px;
+    padding: 0 var(--sp-3);
+    background: var(--tab-strip);
+    border-bottom: 1px solid var(--border);
     overflow-x: auto;
-    min-height: 36px;
+    scrollbar-width: none;
   }
+  .ws-tabs::-webkit-scrollbar { height: 0; }
 
   .tab {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 0 12px;
-    border: none;
-    border-right: 1px solid var(--border-color, #ddd);
-    background: transparent;
+    gap: var(--sp-2);
+    height: 31px;
+    padding: 0 11px;
+    font-size: var(--fs-sm);
+    color: var(--text-muted);
+    border-radius: var(--r-md) var(--r-md) 0 0;
     cursor: pointer;
-    font-size: 13px;
-    color: var(--tab-fg, #555);
+    border: 1px solid transparent;
+    border-bottom: none;
+    background: transparent;
     white-space: nowrap;
-    min-width: 80px;
-    max-width: 200px;
-    position: relative;
-    transition: background 0.1s;
+    max-width: 220px;
+    transition: background var(--dur-fast), color var(--dur-fast);
   }
-
-  .tab:hover {
-    background: var(--tab-hover-bg, #e8e8e8);
-  }
-
+  .tab:hover { background: var(--surface-2); color: var(--text); }
   .tab.active {
-    background: var(--tab-active-bg, #fff);
-    color: var(--tab-active-fg, #222);
-    border-bottom: 2px solid var(--accent, #0066cc);
+    background: var(--editor-bg);
+    color: var(--text);
+    border-color: var(--border);
+    margin-bottom: -1px;
+    font-weight: var(--fw-medium);
   }
 
-  .tab-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex: 1;
+  .tab-label { overflow: hidden; text-overflow: ellipsis; }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex: none;
   }
 
-  .dirty-dot {
-    color: var(--dirty-color, #e67e00);
-    font-size: 10px;
-    line-height: 1;
-    flex-shrink: 0;
-  }
-
-  .close-btn {
+  .tab-x {
+    display: inline-flex;
+    color: var(--text-faint);
+    padding: 2px;
+    border-radius: var(--r-xs);
     border: none;
     background: transparent;
     cursor: pointer;
-    font-size: 14px;
-    color: var(--tab-fg, #555);
-    padding: 0 2px;
-    line-height: 1;
-    border-radius: 3px;
-    flex-shrink: 0;
-    opacity: 0.6;
+    flex: none;
   }
+  .tab-x svg { width: 13px; height: 13px; }
+  .tab-x:hover { color: var(--text); background: var(--surface-2); }
 
-  .close-btn:hover {
-    background: var(--close-btn-hover, rgba(0,0,0,0.1));
-    opacity: 1;
-  }
-
-  .tab-bar-empty {
+  .tabs-empty {
     display: flex;
     align-items: center;
-    padding: 0 16px;
-    font-size: 12px;
-    color: var(--muted, #999);
+    padding: 0 var(--sp-3);
+    font-size: var(--fs-sm);
+    color: var(--text-faint);
   }
 </style>

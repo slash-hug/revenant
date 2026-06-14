@@ -18,6 +18,7 @@
   import PreviewPane from './lib/PreviewPane.svelte';
   import AnnotationDrawer from './lib/AnnotationDrawer.svelte';
   import ConflictModal from './lib/ConflictModal.svelte';
+  import ThemeToggle from './lib/ThemeToggle.svelte';
 
   import { tabsStore, activeTab, tabList } from './lib/stores/tabs';
   import { annotationsStore } from './lib/stores/annotations';
@@ -259,58 +260,75 @@
   });
 </script>
 
-<main class="app-shell">
+<main class="app-root">
   {#if $tabList.length === 0}
-    <!-- Welcome screen (C11): shown when no tab is open -->
-    <div class="welcome-screen" role="region" aria-label="Welcome">
-      <div class="welcome-content">
-        <h1 class="welcome-title">Revenant</h1>
-        <p class="welcome-subtitle">Markdown viewer &amp; review companion</p>
+    <!-- Welcome / empty state (C11) -->
+    <div class="welcome" role="region" aria-label="Welcome">
+      <div class="welcome-top">
+        <ThemeToggle />
+      </div>
 
-        <div class="drop-zone" aria-label="Drop zone for markdown files">
-          <span class="drop-zone-icon">📄</span>
-          <p>Drop a <code>.md</code> file here</p>
-          <p class="drop-zone-or">or</p>
-          <button class="open-btn" onclick={handleOpenFile} type="button">Open file…</button>
+      <div class="welcome-inner">
+        <div class="welcome-mark">
+          <svg class="welcome-logo" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="2.5" y="2.5" width="19" height="19" rx="5.5" fill="var(--accent)" />
+            <path d="M8.5 16.5V8.4a.9.9 0 0 1 .9-.9h2.9a2.6 2.6 0 0 1 0 5.2H9.4M12.6 12.7l3 3.8"
+              stroke="var(--text-on-accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span class="welcome-word">Revenant</span>
+        </div>
+        <p class="welcome-tag">Markdown viewer &amp; review companion</p>
+
+        <div class="drop" aria-label="Open a markdown file">
+          <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M6 21a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2Z" />
+          </svg>
+          <p class="drop-title">Drop a <code>.md</code> file here</p>
+          <p class="drop-or">or</p>
+          <button class="btn btn-primary" onclick={handleOpenFile} type="button">Open file…</button>
         </div>
 
-        <section class="recent-files" aria-label="Recent files">
-          <h2>Recent files</h2>
+        <section class="recent" aria-label="Recent files">
+          <div class="recent-head">
+            <span class="recent-title">Recent files</span>
+          </div>
           {#if recentFiles.length === 0}
-            <p class="recent-empty">No recent files.</p>
+            <p class="recent-empty">Nothing here yet — open a file to begin.</p>
           {:else}
-            <ul class="recent-list">
+            <div class="recent-list">
               {#each recentFiles as path (path)}
-                <li>
-                  <button class="recent-item" type="button" onclick={() => openDoc(path)} title={path}>
-                    {basename(path)}
-                  </button>
-                </li>
+                <button class="recent-row" type="button" onclick={() => openDoc(path)} title={path}>
+                  <span class="recent-ic" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M6 21a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2Z" />
+                    </svg>
+                  </span>
+                  <span class="recent-main">
+                    <span class="recent-name">{basename(path)}</span>
+                    <span class="recent-path">{path}</span>
+                  </span>
+                </button>
               {/each}
-            </ul>
+            </div>
           {/if}
         </section>
       </div>
     </div>
   {:else}
-    <div class="editor-shell" class:drawer-open={drawerOpen}>
-      <div class="toolbar-slot">
-        <Toolbar
-          {viewMode}
-          on:viewMode={(e) => (viewMode = e.detail.mode)}
-          on:generateReview={handleGenerateReview}
-          on:exportObsidian={handleExportObsidian}
-        />
-      </div>
+    <div class="ws">
+      <Toolbar
+        {viewMode}
+        on:viewMode={(e) => (viewMode = e.detail.mode)}
+        on:generateReview={handleGenerateReview}
+        on:exportObsidian={handleExportObsidian}
+      />
 
-      <div class="tabs-slot">
-        <TabManager />
-      </div>
+      <TabManager />
 
-      <div class="content-area">
-        {#if $activeTab}
-          {#key $activeTab.id}
-            <div class="panes view-{viewMode}">
+      <div class="ws-body">
+        <div class="panes view-{viewMode}">
+          {#if $activeTab}
+            {#key $activeTab.id}
               {#if viewMode === 'source' || viewMode === 'split'}
                 <div class="pane editor-wrap">
                   <EditorPane
@@ -332,242 +350,184 @@
                   />
                 </div>
               {/if}
-            </div>
-          {/key}
-        {/if}
-      </div>
-
-      {#if drawerOpen}
-        <div class="drawer-slot">
-          <AnnotationDrawer open={drawerOpen} on:close={() => (drawerOpen = false)} />
+            {/key}
+          {/if}
         </div>
-      {/if}
+
+        <div class="drawer-wrap" class:hidden={!drawerOpen}>
+          <AnnotationDrawer open={drawerOpen} />
+        </div>
+      </div>
     </div>
   {/if}
 
   <ConflictModal open={conflict.open} filePath={conflict.path} on:reload={handleReload} on:keepMine={handleKeepMine} />
 
   {#if toast}
-    <div class="toast" role="status" aria-live="polite">{toast}</div>
+    <div class="toast-stack">
+      <div class="toast" role="status" aria-live="polite">
+        <span class="dotmark" aria-hidden="true"></span>
+        <span class="toast-msg">{toast}</span>
+      </div>
+    </div>
   {/if}
 </main>
 
 <style>
-  :global(*) {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-  }
-
-  :global(body) {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #1a1a1a;
-    color: #e0e0e0;
-    height: 100vh;
-    overflow: hidden;
-  }
-
-  .app-shell {
+  .app-root {
     height: 100vh;
     display: flex;
     flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
+    transition: background var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out);
   }
 
-  /* --- Welcome screen --- */
-  .welcome-screen {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-  }
-
-  .welcome-content {
-    max-width: 480px;
+  /* ============ Welcome ============ */
+  .welcome { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; align-items: center; }
+  .welcome-top { width: 100%; display: flex; justify-content: flex-end; padding: 18px 22px; }
+  .welcome-inner {
     width: 100%;
+    max-width: 540px;
+    margin: auto;
+    padding: 0 24px 64px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     text-align: center;
   }
-
-  .welcome-title {
-    font-size: 2.5rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    color: #f0f0f0;
-    margin-bottom: 0.5rem;
+  .welcome-mark { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+  .welcome-logo { width: 34px; height: 34px; }
+  .welcome-word { font-size: 40px; font-weight: var(--fw-semibold); letter-spacing: -.025em; }
+  .welcome-tag {
+    font-family: var(--font-prose);
+    font-size: 17px;
+    color: var(--text-muted);
+    font-style: italic;
+    margin-bottom: 36px;
   }
 
-  .welcome-subtitle {
-    color: #888;
-    margin-bottom: 2rem;
-    font-size: 1rem;
-  }
-
-  .drop-zone {
-    border: 2px dashed #444;
-    border-radius: 12px;
-    padding: 2.5rem 2rem;
-    margin-bottom: 2rem;
-    transition: border-color 0.2s ease;
-    cursor: default;
-  }
-
-  .drop-zone:hover {
-    border-color: #666;
-  }
-
-  .drop-zone-icon {
-    font-size: 2.5rem;
-    display: block;
-    margin-bottom: 1rem;
-  }
-
-  .drop-zone p {
-    color: #aaa;
-    font-size: 0.95rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .drop-zone-or {
-    color: #666;
-    font-size: 0.85rem;
-    margin: 0.75rem 0;
-  }
-
-  .open-btn {
-    background: #3b82f6;
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    padding: 0.6rem 1.4rem;
-    font-size: 0.9rem;
-    cursor: pointer;
-    transition: background 0.15s ease;
-    margin-top: 0.5rem;
-  }
-
-  .open-btn:hover {
-    background: #2563eb;
-  }
-
-  .recent-files {
-    text-align: left;
-  }
-
-  .recent-files h2 {
-    font-size: 0.875rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #666;
-    margin-bottom: 0.75rem;
-  }
-
-  .recent-empty {
-    color: #555;
-    font-size: 0.875rem;
-  }
-
-  .recent-list {
-    list-style: none;
+  .drop {
+    width: 100%;
+    border: 1.5px dashed var(--border-strong);
+    border-radius: var(--r-xl);
+    background: var(--surface);
+    padding: 40px 24px;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    align-items: center;
+    gap: 14px;
+    transition: border-color var(--dur-base), background var(--dur-base);
   }
+  .drop-icon { width: 30px; height: 30px; color: var(--text-faint); }
+  .drop-title { margin: 0; font-size: var(--fs-md); color: var(--text); font-weight: var(--fw-medium); }
+  .drop-title code { font-family: var(--font-mono); font-size: .92em; }
+  .drop-or { margin: 0; font-size: var(--fs-sm); color: var(--text-faint); }
 
-  .recent-item {
+  .recent { width: 100%; margin-top: 40px; text-align: left; }
+  .recent-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .recent-title {
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .recent-list { display: flex; flex-direction: column; gap: 6px; }
+  .recent-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
     width: 100%;
     text-align: left;
+    padding: 11px 12px;
+    border-radius: var(--r-md);
+    border: 1px solid transparent;
     background: transparent;
-    border: none;
-    color: #9bb8e0;
-    padding: 6px 8px;
-    border-radius: 6px;
-    font-size: 0.9rem;
     cursor: pointer;
+    transition: background var(--dur-fast), border-color var(--dur-fast);
   }
-
-  .recent-item:hover {
-    background: #262626;
-  }
-
-  /* --- Editor shell --- */
-  .editor-shell {
-    flex: 1;
-    display: grid;
-    grid-template-rows: auto auto 1fr;
-    grid-template-columns: 1fr;
-    height: 100vh;
-    min-height: 0;
-  }
-
-  .editor-shell.drawer-open {
-    grid-template-columns: 1fr auto;
-  }
-
-  .toolbar-slot {
-    grid-column: 1 / -1;
-    background: #252525;
-    border-bottom: 1px solid #333;
-  }
-
-  .tabs-slot {
-    grid-column: 1 / -1;
-    background: #1e1e1e;
-    border-bottom: 1px solid #333;
-  }
-
-  .content-area {
-    grid-column: 1;
+  .recent-row:hover { background: var(--surface); border-color: var(--border); }
+  .recent-ic { color: var(--text-faint); flex: none; display: inline-flex; }
+  .recent-ic svg { width: 17px; height: 17px; }
+  .recent-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .recent-name { font-size: var(--fs-base); color: var(--text); font-weight: var(--fw-medium); }
+  .recent-path {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
     overflow: hidden;
-    background: #1a1a1a;
-    min-height: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .recent-empty {
+    border: 1px dashed var(--border);
+    border-radius: var(--r-lg);
+    padding: 28px;
+    text-align: center;
+    color: var(--text-faint);
+    font-size: var(--fs-base);
+    font-family: var(--font-prose);
+    font-style: italic;
   }
 
-  .panes {
-    display: flex;
-    height: 100%;
-    min-height: 0;
+  .btn {
+    font: inherit;
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+    cursor: pointer;
+    padding: 9px 18px;
+    border-radius: var(--r-md);
+    border: 1px solid transparent;
   }
+  .btn-primary { background: var(--accent); color: var(--text-on-accent); box-shadow: var(--accent-shadow); }
+  .btn-primary:hover { background: var(--accent-hover); }
 
-  .panes.view-split .pane {
-    flex: 1 1 50%;
-    min-width: 0;
-  }
+  /* ============ Workspace ============ */
+  .ws { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
+  .ws-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+
+  .panes { display: flex; min-width: 0; min-height: 0; }
+  .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+  .editor-wrap { border-right: 1px solid var(--border); }
+  .panes.view-split .editor-wrap { flex: 1 1 47%; }
+  .panes.view-split .preview-wrap { flex: 1 1 53%; }
   .panes.view-source .pane,
-  .panes.view-preview .pane {
-    flex: 1 1 100%;
-    min-width: 0;
-  }
+  .panes.view-preview .pane { flex: 1 1 100%; }
+  .panes.view-preview .editor-wrap { border-right: none; }
 
-  .editor-wrap {
-    border-right: 1px solid #333;
-    overflow: hidden;
-  }
+  .drawer-wrap { border-left: 1px solid var(--border); display: flex; min-height: 0; }
+  .drawer-wrap.hidden { display: none; }
 
-  .preview-wrap {
-    overflow: hidden;
-  }
-
-  .drawer-slot {
-    grid-column: 2;
-    grid-row: 3;
-    overflow: hidden;
-  }
-
-  /* --- Toast --- */
-  .toast {
+  /* ============ Toast ============ */
+  .toast-stack {
     position: fixed;
-    bottom: 18px;
     left: 50%;
+    bottom: 36px;
     transform: translateX(-50%);
-    background: #2b2b2b;
-    color: #eee;
-    border: 1px solid #444;
-    border-radius: 8px;
-    padding: 8px 16px;
-    font-size: 13px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-    z-index: 2000;
-    max-width: 80vw;
+    z-index: var(--z-toast);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
   }
+  .toast {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: 10px 14px;
+    font-size: var(--fs-base);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    min-width: 240px;
+    max-width: 80vw;
+    animation: toast-in var(--dur-slow) var(--ease-out);
+  }
+  .toast .dotmark { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 </style>

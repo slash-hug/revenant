@@ -6,16 +6,21 @@ Open markdown files in tabs, edit source, preview rendered output side-by-side, 
 
 ## Screenshots
 
-> Current UI baseline (pre-aesthetic-polish). Rendered from the live Svelte
-> frontend; native window chrome omitted.
+> The "Paper" (light) and "Graphite" (dark) themes — Geist · Literata ·
+> JetBrains Mono, steel-blue accent, blue-violet for detached annotations.
+> Rendered from the live Svelte frontend; native window chrome omitted.
 
 **Welcome screen**
 
-![Revenant welcome screen](docs/screenshots/welcome.png)
+![Revenant welcome screen](docs/screenshots/welcome-light.png)
 
-**Split view — source editor, live preview, and annotation drawer**
+**Review workspace — source editor, live preview, and annotation drawer (light)**
 
-![Revenant split editor/preview with annotations](docs/screenshots/editor-split.png)
+![Revenant workspace, Paper theme](docs/screenshots/workspace-light.png)
+
+**Review workspace (dark)**
+
+![Revenant workspace, Graphite theme](docs/screenshots/workspace-dark.png)
 
 ## Features
 
