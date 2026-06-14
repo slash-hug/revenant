@@ -1,8 +1,14 @@
 /**
  * annotationFocus.ts — Single source of truth for annotation hover/focus state.
  *
- * Frozen shape (plan §4 WS-0 pre-step):
- *   { activeId, hoverId, scrollNonce, anchorRect }
+ * Shape: { activeId, hoverId, scrollNonce, anchorRect }
+ *
+ * The plan §4 WS-0 pre-step listed three fields (activeId, hoverId, scrollNonce)
+ * as the "frozen" contract, but the implementation added a 4th field `anchorRect`
+ * (D4 — coordinate-driven popover placement) and extended `focusAnnotation` with
+ * an optional `rect?` parameter.  All consumers were updated consistently at the
+ * time of that change.  This comment supersedes the plan text so readers don't
+ * treat the 3-field shape as authoritative.
  *
  * WS-1/WS-2/WS-3 all consume this store; WS-2 owns it (but it is created here
  * as a pre-step so WS-1/WS-3 can import it without a worktree dependency).

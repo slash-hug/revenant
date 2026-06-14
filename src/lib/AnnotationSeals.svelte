@@ -23,6 +23,7 @@
     focusAnnotation,
     hoverAnnotation,
   } from './stores/annotationFocus';
+  import { resolveBlock } from './annotationResolve';
 
   /**
    * The scroll container element (.pv-scroll) — passed from PreviewPane.
@@ -80,7 +81,7 @@
     const newSeals: SealEntry[] = [];
 
     for (const ann of active) {
-      const blockEl = resolveBlock(ann);
+      const blockEl = resolveBlockForSeal(ann);
       if (!blockEl) {
         if (import.meta.env.DEV) {
           console.warn(
@@ -111,65 +112,45 @@
 
   /**
    * Resolve the DOM block element for an annotation.
-   *
-   * anchored: match data-source-line === line_start + 1 (D8 off-by-one).
-   * block_level: text-search quoted_text across rendered blocks (D7).
-   *
-   * Returns null if not found (detached annotations are filtered upstream).
+   * Delegates to the shared resolveBlock helper (annotationResolve.ts) so
+   * AnnotationSeals and PreviewPane cannot drift from each other.
    */
-  function resolveBlock(ann: Annotation): Element | null {
+  function resolveBlockForSeal(ann: Annotation): Element | null {
     if (!previewEl) return null;
-
-    if (ann.status === 'anchored') {
-      // D8: data-source-line is 1-based; line_start is 0-based.
-      const targetLine = ann.line_start + 1;
-      const blocks = Array.from(
-        previewEl.querySelectorAll<HTMLElement>('[data-source-line]'),
-      );
-      // Find exact match first.
-      const exact = blocks.find(
-        (el) => parseInt(el.dataset.sourceLine ?? '0', 10) === targetLine,
-      );
-      if (exact) return exact;
-
-      // Nearest fallback (same logic as syncScrollToLine).
-      let best: HTMLElement | null = null;
-      let bestDist = Infinity;
-      for (const el of blocks) {
-        const dist = Math.abs(parseInt(el.dataset.sourceLine ?? '0', 10) - targetLine);
-        if (dist < bestDist) {
-          bestDist = dist;
-          best = el;
-        }
-      }
-      return best;
-    }
-
-    if (ann.status === 'block_level') {
-      // D7: resolve by text-search of quoted_text across rendered blocks.
-      if (!ann.quoted_text) return null;
-      const blocks = Array.from(
-        previewEl.querySelectorAll<HTMLElement>('[data-block-id]'),
-      );
-      for (const el of blocks) {
-        if ((el.textContent ?? '').includes(ann.quoted_text)) {
-          return el;
-        }
-      }
-      return null;
-    }
-
-    return null;
+    return resolveBlock(ann, previewEl);
   }
 
-  // ── Active block id for tint (D6) ────────────────────────────────────────
+  // ── Active block tint (D6) ──────────────────────────────────────────────
+  //
+  // Instead of injecting a string-interpolated {@html <style>} (which would
+  // bypass Svelte escaping and become an XSS/CSS-injection vector if
+  // data-block-id ever carries document content), we apply the tint as an
+  // inline CSS custom property directly on the resolved block element.
+  // Svelte handles the reactive remove/re-apply; no user-controlled string
+  // ever touches a <style> rule.
 
-  $: activeBlockId = (() => {
+  let prevTintEl: HTMLElement | null = null;
+
+  $: {
+    // Remove tint from the previous block.
+    if (prevTintEl) {
+      prevTintEl.style.removeProperty('--block-tint');
+      prevTintEl.style.removeProperty('border-radius');
+      prevTintEl = null;
+    }
+
     const activeId = $annotationFocus.activeId;
-    if (!activeId) return null;
-    const entry = seals.find((s) => s.annotation.id === activeId);
-    return entry ? (entry.blockEl as HTMLElement).dataset.blockId ?? null : null;
-  })();
+    if (activeId) {
+      const entry = seals.find((s) => s.annotation.id === activeId);
+      if (entry) {
+        const el = entry.blockEl as HTMLElement;
+        el.style.setProperty('--block-tint', 'color-mix(in srgb, var(--seal-ink, #4A453B) 8%, transparent)');
+        el.style.setProperty('background', 'var(--block-tint)');
+        el.style.setProperty('border-radius', '4px');
+        prevTintEl = el;
+      }
+    }
+  }
 
   // ── Seal click/hover handlers ────────────────────────────────────────────
 
@@ -196,24 +177,20 @@
   }
 
   onDestroy(() => {
+    // Clean up any lingering tint on unmount.
+    if (prevTintEl) {
+      prevTintEl.style.removeProperty('--block-tint');
+      prevTintEl.style.removeProperty('background');
+      prevTintEl.style.removeProperty('border-radius');
+      prevTintEl = null;
+    }
     seals = [];
   });
 </script>
 
-<!-- Dynamic style for block-level full-block tint (D6).
-     We inject a single rule targeting [data-block-id] — never add a class to
-     sanitized content. The attribute is already present in DOMPurify-safe output. -->
-{#if activeBlockId}
-  <style>
-    :global([data-block-id]) {
-      /* reset any prior tint */
-    }
-  </style>
-  <!-- svelte-ignore css-unused-selector -->
-  {@html `<style>.preview-content [data-block-id="${activeBlockId}"] { background: color-mix(in srgb, var(--seal-ink, #4A453B) 8%, transparent); border-radius: 4px; }</style>`}
-{/if}
-
 <!-- Seal markers — absolutely positioned relative to .pv-scroll -->
+<!-- Block tint (D6) is applied via direct inline style on the resolved block
+     element in the $: reactive block above — no {@html <style>} injection needed. -->
 <div class="seals-layer" aria-hidden="true">
   {#each seals as entry (entry.annotation.id)}
     {@const isActive = $annotationFocus.activeId === entry.annotation.id}

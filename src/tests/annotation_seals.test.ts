@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { Annotation } from '../lib/types/ipc';
+import { resolveBlock } from '../lib/annotationResolve';
 
 // ── DOM fixture helpers ──────────────────────────────────────────────────────
 
@@ -32,52 +33,6 @@ function makePreviewDom(paragraphs: Array<{ line: number; id: string; text: stri
     div.appendChild(el);
   }
   return div;
-}
-
-// ── Extraction: the resolution logic extracted for unit testing ───────────────
-
-/**
- * Resolve the target DOM block for an annotation.
- * Mirrors the resolution logic in AnnotationSeals.svelte without the Svelte overhead.
- */
-function resolveBlock(ann: Annotation, previewEl: HTMLElement): Element | null {
-  if (ann.status === 'anchored') {
-    const targetLine = ann.line_start + 1; // D8: 0-based → 1-based
-    const blocks = Array.from(
-      previewEl.querySelectorAll<HTMLElement>('[data-source-line]'),
-    );
-    // Exact match first.
-    const exact = blocks.find(
-      (el) => parseInt(el.dataset.sourceLine ?? '0', 10) === targetLine,
-    );
-    if (exact) return exact;
-    // Nearest fallback.
-    let best: HTMLElement | null = null;
-    let bestDist = Infinity;
-    for (const el of blocks) {
-      const dist = Math.abs(parseInt(el.dataset.sourceLine ?? '0', 10) - targetLine);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = el;
-      }
-    }
-    return best;
-  }
-
-  if (ann.status === 'block_level') {
-    if (!ann.quoted_text) return null;
-    const blocks = Array.from(
-      previewEl.querySelectorAll<HTMLElement>('[data-block-id]'),
-    );
-    for (const el of blocks) {
-      if ((el.textContent ?? '').includes(ann.quoted_text)) {
-        return el;
-      }
-    }
-    return null;
-  }
-
-  return null; // detached → no seal
 }
 
 /**

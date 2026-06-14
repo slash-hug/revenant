@@ -197,7 +197,9 @@
     },
   });
 
-  /** Extension: wash decoration set derived from the annotationCmField. */
+  /** Extension: wash decoration set derived from the annotationCmField.
+   *  Background mark decorations naturally render beneath CM6's native selection,
+   *  so no Prec.lowest wrapping is required (Prec is not imported here). */
   const annotationWashExt: Extension = EditorView.decorations.of(
     (view) => {
       const { annotations, activeId } = view.state.field(annotationCmField);
@@ -369,13 +371,20 @@
 
     // Subscribe to the focus store: push the active id into CM6 state, and
     // scroll the active line into view whenever scrollNonce changes.
+    // Gate the dispatch on activeId actually changing to avoid a CM6 transaction
+    // on every hoverId update (hovering preview seals would otherwise fire one
+    // per hover — harmless but wasteful).
+    let lastActiveId: string | null = null;
     let lastScrollNonce = -1;
     unsubFocus = annotationFocus.subscribe((s) => {
       if (!view) return;
-      // Always sync the active id.
-      view.dispatch({
-        effects: [setActiveAnnotationEffect.of(s.activeId)],
-      });
+      // Only dispatch an effect when activeId changes (not on pure hoverId updates).
+      if (s.activeId !== lastActiveId) {
+        lastActiveId = s.activeId;
+        view.dispatch({
+          effects: [setActiveAnnotationEffect.of(s.activeId)],
+        });
+      }
       // Scroll to the active annotation's line when scrollNonce bumps.
       if (s.scrollNonce !== lastScrollNonce && s.activeId !== null) {
         lastScrollNonce = s.scrollNonce;

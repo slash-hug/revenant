@@ -21,11 +21,20 @@
 
   // Inline two-step delete confirm (no native confirm() dialog).
   let pendingDeleteId: string | null = null;
-  function requestDelete(id: string) { pendingDeleteId = id; }
-  function cancelDelete() { pendingDeleteId = null; }
-  function confirmDelete(id: string) {
+  function requestDelete(e: MouseEvent, id: string) { e.stopPropagation(); pendingDeleteId = id; }
+  function cancelDelete(e: MouseEvent) { e.stopPropagation(); pendingDeleteId = null; }
+  function confirmDelete(e: MouseEvent, id: string) {
+    e.stopPropagation();
     pendingDeleteId = null;
     annotationsStore.deleteAnnotation(id);
+  }
+
+  /** Allow keyboard activation of the card body (Enter / Space). */
+  function handleCardKeydown(e: KeyboardEvent, id: string) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      focusAnnotation(id);
+    }
   }
 
   function anchorLabel(ann: Annotation): string {
@@ -68,13 +77,22 @@
         {:else}
           <ul class="cmt-list" role="list">
             {#each activeAnnotations as ann (ann.id)}
-              <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
+              <!-- Card as a focusable listitem — tabindex + keydown give keyboard
+                   users the same navigate-to-annotation affordance as mouse users.
+                   Delete buttons inside call stopPropagation so neither the card
+                   click nor the focus popover are triggered by delete actions.
+                   The svelte-ignore suppresses the a11y lint for intentional
+                   keyboard-accessible non-interactive element pattern. -->
+              <!-- svelte-ignore a11y-no-noninteractive-tabindex a11y-no-noninteractive-element-interactions -->
               <li
                 class="cmt"
                 class:block={ann.status === 'block_level'}
                 class:cmt-active={$annotationFocus.activeId === ann.id}
-                on:click={() => focusAnnotation(ann.id)}
                 role="listitem"
+                tabindex="0"
+                on:click={() => focusAnnotation(ann.id)}
+                on:keydown={(e) => handleCardKeydown(e, ann.id)}
+                aria-label="Annotation at {anchorLabel(ann)}: {ann.body.slice(0, 80)}"
               >
                 <div class="cmt-top">
                   <span class="chip">{anchorLabel(ann)}</span>
@@ -86,11 +104,11 @@
                   <span class="spacer"></span>
                   {#if pendingDeleteId === ann.id}
                     <span class="del-confirm">
-                      <button class="del-cancel" type="button" on:click={cancelDelete}>Cancel</button>
-                      <button class="del-yes" type="button" on:click={() => confirmDelete(ann.id)}>Delete</button>
+                      <button class="del-cancel" type="button" on:click={(e) => cancelDelete(e)}>Cancel</button>
+                      <button class="del-yes" type="button" on:click={(e) => confirmDelete(e, ann.id)}>Delete</button>
                     </span>
                   {:else}
-                    <button class="cmt-del" type="button" on:click={() => requestDelete(ann.id)} aria-label="Delete comment" title="Delete">
+                    <button class="cmt-del" type="button" on:click={(e) => requestDelete(e, ann.id)} aria-label="Delete comment" title="Delete">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12" />
                       </svg>
@@ -233,9 +251,15 @@
     display: flex;
     flex-direction: column;
     gap: 9px;
+    cursor: pointer;
     transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
   }
   .cmt:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+  /* Keyboard focus ring for the card (tabindex="0" on the <li>). */
+  .cmt:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
 
   /* Active card treatment (T3.2): left-border accent + soft tint.
      Uses --seal-ink so it is visually linked to the gutter seal and the preview

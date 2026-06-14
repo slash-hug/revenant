@@ -41,6 +41,7 @@
     clearHighlights,
   } from './annotationHighlight';
   import { annotationsStore } from './stores/annotations';
+  import { resolveBlock } from './annotationResolve';
 
   export let content: string = '';
   export let scrollLine: number = 1;
@@ -248,25 +249,14 @@
   }
 
   /**
-   * Find the block element for an annotation (mirrors resolveBlock in AnnotationSeals).
-   * Used for highlight range building.
+   * Find the block element for an annotation.
+   * Delegates to the shared resolveBlock helper (annotationResolve.ts) so this
+   * always uses the same algorithm as AnnotationSeals — seal and highlight can
+   * never disagree about which block an annotation resolves to.
    */
   function findBlockForAnnotation(ann: { status: string; line_start: number; quoted_text: string }): Element | null {
     if (!previewEl) return null;
-
-    if (ann.status === 'anchored') {
-      const targetLine = ann.line_start + 1;
-      const blocks = Array.from(previewEl.querySelectorAll<HTMLElement>('[data-source-line]'));
-      return blocks.find((el) => parseInt(el.dataset.sourceLine ?? '0', 10) === targetLine) ?? null;
-    }
-
-    if (ann.status === 'block_level') {
-      if (!ann.quoted_text) return null;
-      const blocks = Array.from(previewEl.querySelectorAll<HTMLElement>('[data-block-id]'));
-      return blocks.find((el) => (el.textContent ?? '').includes(ann.quoted_text)) ?? null;
-    }
-
-    return null;
+    return resolveBlock(ann as Parameters<typeof resolveBlock>[0], previewEl);
   }
 
   /**
