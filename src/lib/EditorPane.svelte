@@ -303,6 +303,10 @@
   export let tabId: string;
   /** The document content (set externally on tab switch). */
   export let content: string = '';
+  // Mirror of the content currently in the editor's doc, so the external-change
+  // sync below can compare against a tracked string instead of materializing the
+  // whole CodeMirror rope via doc.toString() on every reactive run (perf #1b).
+  let lastSyncedContent = content;
   /** The path for save — displayed in tooltips. */
   export let filePath: string = '';
 
@@ -521,8 +525,13 @@
     view?.destroy();
   });
 
-  // Sync content prop → editor when it changes externally (tab switch).
-  $: if (view && content !== view.state.doc.toString()) {
+  // Sync the content prop → editor when it changes EXTERNALLY (file reload, tab
+  // content set). The editor's own edits update `content` via the debounced
+  // scheduleChange (which also advances lastSyncedContent), so those match and
+  // don't trigger a replace. Comparing against lastSyncedContent avoids
+  // re-stringifying the whole doc on every reactive run (perf #1b).
+  $: if (view && content !== lastSyncedContent) {
+    lastSyncedContent = content;
     view.dispatch({
       changes: {
         from: 0,
@@ -540,6 +549,9 @@
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       const newContent = view?.state.doc.toString() ?? '';
+      // This is our own edit — record it so the resulting content-prop update
+      // is recognised as already-synced and doesn't trigger a doc replace (#1b).
+      lastSyncedContent = newContent;
       tabsStore.updateContent(tabId, newContent);
       dispatch('change', { content: newContent });
     }, DEBOUNCE_MS);
