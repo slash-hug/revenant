@@ -175,20 +175,16 @@
 
   function handleSealClick(e: MouseEvent, ann: Annotation) {
     e.stopPropagation();
-    focusAnnotation(ann.id);
-    // Emit anchor rect for the popover (carried as a CustomEvent if needed by App.svelte).
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    // Dispatch a custom event that App.svelte can listen to for popover positioning.
-    const target = e.currentTarget as HTMLElement;
-    target.dispatchEvent(
-      new CustomEvent('sealboundary', {
-        bubbles: true,
-        detail: {
-          annotationId: ann.id,
-          rect: { x: rect.right, y: rect.top, width: rect.width, height: rect.height },
-        },
-      }),
-    );
+    // Pass the seal element's viewport rect to the focus store so AnnotationPopover
+    // can use it for coordinate-driven placement (D4 — portal-mounted at App root).
+    const domRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    focusAnnotation(ann.id, {
+      x: domRect.right,
+      y: domRect.top,
+      width: domRect.width,
+      height: domRect.height,
+      bottom: domRect.bottom,
+    });
   }
 
   function handleSealMouseEnter(ann: Annotation) {

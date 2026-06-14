@@ -27,7 +27,7 @@ describe('annotationFocus store', () => {
     // Reset to initial state before each test.
     clearFocus();
     // Also reset scrollNonce explicitly via a fresh write.
-    annotationFocus.set({ activeId: null, hoverId: null, scrollNonce: 0 });
+    annotationFocus.set({ activeId: null, hoverId: null, scrollNonce: 0, anchorRect: null });
   });
 
   // ── focusAnnotation ─────────────────────────────────────────────────────────

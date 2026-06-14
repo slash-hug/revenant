@@ -187,12 +187,11 @@
             a.line_start + 1 === lineNum,
         );
         if (!ann) return false;
-        focusAnnotation(ann.id);
         // Emit anchor rect for the shared popover (D4): use the clicked element's
         // bounding rect as the popover anchor coordinate.
         const el = event.target as HTMLElement;
-        const rect = el.getBoundingClientRect();
-        popoverAnchorRect = rect;
+        const { x, y, width, height, bottom } = el.getBoundingClientRect();
+        focusAnnotation(ann.id, { x, y, width, height, bottom });
         return true;
       },
     },
@@ -283,9 +282,6 @@
   // -------------------------------------------------------------------------
   // Annotation seal / popover anchor state
   // -------------------------------------------------------------------------
-  /** The viewport rect of the last gutter seal that was clicked (for popover placement). */
-  let popoverAnchorRect: DOMRect | null = null;
-
   /** Store unsubscribe handles — cleaned up in onDestroy. */
   let unsubAnnotations: (() => void) | null = null;
   let unsubFocus: (() => void) | null = null;
