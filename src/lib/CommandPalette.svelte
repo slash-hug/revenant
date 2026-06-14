@@ -27,6 +27,9 @@
   $: showSections = query.trim().length === 0;
   // Keep the selection in range as the result set shrinks.
   $: if (selected > results.length - 1) selected = Math.max(0, results.length - 1);
+  // The combobox's virtual focus — points the input at the active option so
+  // screen readers announce "<label>, N of M" without moving DOM focus.
+  $: activeOptionId = results[selected] ? `cmdk-opt-${results[selected].command.id}` : undefined;
 
   // Drive the native dialog from the `open` prop.
   $: if (dialogEl) syncDialog(open);
@@ -75,7 +78,9 @@
       case 'Home': e.preventDefault(); selected = 0; scrollSelectedIntoView(); break;
       case 'End': e.preventDefault(); selected = results.length - 1; scrollSelectedIntoView(); break;
       case 'Enter': e.preventDefault(); runAt(selected); break;
-      // Esc is handled natively by <dialog> (fires `cancel` → `close`).
+      // Handle Esc explicitly: the native <dialog> `cancel` event doesn't fire
+      // reliably across WebViews, so close it ourselves.
+      case 'Escape': e.preventDefault(); close(); break;
     }
   }
 
@@ -126,13 +131,18 @@
         placeholder="Type a command…"
         spellcheck="false"
         autocomplete="off"
+        role="combobox"
         aria-label="Search commands"
+        aria-controls="cmdk-listbox"
+        aria-expanded={results.length > 0}
+        aria-activedescendant={activeOptionId}
+        aria-autocomplete="list"
         on:keydown={handleKeydown}
       />
       <kbd class="cmdk-esc">esc</kbd>
     </div>
 
-    <div class="cmdk-list" bind:this={listEl} role="listbox" aria-label="Commands">
+    <div id="cmdk-listbox" class="cmdk-list" bind:this={listEl} role="listbox" aria-label="Commands">
       {#if results.length === 0}
         <p class="cmdk-empty">No matching commands</p>
       {:else}
@@ -140,11 +150,16 @@
           {#if showSections && r.command.section !== results[i - 1]?.command.section}
             <div class="cmdk-section">{r.command.section}</div>
           {/if}
-          <button
-            type="button"
+          <!-- APG combobox/listbox: options are not DOM-focusable; the input keeps
+               focus and drives selection via aria-activedescendant. Click is a mouse
+               convenience, so the keyboard-handler lint warnings don't apply here. -->
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
+          <div
+            id="cmdk-opt-{r.command.id}"
             class="row"
             class:active={i === selected}
             role="option"
+            tabindex="-1"
             aria-selected={i === selected}
             on:mousemove={() => (selected = i)}
             on:click={() => runAt(i)}
@@ -155,7 +170,7 @@
               {/each}
             </span>
             {#if r.command.hint}<kbd class="row-hint">{r.command.hint}</kbd>{/if}
-          </button>
+          </div>
         {/each}
       {/if}
     </div>
