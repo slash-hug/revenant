@@ -51,6 +51,11 @@
     return (err as IpcError)?.message ?? String(err);
   }
 
+  /** Abbreviate a home-dir prefix to ~ for the status bar (mac/linux/windows). */
+  function homeAbbrev(path: string): string {
+    return path.replace(/^([A-Za-z]:)?[\\/](Users|home)[\\/][^\\/]+/, '~');
+  }
+
   // -------------------------------------------------------------------------
   // Recent files (localStorage-backed)
   // -------------------------------------------------------------------------
@@ -358,6 +363,17 @@
           <AnnotationDrawer open={drawerOpen} />
         </div>
       </div>
+
+      {#if $activeTab}
+        <div class="ws-status" role="status" aria-label="Document status">
+          <span class="st-path" title={$activeTab.path}>{homeAbbrev($activeTab.path)}</span>
+          <span>{$activeTab.content.split('\n').length} lines</span>
+          <span>{$annotationsStore.annotations.length} comments</span>
+          <span class="spacer"></span>
+          <span>Markdown</span>
+          <span>UTF-8</span>
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -499,6 +515,28 @@
 
   .drawer-wrap { border-left: 1px solid var(--border); display: flex; min-height: 0; }
   .drawer-wrap.hidden { display: none; }
+
+  /* status bar */
+  .ws-status {
+    height: 26px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 14px;
+    background: var(--toolbar);
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+  .ws-status .spacer { flex: 1; }
+  .ws-status .st-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 50%;
+  }
 
   /* ============ Toast ============ */
   .toast-stack {
