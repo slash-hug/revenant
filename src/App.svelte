@@ -30,9 +30,9 @@
 
   import { tabsStore, activeTab, tabList } from './lib/stores/tabs';
   import { annotationsStore } from './lib/stores/annotations';
-  import { annotationFocus, clearFocus } from './lib/stores/annotationFocus';
+  import { annotationFocus, clearFocus, focusAnnotation } from './lib/stores/annotationFocus';
   import Toast from './lib/Toast.svelte';
-  import { deleteAnnotationWithUndo } from './lib/annotationActions';
+  import { deleteAnnotationWithUndo, cycleAnnotationId } from './lib/annotationActions';
   import { openFile, getSettings, exportObsidian } from './lib/types/ipc';
   import type { AnchorV1, Sidecar, IpcError } from './lib/types/ipc';
   import { generateReview } from './lib/ReviewExporter';
@@ -344,9 +344,24 @@
     };
   });
 
+  function cycleAnnotation(dir: 1 | -1) {
+    const id = cycleAnnotationId($annotationsStore.annotations, $annotationFocus.activeId, dir);
+    if (id) {
+      drawerOpen = true; // surface the panel so the cycle is visible
+      focusAnnotation(id);
+    }
+  }
+
   function handleGlobalKeydown(e: KeyboardEvent) {
-    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+    if (!(e.metaKey || e.ctrlKey)) return;
     if ($tabList.length === 0) return;
+    // ⌘⌥ combos — keyboard navigation of annotations (#16). ⌘⌥M (add comment on
+    // selection, #10) is handled in the focused pane, not here.
+    if (e.altKey) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); cycleAnnotation(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); cycleAnnotation(-1); }
+      return;
+    }
     if (e.shiftKey) {
       if (e.code === 'KeyR') { e.preventDefault(); void handleGenerateReview(); }
       return;

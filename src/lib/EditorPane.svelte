@@ -62,17 +62,20 @@
   class SealMarker extends GutterMarker {
     annotationId: string;
     isActive: boolean;
+    lineNumber: number;
 
-    constructor(annotationId: string, isActive: boolean) {
+    constructor(annotationId: string, isActive: boolean, lineNumber: number) {
       super();
       this.annotationId = annotationId;
       this.isActive = isActive;
+      this.lineNumber = lineNumber;
     }
 
     override toDOM() {
       const el = document.createElement('span');
       el.className = 'cm-seal-marker' + (this.isActive ? ' cm-seal-active' : '');
-      el.setAttribute('aria-label', 'Annotation');
+      el.setAttribute('role', 'button');
+      el.setAttribute('aria-label', `Annotation on line ${this.lineNumber}`);
       // D-RISK-2: do NOT add tabindex in this round — defer to follow-up issue.
       // Droplet-in-a-ring seal matching the preview gutter (AnnotationSeals.svelte).
       el.innerHTML =
@@ -92,7 +95,8 @@
       return (
         other instanceof SealMarker &&
         other.annotationId === this.annotationId &&
-        other.isActive === this.isActive
+        other.isActive === this.isActive &&
+        other.lineNumber === this.lineNumber
       );
     }
   }
@@ -171,7 +175,7 @@
     // RangeSetBuilder requires ascending positions.
     for (const pos of [...byLine.keys()].sort((a, b) => a - b)) {
       const { ann, active: isActive } = byLine.get(pos)!;
-      builder.add(pos, pos, new SealMarker(ann.id, isActive));
+      builder.add(pos, pos, new SealMarker(ann.id, isActive, doc.lineAt(pos).number));
     }
     return builder.finish();
   }
@@ -344,6 +348,9 @@
   // -------------------------------------------------------------------------
   // "Add comment" floating affordance state
   // -------------------------------------------------------------------------
+  const _isMac = typeof navigator !== 'undefined'
+    && (/Mac/i.test(navigator.platform || '') || /Mac OS X/i.test(navigator.userAgent || ''));
+  const addCommentShortcut = _isMac ? '⌘⌥M' : 'Ctrl+Alt+M';
   let showAddComment = false;
   let addCommentX = 0;
   let addCommentY = 0;
@@ -385,6 +392,18 @@
             key: 'Mod-s',
             run: () => {
               void handleSave();
+              return true;
+            },
+          },
+          {
+            // ⌘⌥M → add a comment on the current selection (keyboard path for the
+            // "+ Add comment" affordance; #10). No-op when the selection is empty.
+            key: 'Mod-Alt-m',
+            preventDefault: true,
+            run: (view) => {
+              if (view.state.selection.main.empty) return false;
+              handleSelectionChange(view); // rebuild the anchor from the live selection
+              handleAddCommentClick();     // dispatch addAnnotation → opens the composer
               return true;
             },
           },
@@ -664,6 +683,20 @@
       showAddComment = false;
     }
   }
+
+  // Dismiss the affordance on any mousedown that isn't on the affordance itself —
+  // covers clicking into the preview pane or elsewhere (the editor keeps its
+  // greyed selection on blur, so handleSelectionChange wouldn't fire). The
+  // affordance button is whitelisted so its own click still registers.
+  function handleAffordanceDismiss(e: MouseEvent) {
+    if (!showAddComment) return;
+    if ((e.target as Element | null)?.closest?.('.add-comment-affordance')) return;
+    showAddComment = false;
+  }
+  onMount(() => {
+    window.addEventListener('mousedown', handleAffordanceDismiss);
+    return () => window.removeEventListener('mousedown', handleAffordanceDismiss);
+  });
 </script>
 
 <div class="editor-pane" bind:this={editorEl} role="textbox" aria-label="Markdown editor" aria-multiline="true">
@@ -678,6 +711,7 @@
   >
     <button class="add-comment-btn" on:click={handleAddCommentClick}>
       + Add comment
+      <span class="add-comment-kbd" aria-hidden="true">{addCommentShortcut}</span>
     </button>
   </div>
 {/if}
@@ -715,6 +749,16 @@
     cursor: pointer;
     box-shadow: var(--shadow-pop);
     white-space: nowrap;
+  }
+  .add-comment-kbd {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: var(--fw-semibold);
+    color: var(--text-on-accent);
+    background: color-mix(in srgb, #000 18%, transparent);
+    border-radius: var(--r-xs);
+    padding: 1px 5px;
+    letter-spacing: .02em;
   }
   /* up-pointing arrow toward the selection */
   .add-comment-btn::before {

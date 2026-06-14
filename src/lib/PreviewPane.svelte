@@ -54,6 +54,11 @@
     addAnnotation: { anchor: AnchorV1; x: number; y: number; quoted: string };
   }>();
 
+  // Shortcut hint shown on the "+ Add comment" affordance (#10 discoverability).
+  const _isMac = typeof navigator !== 'undefined'
+    && (/Mac/i.test(navigator.platform || '') || /Mac OS X/i.test(navigator.userAgent || ''));
+  const addCommentShortcut = _isMac ? '⌘⌥M' : 'Ctrl+Alt+M';
+
   // "+ Add comment" affordance shown at the selection (mirrors EditorPane).
   let showAddComment = false;
   let pendingAnchor: AnchorV1 | null = null;
@@ -525,6 +530,37 @@
     dispatch('addAnnotation', { anchor: pendingAnchor, x: btnX, y: btnY, quoted: pendingQuoted });
     showAddComment = false;
   }
+
+  // ⌘⌥M → add a comment on the current preview selection (#10). Guarded to only
+  // act when the selection is inside THIS preview, so it doesn't fire for an
+  // editor selection (the editor has its own ⌘⌥M keymap). Uses e.code so the
+  // macOS Option-character remap (⌥M → µ) doesn't break the match.
+  function handleAddCommentKeydown(e: KeyboardEvent) {
+    if (!((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'KeyM')) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !previewEl) return;
+    if (!previewEl.contains(sel.getRangeAt(0).commonAncestorContainer)) return;
+    e.preventDefault();
+    handlePreviewMouseUp(); // builds pendingAnchor from the current selection
+    handleAddCommentClick();
+  }
+  // Dismiss the affordance on any mousedown that isn't on the affordance itself —
+  // covers clicking into the editor pane or anywhere else (the per-pane selection
+  // handlers don't fire for the other pane). Clicking the affordance button is
+  // whitelisted so its own click still registers.
+  function handleAffordanceDismiss(e: MouseEvent) {
+    if (!showAddComment) return;
+    if ((e.target as Element | null)?.closest?.('.add-comment-affordance')) return;
+    showAddComment = false;
+  }
+  onMount(() => {
+    window.addEventListener('keydown', handleAddCommentKeydown);
+    window.addEventListener('mousedown', handleAffordanceDismiss);
+    return () => {
+      window.removeEventListener('keydown', handleAddCommentKeydown);
+      window.removeEventListener('mousedown', handleAffordanceDismiss);
+    };
+  });
 </script>
 
 <div class="preview-pane">
@@ -580,6 +616,7 @@
     <div class="add-comment-affordance" style="left: {btnX}px; top: {btnY + 6}px;" role="tooltip">
       <button class="add-comment-btn" type="button" on:click={handleAddCommentClick}>
         + Add comment
+        <span class="add-comment-kbd" aria-hidden="true">{addCommentShortcut}</span>
       </button>
     </div>
   {/if}
@@ -617,6 +654,16 @@
     cursor: pointer;
     box-shadow: var(--shadow-pop);
     white-space: nowrap;
+  }
+  .add-comment-kbd {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: var(--fw-semibold);
+    color: var(--text-on-accent);
+    background: color-mix(in srgb, #000 18%, transparent);
+    border-radius: var(--r-xs);
+    padding: 1px 5px;
+    letter-spacing: .02em;
   }
   .add-comment-btn::before {
     content: '';
