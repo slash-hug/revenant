@@ -25,4 +25,35 @@ export default defineConfig(async () => ({
       $lib: "/src/lib",
     },
   },
+
+  // 5. Bundle splitting for legible chunk report (T3.3 — WS-A-owned, additive).
+  //
+  //    manualChunks groups highlight.js core + its language files into a single
+  //    named "hljs" chunk, and mermaid into a named "mermaid" chunk, so the
+  //    chunk report clearly shows the size of each lazy-loaded renderer.
+  //
+  //    NOTE: mermaid's per-diagram lazy chunks (flowDiagram-*, classDiagram-*,
+  //    etc.) are produced by mermaid's own internal dynamic import() calls and
+  //    are NOT further re-grouped here — they already have readable names from
+  //    the mermaid source. Only the mermaid.core entry itself is named.
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          // highlight.js/lib/core + all language files → single "hljs" chunk.
+          if (id.includes("highlight.js")) {
+            return "hljs";
+          }
+          // mermaid entry chunk → named "mermaid" chunk (diagram sub-chunks
+          // remain split by mermaid's own dynamic imports).
+          if (
+            id.includes("node_modules/mermaid/") &&
+            !id.includes("/chunks/mermaid")
+          ) {
+            return "mermaid";
+          }
+        },
+      },
+    },
+  },
 }));
