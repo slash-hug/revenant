@@ -5,6 +5,7 @@
    *  - C10 General Notes textarea persisted as general_notes in the sidecar.
    */
   import { annotationsStore } from './stores/annotations';
+  import { annotationFocus, focusAnnotation } from './stores/annotationFocus';
   import type { Annotation } from './types/ipc';
 
   export let open: boolean = true;
@@ -67,7 +68,14 @@
         {:else}
           <ul class="cmt-list" role="list">
             {#each activeAnnotations as ann (ann.id)}
-              <li class="cmt" class:block={ann.status === 'block_level'}>
+              <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
+              <li
+                class="cmt"
+                class:block={ann.status === 'block_level'}
+                class:cmt-active={$annotationFocus.activeId === ann.id}
+                on:click={() => focusAnnotation(ann.id)}
+                role="listitem"
+              >
                 <div class="cmt-top">
                   <span class="chip">{anchorLabel(ann)}</span>
                   {#if ann.status === 'block_level'}
@@ -228,6 +236,18 @@
     transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
   }
   .cmt:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+
+  /* Active card treatment (T3.2): left-border accent + soft tint.
+     Uses --seal-ink so it is visually linked to the gutter seal and the preview
+     wash. Distinct from :hover (hover only changes border/shadow; active adds
+     the ink border + tint). */
+  .cmt.cmt-active {
+    border-left: 2.5px solid var(--seal-ink, #4A453B);
+    background: color-mix(in srgb, var(--seal-ink, #4A453B) 6%, var(--surface));
+  }
+  .cmt.cmt-active:hover {
+    border-left: 2.5px solid var(--seal-ink, #4A453B);
+  }
 
   .cmt-top { display: flex; align-items: center; gap: var(--sp-2); }
   .spacer { flex: 1; }

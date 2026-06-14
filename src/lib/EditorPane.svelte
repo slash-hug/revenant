@@ -13,8 +13,11 @@
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
   import {
     EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter,
+    gutter, GutterMarker, Decoration,
   } from '@codemirror/view';
-  import { EditorState } from '@codemirror/state';
+  import { EditorState, StateField, StateEffect, RangeSetBuilder } from '@codemirror/state';
+  import type { DecorationSet } from '@codemirror/view';
+  import type { Extension } from '@codemirror/state';
   import { defaultKeymap, historyKeymap, history, indentWithTab } from '@codemirror/commands';
   import { markdown } from '@codemirror/lang-markdown';
   import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
@@ -22,7 +25,186 @@
   import { tabsStore } from './stores/tabs';
   import { flushPendingDebounce } from './editor-flush';
   import { saveFile } from './types/ipc';
-  import type { SourceAnchor, AnchorV1, IpcError } from './types/ipc';
+  import type { SourceAnchor, AnchorV1, IpcError, Annotation } from './types/ipc';
+  import { annotationsStore } from './stores/annotations';
+  import { annotationFocus, focusAnnotation } from './stores/annotationFocus';
+
+  // -------------------------------------------------------------------------
+  // Annotation focus / gutter-seal CM6 integration (T3.1 / D12)
+  //
+  // Architecture:
+  //  - Two StateEffects carry the annotation set and the active annotation id
+  //    from the Svelte store world into the CM6 update cycle.
+  //  - A single StateField holds the combined state (annotations + activeId)
+  //    and derives BOTH the gutter marker RangeSet AND the wash DecorationSet.
+  //  - The StateField is in the INITIAL EditorState.create extensions array so
+  //    it is always present and reconfigure-free (D12).
+  //  - Svelte store subscriptions dispatch effects on change.
+  //  - The wash Decoration.mark uses Prec.lowest so CM6's native selection
+  //    always renders above it (selection remains readable).
+  // -------------------------------------------------------------------------
+
+  /** Replace the current annotation list inside the CM6 state. */
+  const setAnnotationsEffect = StateEffect.define<Annotation[]>();
+
+  /** Replace the active annotation id inside the CM6 state. */
+  const setActiveAnnotationEffect = StateEffect.define<string | null>();
+
+  // ---------------------------------------------------------------------------
+  // Seal GutterMarker
+  // ---------------------------------------------------------------------------
+
+  /** A droplet-shaped annotation seal rendered in the editor gutter. */
+  class SealMarker extends GutterMarker {
+    annotationId: string;
+    isActive: boolean;
+
+    constructor(annotationId: string, isActive: boolean) {
+      super();
+      this.annotationId = annotationId;
+      this.isActive = isActive;
+    }
+
+    override toDOM() {
+      const el = document.createElement('span');
+      el.className = 'cm-seal-marker' + (this.isActive ? ' cm-seal-active' : '');
+      el.setAttribute('aria-label', 'Annotation');
+      // D-RISK-2: do NOT add tabindex in this round — defer to follow-up issue.
+      el.textContent = '◆';
+      return el;
+    }
+
+    override eq(other: GutterMarker): boolean {
+      return (
+        other instanceof SealMarker &&
+        other.annotationId === this.annotationId &&
+        other.isActive === this.isActive
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Combined state for gutter markers + wash decorations
+  // ---------------------------------------------------------------------------
+
+  interface AnnotationCmState {
+    annotations: Annotation[];
+    activeId: string | null;
+  }
+
+  /**
+   * Build a RangeSet<SealMarker> from the annotation list.
+   * Each anchored/block_level annotation gets a seal on its `line_start` line.
+   * Lines are 0-indexed in Annotation; CM6 doc.line() is 1-indexed.
+   */
+  function buildGutterMarkers(
+    doc: EditorState['doc'],
+    annotations: Annotation[],
+    activeId: string | null,
+  ): ReturnType<RangeSetBuilder<SealMarker>['finish']> {
+    const builder = new RangeSetBuilder<SealMarker>();
+    // Only anchored and block_level annotations get seals; detached do not.
+    const active = annotations.filter(
+      (a) => a.status === 'anchored' || a.status === 'block_level',
+    );
+    // Sort ascending by line so the RangeSetBuilder receives ranges in order.
+    const sorted = [...active].sort((a, b) => a.line_start - b.line_start);
+    for (const ann of sorted) {
+      // line_start is 0-indexed; CM6 doc.line() expects 1-indexed.
+      const lineNum = ann.line_start + 1;
+      if (lineNum < 1 || lineNum > doc.lines) continue;
+      const line = doc.line(lineNum);
+      builder.add(line.from, line.from, new SealMarker(ann.id, ann.id === activeId));
+    }
+    return builder.finish();
+  }
+
+  /**
+   * Build a DecorationSet washing the active annotation's line/char range.
+   * Sits at Prec.lowest so CM6's native selection renders above it.
+   */
+  function buildWashDecorations(
+    doc: EditorState['doc'],
+    annotations: Annotation[],
+    activeId: string | null,
+  ): DecorationSet {
+    if (!activeId) return Decoration.none;
+    const ann = annotations.find((a) => a.id === activeId);
+    if (!ann || (ann.status !== 'anchored' && ann.status !== 'block_level')) {
+      return Decoration.none;
+    }
+    const builder = new RangeSetBuilder<Decoration>();
+    try {
+      const startLineNum = ann.line_start + 1;
+      const endLineNum = ann.line_end + 1;
+      if (startLineNum < 1 || startLineNum > doc.lines) return Decoration.none;
+      if (endLineNum < 1 || endLineNum > doc.lines) return Decoration.none;
+      const startLine = doc.line(startLineNum);
+      const endLine = doc.line(endLineNum);
+      const from = startLine.from + Math.min(ann.char_start, startLine.length);
+      const to = endLine.from + Math.min(ann.char_end, endLine.length);
+      if (from >= to) return Decoration.none;
+      builder.add(from, to, Decoration.mark({ class: 'cm-annotation-wash' }));
+    } catch {
+      return Decoration.none;
+    }
+    return builder.finish();
+  }
+
+  /**
+   * The CM6 StateField holding annotation focus state.
+   * Present in the initial EditorState.create extensions array (D12).
+   */
+  const annotationCmField = StateField.define<AnnotationCmState>({
+    create() {
+      return { annotations: [], activeId: null };
+    },
+    update(state, tr) {
+      let { annotations, activeId } = state;
+      for (const effect of tr.effects) {
+        if (effect.is(setAnnotationsEffect)) annotations = effect.value;
+        if (effect.is(setActiveAnnotationEffect)) activeId = effect.value;
+      }
+      return { annotations, activeId };
+    },
+  });
+
+  /** Extension: gutter marker set derived from the annotationCmField. */
+  const annotationGutterExt: Extension = gutter({
+    class: 'cm-annotation-gutter',
+    markers(view) {
+      const { annotations, activeId } = view.state.field(annotationCmField);
+      return buildGutterMarkers(view.state.doc, annotations, activeId);
+    },
+    domEventHandlers: {
+      click(view, line, event) {
+        const { annotations, activeId: _active } = view.state.field(annotationCmField);
+        // Find the annotation whose line_start maps to this gutter line.
+        const lineNum = view.state.doc.lineAt(line.from).number; // 1-indexed
+        const ann = annotations.find(
+          (a) =>
+            (a.status === 'anchored' || a.status === 'block_level') &&
+            a.line_start + 1 === lineNum,
+        );
+        if (!ann) return false;
+        focusAnnotation(ann.id);
+        // Emit anchor rect for the shared popover (D4): use the clicked element's
+        // bounding rect as the popover anchor coordinate.
+        const el = event.target as HTMLElement;
+        const rect = el.getBoundingClientRect();
+        popoverAnchorRect = rect;
+        return true;
+      },
+    },
+  });
+
+  /** Extension: wash decoration set derived from the annotationCmField. */
+  const annotationWashExt: Extension = EditorView.decorations.of(
+    (view) => {
+      const { annotations, activeId } = view.state.field(annotationCmField);
+      return buildWashDecorations(view.state.doc, annotations, activeId);
+    },
+  );
 
   // Editor chrome themed off the design tokens (resolves live with light/dark).
   const rvTheme = EditorView.theme({
@@ -99,6 +281,16 @@
   let pendingAnchor: AnchorV1 | null = null;
 
   // -------------------------------------------------------------------------
+  // Annotation seal / popover anchor state
+  // -------------------------------------------------------------------------
+  /** The viewport rect of the last gutter seal that was clicked (for popover placement). */
+  let popoverAnchorRect: DOMRect | null = null;
+
+  /** Store unsubscribe handles — cleaned up in onDestroy. */
+  let unsubAnnotations: (() => void) | null = null;
+  let unsubFocus: (() => void) | null = null;
+
+  // -------------------------------------------------------------------------
   // CodeMirror setup
   // -------------------------------------------------------------------------
 
@@ -106,6 +298,10 @@
     const state = EditorState.create({
       doc: content,
       extensions: [
+        // Annotation focus field + gutter + wash — present from creation (D12).
+        annotationCmField,
+        annotationGutterExt,
+        annotationWashExt,
         lineNumbers(),
         highlightActiveLine(),
         highlightActiveLineGutter(),
@@ -134,10 +330,78 @@
           }
         }),
         rvTheme,
+        // Seal gutter theme
+        EditorView.theme({
+          '.cm-annotation-gutter': {
+            width: '18px',
+            cursor: 'pointer',
+          },
+          '.cm-seal-marker': {
+            display: 'block',
+            width: '100%',
+            textAlign: 'center',
+            fontSize: '9px',
+            lineHeight: '1.95',
+            color: 'var(--seal-ink)',
+            opacity: '0.75',
+            transition: 'opacity var(--dur-fast)',
+          },
+          '.cm-seal-marker:hover': {
+            opacity: '1',
+          },
+          '.cm-seal-active': {
+            opacity: '1',
+            color: 'var(--seal-ink)',
+          },
+          '.cm-annotation-wash': {
+            backgroundColor: 'color-mix(in srgb, var(--seal-ink, #4A453B) 10%, transparent)',
+          },
+        }),
       ],
     });
 
     view = new EditorView({ state, parent: editorEl });
+
+    // Subscribe to the annotation store: push annotation list into CM6 state
+    // whenever it changes.
+    unsubAnnotations = annotationsStore.subscribe((s) => {
+      if (!view) return;
+      view.dispatch({
+        effects: [setAnnotationsEffect.of(s.annotations)],
+      });
+    });
+
+    // Subscribe to the focus store: push the active id into CM6 state, and
+    // scroll the active line into view whenever scrollNonce changes.
+    let lastScrollNonce = -1;
+    unsubFocus = annotationFocus.subscribe((s) => {
+      if (!view) return;
+      // Always sync the active id.
+      view.dispatch({
+        effects: [setActiveAnnotationEffect.of(s.activeId)],
+      });
+      // Scroll to the active annotation's line when scrollNonce bumps.
+      if (s.scrollNonce !== lastScrollNonce && s.activeId !== null) {
+        lastScrollNonce = s.scrollNonce;
+        const { annotations } = view.state.field(annotationCmField);
+        const ann = annotations.find((a) => a.id === s.activeId);
+        if (ann) {
+          const lineNum = ann.line_start + 1;
+          if (lineNum >= 1 && lineNum <= view.state.doc.lines) {
+            const line = view.state.doc.line(lineNum);
+            const prefersReducedMotion =
+              typeof window !== 'undefined' &&
+              window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            view.dispatch({
+              effects: EditorView.scrollIntoView(line.from, {
+                y: 'center',
+                yMargin: prefersReducedMotion ? 0 : undefined,
+              }),
+            });
+          }
+        }
+      }
+    });
   });
 
   onDestroy(() => {
@@ -147,6 +411,9 @@
     // $activeTab.id}) are not lost. Delegates to the extracted helper so this
     // exact code path can be exercised by unit tests (closes fidelity gap).
     debounceTimer = flushPendingDebounce(debounceTimer, view, myTabId, tabsStore);
+    // Unsubscribe from annotation stores before destroying the view.
+    unsubAnnotations?.();
+    unsubFocus?.();
     view?.destroy();
   });
 
