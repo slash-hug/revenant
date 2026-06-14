@@ -56,6 +56,9 @@
   let caretLeft = 24; // px from the popover's left edge — points at the span center
 
   // Inline body editing (UX #17). Disallows empty saves (see saveAnnotationEdit).
+  const isMac = typeof navigator !== 'undefined'
+    && (/Mac/i.test(navigator.platform || '') || /Mac OS X/i.test(navigator.userAgent || ''));
+  const saveHint = isMac ? '⌘↩' : 'Ctrl+↩'; // ⌘↩ / Ctrl+↩
   let editing = false;
   let editingId: string | null = null;
   let draft = '';
@@ -266,6 +269,8 @@
         on:keydown={handleEditKeydown}
       ></textarea>
       <div class="pop-edit-actions">
+        <span class="edit-hint">{saveHint} save · Esc cancel</span>
+        <span class="spacer"></span>
         <button class="edit-cancel" type="button" on:click={cancelEdit}>Cancel</button>
         <button class="edit-save" type="button" disabled={!draft.trim()} on:click={commitEdit}>Save</button>
       </div>
@@ -374,7 +379,9 @@
     min-height: 56px;
   }
   .pop-edit:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
-  .pop-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .pop-edit-actions { display: flex; align-items: center; gap: 8px; }
+  .pop-edit-actions .spacer { flex: 1; }
+  .edit-hint { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
   .edit-cancel, .edit-save {
     font: inherit;
     font-size: var(--fs-xs);

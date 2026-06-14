@@ -29,6 +29,9 @@
   }
 
   // Inline body editing (UX #17). Empty saves are disallowed (saveAnnotationEdit).
+  const isMac = typeof navigator !== 'undefined'
+    && (/Mac/i.test(navigator.platform || '') || /Mac OS X/i.test(navigator.userAgent || ''));
+  const saveHint = isMac ? '⌘↩' : 'Ctrl+↩';
   let editingId: string | null = null;
   let draft = '';
   let editEl: HTMLTextAreaElement | undefined;
@@ -149,6 +152,8 @@
                     on:keydown={handleEditKeydown}
                   ></textarea>
                   <div class="cmt-edit-actions">
+                    <span class="edit-hint">{saveHint} save · Esc cancel</span>
+                    <span class="spacer"></span>
                     <button class="edit-cancel" type="button" on:click|stopPropagation={cancelEdit}>Cancel</button>
                     <button class="edit-save" type="button" disabled={!draft.trim()} on:click|stopPropagation={commitEdit}>Save</button>
                   </div>
@@ -202,6 +207,8 @@
                     on:keydown={handleEditKeydown}
                   ></textarea>
                   <div class="cmt-edit-actions">
+                    <span class="edit-hint">{saveHint} save · Esc cancel</span>
+                    <span class="spacer"></span>
                     <button class="edit-cancel" type="button" on:click={cancelEdit}>Cancel</button>
                     <button class="edit-save" type="button" disabled={!draft.trim()} on:click={commitEdit}>Save</button>
                   </div>
@@ -385,7 +392,9 @@
     min-height: 54px;
   }
   .cmt-edit-field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
-  .cmt-edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+  .cmt-edit-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .cmt-edit-actions .spacer { flex: 1; }
+  .edit-hint { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
   .edit-cancel, .edit-save {
     font: inherit;
     font-size: var(--fs-xs);
