@@ -12,11 +12,13 @@
   type ViewMode = 'source' | 'preview' | 'split';
 
   export let viewMode: ViewMode = 'split';
+  export let drawerOpen: boolean = true;
 
   const dispatch = createEventDispatcher<{
     viewMode: { mode: ViewMode };
     generateReview: void;
     exportObsidian: void;
+    toggleDrawer: void;
   }>();
 
   const modes: { id: ViewMode; label: string }[] = [
@@ -79,6 +81,21 @@
         <path d="M12 3 4 9v6l8 6 8-6V9l-8-6Z" /><path d="M12 3v18" />
       </svg>
       Export to Obsidian
+    </button>
+
+    <button
+      type="button"
+      class="icon-btn"
+      class:active={drawerOpen}
+      aria-pressed={drawerOpen}
+      on:click={() => dispatch('toggleDrawer')}
+      title={`${drawerOpen ? 'Hide' : 'Show'} annotation panel (⌘\\)`}
+      aria-label="Toggle annotation panel"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <line x1="15" y1="4" x2="15" y2="20" />
+      </svg>
     </button>
 
     <div class="tb-divider" aria-hidden="true"></div>
@@ -175,6 +192,22 @@
     box-shadow: var(--shadow-sm);
   }
   .btn-secondary:hover { border-color: var(--border-strong); }
+
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    border-radius: var(--r-md);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color var(--dur-fast), background var(--dur-fast), border-color var(--dur-fast);
+  }
+  .icon-btn svg { width: 17px; height: 17px; }
+  .icon-btn:hover { color: var(--text); background: var(--surface-2); }
+  .icon-btn.active { color: var(--accent-text); background: var(--accent-soft); }
 
   .tb-divider {
     width: 1px;

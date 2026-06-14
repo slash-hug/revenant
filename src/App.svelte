@@ -17,6 +17,11 @@
   import EditorPane from './lib/EditorPane.svelte';
   import PreviewPane from './lib/PreviewPane.svelte';
   import AnnotationDrawer from './lib/AnnotationDrawer.svelte';
+  import ResizeHandle from './lib/ResizeHandle.svelte';
+  import {
+    nextSplitFrac, nextDrawerWidth, clamp,
+    SPLIT_DEFAULT, DRAWER_DEFAULT, SPLIT_MIN, SPLIT_MAX, DRAWER_MIN, DRAWER_MAX,
+  } from './lib/layout';
   import ConflictModal from './lib/ConflictModal.svelte';
   import AnnotationComposer from './lib/AnnotationComposer.svelte';
   import AnnotationPopover from './lib/AnnotationPopover.svelte';
@@ -35,8 +40,42 @@
 
   type ViewMode = 'source' | 'preview' | 'split';
 
+  // Device-local layout prefs (#18), persisted in localStorage.
+  const LAYOUT_KEY = 'revenant.layout.v1';
+  function loadLayout() {
+    const def = { frac: SPLIT_DEFAULT, width: DRAWER_DEFAULT, open: true };
+    if (typeof localStorage === 'undefined') return def;
+    try {
+      const o = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? '{}');
+      return {
+        frac: typeof o.frac === 'number' ? clamp(o.frac, SPLIT_MIN, SPLIT_MAX) : def.frac,
+        width: typeof o.width === 'number' ? clamp(o.width, DRAWER_MIN, DRAWER_MAX) : def.width,
+        open: typeof o.open === 'boolean' ? o.open : def.open,
+      };
+    } catch { return def; }
+  }
+  const _layout0 = loadLayout();
+
   let viewMode = $state<ViewMode>('split');
-  let drawerOpen = $state(true);
+  let drawerOpen = $state(_layout0.open);
+  let splitEditorFrac = $state(_layout0.frac); // editor's share of the split
+  let drawerWidth = $state(_layout0.width);    // px
+  let panesEl = $state<HTMLElement | null>(null);
+
+  // Persist layout on any change (runs once on mount too — harmless).
+  $effect(() => {
+    const data = JSON.stringify({ frac: splitEditorFrac, width: drawerWidth, open: drawerOpen });
+    if (typeof localStorage !== 'undefined') {
+      try { localStorage.setItem(LAYOUT_KEY, data); } catch { /* ignore quota/private-mode */ }
+    }
+  });
+
+  function onSplitResize(dx: number) {
+    splitEditorFrac = nextSplitFrac(splitEditorFrac, dx, panesEl?.clientWidth ?? 0);
+  }
+  function onDrawerResize(dx: number) {
+    drawerWidth = nextDrawerWidth(drawerWidth, dx);
+  }
   let conflict = $state<{ open: boolean; path: string }>({ open: false, path: '' });
   let toast = $state<string>('');
   let recentFiles = $state<string[]>(loadRecent());
@@ -379,15 +418,17 @@
     <div class="ws">
       <Toolbar
         {viewMode}
+        {drawerOpen}
         on:viewMode={(e) => (viewMode = e.detail.mode)}
         on:generateReview={handleGenerateReview}
         on:exportObsidian={handleExportObsidian}
+        on:toggleDrawer={() => (drawerOpen = !drawerOpen)}
       />
 
       <TabManager />
 
       <div class="ws-body">
-        <div class="panes view-{viewMode}">
+        <div class="panes view-{viewMode}" bind:this={panesEl} style="--split-editor: {splitEditorFrac * 100}%">
           {#if $activeTab}
             {#key $activeTab.id}
               {#if viewMode === 'source' || viewMode === 'split'}
@@ -403,6 +444,13 @@
                   />
                 </div>
               {/if}
+              {#if viewMode === 'split'}
+                <ResizeHandle
+                  ariaLabel="Resize editor and preview"
+                  on:resize={(e) => onSplitResize(e.detail.dx)}
+                  on:reset={() => (splitEditorFrac = SPLIT_DEFAULT)}
+                />
+              {/if}
               {#if viewMode === 'preview' || viewMode === 'split'}
                 <div class="pane preview-wrap">
                   <PreviewPane
@@ -415,7 +463,14 @@
           {/if}
         </div>
 
-        <div class="drawer-wrap" class:hidden={!drawerOpen}>
+        {#if drawerOpen}
+          <ResizeHandle
+            ariaLabel="Resize annotation drawer"
+            on:resize={(e) => onDrawerResize(e.detail.dx)}
+            on:reset={() => (drawerWidth = DRAWER_DEFAULT)}
+          />
+        {/if}
+        <div class="drawer-wrap" class:hidden={!drawerOpen} style="width: {drawerWidth}px">
           <AnnotationDrawer open={drawerOpen} />
         </div>
       </div>
@@ -594,18 +649,18 @@
   /* ============ Workspace ============ */
   .ws { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
-  .ws-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .ws-body { flex: 1; min-height: 0; display: flex; min-width: 0; }
 
-  .panes { display: flex; min-width: 0; min-height: 0; }
+  .panes { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
   .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
-  .editor-wrap { border-right: 1px solid var(--border); }
-  .panes.view-split .editor-wrap { flex: 1 1 47%; }
-  .panes.view-split .preview-wrap { flex: 1 1 53%; }
+  /* Split widths: editor share is the draggable --split-editor; preview takes the
+     rest. The ResizeHandle between them is the visible divider. */
+  .panes.view-split .editor-wrap { flex: 0 0 var(--split-editor, 47%); }
+  .panes.view-split .preview-wrap { flex: 1 1 0; }
   .panes.view-source .pane,
   .panes.view-preview .pane { flex: 1 1 100%; }
-  .panes.view-preview .editor-wrap { border-right: none; }
 
-  .drawer-wrap { border-left: 1px solid var(--border); display: flex; min-height: 0; }
+  .drawer-wrap { flex: none; display: flex; min-height: 0; }
   .drawer-wrap.hidden { display: none; }
 
   /* status bar */

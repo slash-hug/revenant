@@ -230,7 +230,7 @@
 
 <style>
   .drawer-pane {
-    width: 350px;
+    width: 100%;
     height: 100%;
     background: var(--drawer-bg);
     display: flex;
