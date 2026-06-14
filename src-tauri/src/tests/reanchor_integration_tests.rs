@@ -1,29 +1,26 @@
 //! Integration tests for the save → edit → load → re-anchor round-trip.
 //!
-//! These tests exercise the full pipeline at the library level (annotations +
-//! reanchor modules) without going through the Tauri IPC layer. They verify:
+//! These tests exercise the full pipeline at the library level: they call
+//! `crate::ipc::apply_reanchor_to_sidecar` — the same function that the
+//! `load_annotations` IPC command delegates to — rather than re-implementing
+//! the guard inline. This closes the previous fidelity gap (T1.4/R-OFFSET-TEST)
+//! where a regression in the hash-comparison guard, the hash reassignment, or
+//! the reanchor_all delegation inside the IPC handler would not have been caught.
 //!
+//! The Tauri async wrapper (`spawn_blocking`, IPC transport) is still out-of-scope
+//! (requires a live AppHandle), but the behavioral core — hash guard + reanchor_all
+//! + sidecar update — is now exercised by the production function.
+//!
+//! Tests:
 //! 1. R-OFFSET-TEST: After inserting N lines above an anchored position, the
 //!    re-anchored line numbers are exactly `stored_line + N` (not just "anchored").
-//! 2. Deleting the anchored text causes the annotation to be Detached.
-//!
-//! FIDELITY GAP (known, acceptable): `load_and_reanchor` in this file
-//! duplicates the re-anchor logic from `ipc::load_annotations` (the real async
-//! #[tauri::command]) rather than calling it directly, because Tauri commands
-//! cannot be invoked without a live `AppHandle`.  The duplication is intentional
-//! for testability.  **Trade-off**: a regression in the actual IPC handler body
-//! (e.g. a hash-comparison inversion or wrong branch taken) would NOT be caught
-//! by these tests — only the underlying `annotations` + `reanchor` module logic
-//! is exercised.  The acceptance criteria (R-OFFSET-TEST exact line numbers,
-//! Detached on deletion) ARE satisfied; the IPC wiring gap is a known limit of
-//! this test layer.
+//! 2. Detaching: Deleting the anchored text causes the annotation to be Detached.
 
 use std::fs;
 use tempfile::TempDir;
 
 use crate::annotations::{self, AnchorStatus, Annotation, Sidecar, CURRENT_SCHEMA_VERSION};
 use crate::file_io::sha256_hex;
-use crate::reanchor;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -61,28 +58,25 @@ fn save_sidecar(doc_path: &std::path::Path, sidecar: &Sidecar) {
     annotations::save_annotations(doc_path, sidecar).unwrap();
 }
 
+/// Load annotations from disk and apply re-anchoring via the production
+/// `ipc::apply_reanchor_to_sidecar` function — the same function the
+/// `load_annotations` IPC command delegates to. This exercises the real
+/// hash-comparison guard and hash reassignment (previously duplicated inline).
 fn load_and_reanchor(doc_path: &std::path::Path) -> Sidecar {
-    // Mirroring the logic in ipc::load_annotations (T1.3):
     let doc_content = fs::read_to_string(doc_path).unwrap();
     let doc_hash = sha256_hex(doc_content.as_bytes());
 
     let load_result = annotations::load_annotations(doc_path, &doc_hash).unwrap();
-    let mut sidecar = match load_result {
+    let sidecar = match load_result {
         annotations::LoadResult::Loaded(s) => s,
         annotations::LoadResult::NotFound(s) => s,
         annotations::LoadResult::Quarantined { fallback, .. } => fallback,
     };
 
-    // Apply re-anchoring on hash mismatch (C-LOAD-WRITE: in-memory only).
-    if sidecar.doc_content_hash != doc_hash && !sidecar.annotations.is_empty() {
-        let stored_hash = sidecar.doc_content_hash.clone();
-        let results =
-            reanchor::reanchor_all(&sidecar.annotations, &doc_content, &doc_hash, &stored_hash);
-        sidecar.annotations = results.into_iter().map(|r| r.annotation).collect();
-        sidecar.doc_content_hash = doc_hash;
-    }
-
-    sidecar
+    // Call the production IPC function that the async command delegates to.
+    // This exercises the hash guard, reanchor_all delegation, and hash update
+    // — closing the fidelity gap documented in T1.4.
+    crate::ipc::apply_reanchor_to_sidecar(sidecar, &doc_content, &doc_hash)
 }
 
 // ── Test 1: R-OFFSET-TEST ─────────────────────────────────────────────────────
@@ -122,7 +116,7 @@ fn reanchor_offset_correct_after_above_insertion() {
     let edited = "New line 1\nNew line 2\nNew line 3\nHeader line\nThis is the key sentence.\nMiddle\nSeparator\nFooter\n";
     fs::write(&doc_path, edited).unwrap();
 
-    // Load and re-anchor.
+    // Load and re-anchor via the production function.
     let result = load_and_reanchor(&doc_path);
 
     assert_eq!(result.annotations.len(), 1, "annotation must be retained");
@@ -183,7 +177,7 @@ fn reanchor_detached_after_text_deletion() {
     let edited = "Introduction\nCompletely different text here.\nConclusion\n";
     fs::write(&doc_path, edited).unwrap();
 
-    // Load and re-anchor.
+    // Load and re-anchor via the production function.
     let result = load_and_reanchor(&doc_path);
 
     assert_eq!(result.annotations.len(), 1, "annotation must be retained");
@@ -191,4 +185,45 @@ fn reanchor_detached_after_text_deletion() {
 
     // Status must be Detached because the text is gone.
     assert_eq!(re.status, AnchorStatus::Detached, "should detach when anchored text is gone");
+}
+
+// ── Test 3: No-op when doc hash matches (short-circuit guard) ─────────────────
+//
+// Verify that apply_reanchor_to_sidecar does NOT mutate annotations when the
+// stored hash equals the current doc hash (the reanchor guard must short-circuit).
+// This tests the guard condition in the IPC handler body directly.
+
+#[test]
+fn reanchor_noop_when_hash_matches() {
+    let dir = TempDir::new().unwrap();
+
+    let content = "Line one\nLine two\n";
+    let doc_path = write_doc(&dir, "doc3.md", content);
+    let hash = sha256_hex(content.as_bytes());
+
+    let ann = make_annotation("ann-3", 0, 0, "Line one", "", "Line two");
+
+    let sidecar = Sidecar {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        doc_content_hash: hash.clone(),
+        general_notes: String::new(),
+        annotations: vec![ann],
+    };
+    save_sidecar(&doc_path, &sidecar);
+
+    // Call apply_reanchor_to_sidecar directly with hash == stored_hash.
+    let loaded = match annotations::load_annotations(&doc_path, &hash).unwrap() {
+        annotations::LoadResult::Loaded(s) => s,
+        annotations::LoadResult::NotFound(s) => s,
+        annotations::LoadResult::Quarantined { fallback, .. } => fallback,
+    };
+
+    let result = crate::ipc::apply_reanchor_to_sidecar(loaded, content, &hash);
+
+    // The annotation must be unchanged — reanchor_all is not called.
+    assert_eq!(result.annotations.len(), 1);
+    assert_eq!(result.annotations[0].line_start, 0);
+    assert_eq!(result.annotations[0].status, AnchorStatus::Anchored);
+    // Hash must still match.
+    assert_eq!(result.doc_content_hash, hash);
 }

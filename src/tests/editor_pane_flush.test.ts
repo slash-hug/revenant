@@ -5,41 +5,41 @@
  * the EditorPane is destroyed (tab switch / close), the latest content is
  * flushed to tabsStore.updateContent() under the correct tab id.
  *
- * We test the flush logic directly against the tabsStore rather than mounting
- * the full EditorPane Svelte component (which requires a real CodeMirror editor
- * and DOM environment that is complex to replicate in jsdom). The flush logic
- * is essentially:
+ * FIDELITY: These tests import and call `flushPendingDebounce` from
+ * `src/lib/editor-flush.ts` — the same function that EditorPane.svelte's
+ * onDestroy hook calls in production. This closes the previous fidelity gap
+ * where the test re-implemented the flush logic inline. A regression in the
+ * production helper (e.g. inverted guard, wrong tabId captured) will now fail
+ * these tests.
  *
- *   if (debounceTimer && view) {
- *     tabsStore.updateContent(myTabId, view.state.doc.toString());
- *     clearTimeout(debounceTimer);
- *     debounceTimer = null;
- *   }
- *   view?.destroy();
- *
- * We test this via a purpose-built simulation that mirrors the EditorPane
- * pattern precisely.
- *
- * FIDELITY GAP (known, acceptable): these tests reproduce the onDestroy flush
- * logic against the store directly rather than mounting a real EditorPane
- * component.  The underlying store behaviour and the flush pattern are both
- * verified here (satisfying C-FLUSH-TABID / T2.6).  **Trade-off**: a regression
- * in the actual EditorPane `onDestroy` wiring (e.g. the guard condition being
- * inverted, or `myTabId` not captured at mount time) would NOT be caught by
- * these tests.  A full component-mount test would require a live CodeMirror
- * instance and Svelte testing library integration that is out of scope for this
- * round; log the gap here so a future test pass can fill it.
+ * The CodeMirror EditorView is simulated with a minimal stub that exposes only
+ * the `state.doc.toString()` surface used by `flushPendingDebounce`, avoiding
+ * the need to mount a live CodeMirror instance in jsdom.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { get } from 'svelte/store';
 import { tabsStore } from '../lib/stores/tabs';
+import { flushPendingDebounce } from '../lib/editor-flush';
+import type { EditorView } from '@codemirror/view';
 
-describe('EditorPane flush on unmount (T2.6)', () => {
+// ---------------------------------------------------------------------------
+// Minimal EditorView stub
+// Satisfies the `view.state.doc.toString()` call in flushPendingDebounce.
+// ---------------------------------------------------------------------------
+function makeView(content: string): EditorView {
+  return {
+    state: {
+      doc: {
+        toString: () => content,
+      },
+    },
+  } as unknown as EditorView;
+}
+
+describe('EditorPane flush on unmount (T2.6/C-FLUSH-TABID) — production code path', () => {
   const TEST_HASH = 'abc123';
 
-  // Generate unique paths per test to avoid state bleeding between tests
-  // (tabsStore is a module singleton that persists across tests in the same run).
   let testCounter = 0;
   function uniquePath(): string {
     return `/test/doc-${testCounter++}.md`;
@@ -53,105 +53,90 @@ describe('EditorPane flush on unmount (T2.6)', () => {
     vi.useRealTimers();
   });
 
-  it('pending debounce is flushed to tabsStore under the correct tab id on unmount', () => {
-    // Open a tab.
+  // ── T1: pending debounce is flushed under the correct tab id ─────────────
+
+  it('flushPendingDebounce writes content to the store under the correct tab id', () => {
     const tabId = tabsStore.openTab(uniquePath(), 'initial content', TEST_HASH);
+    const myTabId = tabId; // snapshot at mount time, as EditorPane does
 
-    // Simulate the EditorPane's myTabId snapshot at mount time.
-    const myTabId = tabId;
-
-    // Simulate a pending debounce — the view has unsaved content.
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    let latestContent = 'content after keystroke';
-
-    // Simulate scheduleChange (what the editor update listener calls).
-    debounceTimer = setTimeout(() => {
-      tabsStore.updateContent(myTabId, latestContent);
-      debounceTimer = null;
+    // Simulate a pending debounce timer.
+    const latestContent = 'content after keystroke';
+    const debounceTimer = setTimeout(() => {
+      // This path is cleared by flushPendingDebounce — should not run.
+      tabsStore.updateContent(myTabId, 'timer-fired (should not happen)');
     }, 400);
 
-    // At this point the timer is pending — the content has NOT been flushed yet.
-    const beforeFlush = get(tabsStore);
-    const tabBefore = beforeFlush.tabs.find((t) => t.id === tabId);
-    expect(tabBefore?.content).toBe('initial content'); // still stale
+    // Content is still stale before the flush.
+    const before = get(tabsStore).tabs.find((t) => t.id === tabId);
+    expect(before?.content).toBe('initial content');
 
-    // Simulate onDestroy: flush if timer is pending.
-    if (debounceTimer !== null) {
-      // Flush synchronously — mirror the EditorPane pattern.
-      tabsStore.updateContent(myTabId, latestContent);
-      clearTimeout(debounceTimer);
-      debounceTimer = null;
-    }
+    // Call the production flush function with a minimal view stub.
+    const view = makeView(latestContent);
+    const returnedTimer = flushPendingDebounce(debounceTimer, view, myTabId, tabsStore);
 
-    // After the flush, the store must have the latest content under the correct tab.
-    const afterFlush = get(tabsStore);
-    const tabAfter = afterFlush.tabs.find((t) => t.id === tabId);
-    expect(tabAfter).toBeDefined();
-    expect(tabAfter?.content).toBe('content after keystroke');
-    expect(tabAfter?.id).toBe(tabId); // must be the same tab (correct myTabId)
+    // The function must clear the timer (return null).
+    expect(returnedTimer).toBeNull();
 
-    // The debounce timer must have been cleared (no pending flush).
-    expect(debounceTimer).toBeNull();
+    // The store must have been updated with the latest content.
+    const after = get(tabsStore).tabs.find((t) => t.id === tabId);
+    expect(after?.content).toBe('content after keystroke');
+    expect(after?.id).toBe(tabId);
 
-    // Advancing fake timers should NOT trigger the original setTimeout
-    // (it was cleared).
+    // Advancing fake timers must NOT trigger the original setTimeout
+    // (it was cleared inside flushPendingDebounce).
     vi.advanceTimersByTime(1000);
-    // Content must still be the flushed value (no second update from cleared timer).
-    const afterTimerAdvance = get(tabsStore);
-    const tabFinal = afterTimerAdvance.tabs.find((t) => t.id === tabId);
-    expect(tabFinal?.content).toBe('content after keystroke');
+    const final = get(tabsStore).tabs.find((t) => t.id === tabId);
+    expect(final?.content).toBe('content after keystroke');
   });
 
-  it('no flush occurs when no debounce timer is pending', () => {
+  // ── T2: no flush when no timer is pending ────────────────────────────────
+
+  it('flushPendingDebounce is a no-op when debounceTimer is null', () => {
     const tabId = tabsStore.openTab(uniquePath(), 'stable content', TEST_HASH);
-    const myTabId = tabId;
 
-    // No pending timer.
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const returnedTimer = flushPendingDebounce(null, makeView('should not appear'), tabId, tabsStore);
 
-    // Simulate onDestroy: no flush (timer is null).
-    if (debounceTimer !== null) {
-      tabsStore.updateContent(myTabId, 'should not appear');
-      clearTimeout(debounceTimer);
-      debounceTimer = null;
-    }
-
-    // Content must remain unchanged.
-    const state = get(tabsStore);
-    const tab = state.tabs.find((t) => t.id === tabId);
-    expect(tab?.content).toBe('stable content');
+    expect(returnedTimer).toBeNull();
+    const state = get(tabsStore).tabs.find((t) => t.id === tabId);
+    expect(state?.content).toBe('stable content');
   });
 
-  it('flush uses myTabId (not a later tabId) so rapid tab switch does not corrupt other tab', () => {
-    // Open two tabs.
+  // ── T3: no flush when view is null (before onMount completes) ────────────
+
+  it('flushPendingDebounce is a no-op when view is null', () => {
+    const tabId = tabsStore.openTab(uniquePath(), 'original', TEST_HASH);
+
+    const debounceTimer = setTimeout(() => {}, 400);
+    // view is null — simulates onDestroy racing with onMount
+    const returnedTimer = flushPendingDebounce(debounceTimer, null, tabId, tabsStore);
+
+    expect(returnedTimer).toBeNull();
+    const state = get(tabsStore).tabs.find((t) => t.id === tabId);
+    // Content must not be corrupted by a null view.
+    expect(state?.content).toBe('original');
+  });
+
+  // ── T4: myTabId isolation — flush targets the mounted tab, not the active ─
+
+  it('flush uses myTabId so a rapid tab switch does not corrupt the new active tab', () => {
     const tabId1 = tabsStore.openTab(uniquePath(), 'tab 1 content', 'hash1');
     const tabId2 = tabsStore.openTab(uniquePath(), 'tab 2 content', 'hash2');
 
-    // Mount EditorPane for tab1 — snapshot myTabId at mount.
+    // EditorPane for tab1 snapshots myTabId at mount.
     const myTabId = tabId1;
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    let latestContent = 'tab 1 new content';
+    const latestContent = 'tab 1 new content';
 
-    debounceTimer = setTimeout(() => {
-      tabsStore.updateContent(myTabId, latestContent);
-      debounceTimer = null;
-    }, 400);
-
-    // Switch to tab2 — this would unmount tab1's EditorPane (via {#key}).
+    const debounceTimer = setTimeout(() => {}, 400);
     tabsStore.switchTab(tabId2);
 
-    // Simulate onDestroy for tab1's EditorPane (myTabId = tab1).
-    if (debounceTimer !== null) {
-      tabsStore.updateContent(myTabId, latestContent); // must use myTabId (tab1)
-      clearTimeout(debounceTimer);
-      debounceTimer = null;
-    }
+    // onDestroy fires for tab1's EditorPane — must write to tab1, not tab2.
+    flushPendingDebounce(debounceTimer, makeView(latestContent), myTabId, tabsStore);
 
-    // tab1 must have the flushed content; tab2 must be unchanged.
     const state = get(tabsStore);
     const tab1 = state.tabs.find((t) => t.id === tabId1);
     const tab2 = state.tabs.find((t) => t.id === tabId2);
+
     expect(tab1?.content).toBe('tab 1 new content');
-    expect(tab2?.content).toBe('tab 2 content'); // not corrupted
+    expect(tab2?.content).toBe('tab 2 content'); // must not be corrupted
   });
 });

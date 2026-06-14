@@ -22,9 +22,9 @@
   let pendingDeleteId: string | null = null;
   function requestDelete(id: string) { pendingDeleteId = id; }
   function cancelDelete() { pendingDeleteId = null; }
-  async function confirmDelete(id: string) {
+  function confirmDelete(id: string) {
     pendingDeleteId = null;
-    await annotationsStore.deleteAnnotation(id);
+    annotationsStore.deleteAnnotation(id);
   }
 
   function anchorLabel(ann: Annotation): string {

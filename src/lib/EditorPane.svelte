@@ -20,6 +20,7 @@
   import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
   import { tags as t } from '@lezer/highlight';
   import { tabsStore } from './stores/tabs';
+  import { flushPendingDebounce } from './editor-flush';
   import { saveFile } from './types/ipc';
   import type { SourceAnchor, AnchorV1, IpcError } from './types/ipc';
 
@@ -141,15 +142,11 @@
 
   onDestroy(() => {
     // T2.6/C-FLUSH-TABID: if a debounce timer is pending, flush the latest
-    // editor content to the tab store BEFORE clearing the timer and destroying
-    // the view, so keystrokes typed within DEBOUNCE_MS of unmount (e.g. on
-    // a rapid tab switch via {#key $activeTab.id}) are not lost.
-    // Mirror the handleSave flush pattern (see lines 175-179 above).
-    if (debounceTimer && view) {
-      tabsStore.updateContent(myTabId, view.state.doc.toString());
-      clearTimeout(debounceTimer);
-      debounceTimer = null;
-    }
+    // editor content to the tab store BEFORE destroying the view, so keystrokes
+    // typed within DEBOUNCE_MS of unmount (e.g. rapid tab switch via {#key
+    // $activeTab.id}) are not lost. Delegates to the extracted helper so this
+    // exact code path can be exercised by unit tests (closes fidelity gap).
+    debounceTimer = flushPendingDebounce(debounceTimer, view, myTabId, tabsStore);
     view?.destroy();
   });
 

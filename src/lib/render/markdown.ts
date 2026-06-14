@@ -262,21 +262,32 @@ export function renderMarkdown(src: string): string {
 // highlight.js run-once registration guard (T3.2 / R-HLJS-CORE)
 // ---------------------------------------------------------------------------
 
-let _hljsRegistered = false;
+/**
+ * In-flight promise for the hljs load+registration sequence.
+ *
+ * Caching the promise (not just a boolean flag) makes the guard
+ * concurrency-safe: two renderCodeBlock() calls issued before the first
+ * await resolves both receive the *same* promise and wait for the single
+ * registration pass rather than each starting a redundant one.
+ */
+let _hljsPromise: Promise<typeof import('highlight.js/lib/core')['default']> | null = null;
 
 /**
  * Lazily load `highlight.js/lib/core` (tree-shakeable core, not the full
  * bundle) and register only the curated language set on first call.
- * Subsequent calls return the already-registered instance from the module
- * cache without re-registering.
+ * Subsequent calls return the already-settled promise from the module
+ * cache without re-registering — and concurrent calls share the in-flight
+ * promise, preventing redundant parallel registration sequences.
  *
  * Curated language set rationale: covers the most common code languages in
  * markdown review and spec documents (source code, config files, data formats,
  * shell scripts). Omits the ~170 languages in the full hljs bundle.
  */
 async function loadHljs() {
-  const hljs = (await import('highlight.js/lib/core')).default;
-  if (!_hljsRegistered) {
+  if (_hljsPromise) return _hljsPromise;
+
+  _hljsPromise = (async () => {
+    const hljs = (await import('highlight.js/lib/core')).default;
     const [
       javascript, typescript, rust, python, go,
       json, yaml, bash, sql, xml, css,
@@ -319,35 +330,48 @@ async function loadHljs() {
     hljs.registerLanguage('c', c);
     hljs.registerLanguage('cpp', cpp);
     hljs.registerLanguage('java', java);
-    _hljsRegistered = true;
-  }
-  return hljs;
+    return hljs;
+  })();
+
+  return _hljsPromise;
 }
 
 // ---------------------------------------------------------------------------
 // Mermaid run-once initialization guard (T3.2 / C-MERMAID-INIT)
 // ---------------------------------------------------------------------------
 
-let _mermaidInitialized = false;
+/**
+ * In-flight promise for the Mermaid load+initialize sequence.
+ *
+ * Caching the promise (not just a boolean flag) makes the guard
+ * concurrency-safe: two renderMermaid() calls issued before the first
+ * await resolves both receive the *same* promise and wait for the single
+ * initialize() call rather than each running a redundant one.
+ */
+let _mermaidPromise: Promise<typeof import('mermaid')['default']> | null = null;
 
 /**
  * Lazily load Mermaid and call initialize() exactly once.
  *
  * v11 initialization order: import → initialize → render.
  * Calling initialize() per renderMermaid() call is safe but wasteful;
- * the run-once guard avoids redundant re-initialization across renders.
+ * caching the in-flight promise avoids redundant re-initialization even
+ * when two renderMermaid() calls race before the first resolves.
  *
  * securityLevel: 'strict' — Mermaid will not execute any scripts embedded
  * in diagram definitions. Combined with DOMPurify sanitization of the SVG
  * output, this is the correct defense-in-depth posture.
  */
 async function loadMermaid() {
-  const mermaid = (await import('mermaid')).default;
-  if (!_mermaidInitialized) {
+  if (_mermaidPromise) return _mermaidPromise;
+
+  _mermaidPromise = (async () => {
+    const mermaid = (await import('mermaid')).default;
     mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
-    _mermaidInitialized = true;
-  }
-  return mermaid;
+    return mermaid;
+  })();
+
+  return _mermaidPromise;
 }
 
 /**

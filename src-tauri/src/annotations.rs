@@ -303,22 +303,6 @@ pub fn save_annotations_to_path(
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-/// Extract `schema_version` from a raw JSON string without full deserialization.
-///
-/// NOTE: superseded by the two-pass `serde_json::Value` parse in
-/// `load_annotations_from_path` (T2.2/A3). Retained in case callers outside
-/// the load path need a quick version peek.
-#[allow(dead_code)]
-fn peek_schema_version(raw: &str) -> Option<u32> {
-    // Use a minimal partial parse — only extract the `schema_version` field.
-    #[derive(Deserialize)]
-    struct Peek {
-        schema_version: Option<u32>,
-    }
-    let peek: Result<Peek, _> = serde_json::from_str(raw);
-    peek.ok().and_then(|p| p.schema_version)
-}
-
 /// Rename `sidecar_path` to `<path>.bak` and return a `Quarantined` result.
 fn quarantine(
     sidecar_path: &Path,

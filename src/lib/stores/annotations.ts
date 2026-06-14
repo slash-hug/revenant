@@ -145,7 +145,10 @@ function createAnnotationsStore() {
 
   /**
    * Add a new annotation with the given anchor fields and body.
-   * Immediately persists after adding.
+   * Enqueues a fire-and-forget sidecar write on the serialized save chain
+   * (T2.5/A8). Returns the new annotation synchronously; the sidecar write
+   * completes asynchronously — callers must NOT await this expecting persistence
+   * to have landed on return.
    *
    * @param lineStart   - 0-indexed starting line.
    * @param lineEnd     - 0-indexed ending line (inclusive).
@@ -155,7 +158,7 @@ function createAnnotationsStore() {
    * @param body        - Reviewer's comment.
    * @param status      - Initial anchor status ('anchored' | 'block_level').
    */
-  async function addAnnotation(
+  function addAnnotation(
     lineStart: number,
     lineEnd: number,
     charStart: number,
@@ -163,7 +166,7 @@ function createAnnotationsStore() {
     quotedText: string,
     body: string,
     status: 'anchored' | 'block_level' = 'anchored',
-  ): Promise<Annotation> {
+  ): Annotation {
     const now = new Date().toISOString();
     const annotation: Annotation = {
       id: generateAnnotationId(),
@@ -188,9 +191,11 @@ function createAnnotationsStore() {
   }
 
   /**
-   * Update an annotation's body. Persists immediately.
+   * Update an annotation's body. Enqueues a fire-and-forget sidecar write.
+   * The sidecar write completes asynchronously — callers must NOT await this
+   * expecting persistence to have landed on return.
    */
-  async function updateAnnotationBody(id: string, body: string): Promise<void> {
+  function updateAnnotationBody(id: string, body: string): void {
     const now = new Date().toISOString();
     update((s) => ({
       ...s,
@@ -204,8 +209,9 @@ function createAnnotationsStore() {
   /**
    * Mark an annotation as detached (anchor could not be re-found after edit).
    * The annotation is preserved — the UI shows a "detached" badge.
+   * Enqueues a fire-and-forget sidecar write; persistence lands asynchronously.
    */
-  async function detachAnnotation(id: string): Promise<void> {
+  function detachAnnotation(id: string): void {
     const now = new Date().toISOString();
     update((s) => ({
       ...s,
@@ -218,14 +224,15 @@ function createAnnotationsStore() {
 
   /**
    * Re-anchor a previously detached annotation to a new line range.
+   * Enqueues a fire-and-forget sidecar write; persistence lands asynchronously.
    */
-  async function reanchorAnnotation(
+  function reanchorAnnotation(
     id: string,
     lineStart: number,
     lineEnd: number,
     charStart: number,
     charEnd: number,
-  ): Promise<void> {
+  ): void {
     const now = new Date().toISOString();
     update((s) => ({
       ...s,
@@ -240,8 +247,9 @@ function createAnnotationsStore() {
 
   /**
    * Delete an annotation permanently.
+   * Enqueues a fire-and-forget sidecar write; persistence lands asynchronously.
    */
-  async function deleteAnnotation(id: string): Promise<void> {
+  function deleteAnnotation(id: string): void {
     update((s) => ({
       ...s,
       annotations: s.annotations.filter((a) => a.id !== id),
@@ -251,9 +259,10 @@ function createAnnotationsStore() {
 
   /**
    * Update the general notes field. Caller is responsible for debouncing;
-   * this persists on every call.
+   * this persists on every call. Enqueues a fire-and-forget sidecar write;
+   * persistence lands asynchronously.
    */
-  async function updateGeneralNotes(notes: string): Promise<void> {
+  function updateGeneralNotes(notes: string): void {
     update((s) => ({ ...s, generalNotes: notes }));
     enqueueSave();
   }

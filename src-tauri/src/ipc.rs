@@ -200,23 +200,6 @@ fn ann_to_ipc(a: crate::annotations::Annotation) -> Annotation {
     }
 }
 
-/// Convert an `ipc::Sidecar` to an `annotations::Sidecar`.
-/// Context fields are NOT derived here — use `sidecar_from_ipc_with_context`
-/// when you have the doc lines available (e.g. in `save_annotations`).
-#[allow(dead_code)]
-fn sidecar_from_ipc(s: Sidecar) -> crate::annotations::Sidecar {
-    crate::annotations::Sidecar {
-        schema_version: 1,
-        doc_content_hash: s.doc_content_hash,
-        general_notes: s.general_notes,
-        annotations: s
-            .annotations
-            .into_iter()
-            .map(|a| ann_from_ipc(a, String::new(), String::new()))
-            .collect(),
-    }
-}
-
 /// Convert an `ipc::Sidecar` to an `annotations::Sidecar`, deriving
 /// `context_before`/`context_after` from `doc_lines` for each annotation.
 ///
@@ -504,6 +487,34 @@ pub fn save_file(
     })
 }
 
+/// Core re-anchor logic extracted from the `load_annotations` IPC command.
+///
+/// Given a sidecar and the current document content + its hash, applies
+/// in-memory re-anchoring when the stored hash differs from the current hash.
+/// This is the exact guard that the async command wraps in `spawn_blocking`.
+///
+/// Extracted so that integration tests can call the real production logic
+/// without needing a live `AppHandle` (closes T1.4/R-OFFSET-TEST fidelity
+/// gap — tests no longer duplicate this logic inline).
+pub fn apply_reanchor_to_sidecar(
+    mut sidecar: crate::annotations::Sidecar,
+    doc_content: &str,
+    doc_hash: &str,
+) -> crate::annotations::Sidecar {
+    if sidecar.doc_content_hash != doc_hash && !sidecar.annotations.is_empty() {
+        let stored_hash = sidecar.doc_content_hash.clone();
+        let results = crate::reanchor::reanchor_all(
+            &sidecar.annotations,
+            doc_content,
+            doc_hash,
+            &stored_hash,
+        );
+        sidecar.annotations = results.into_iter().map(|r| r.annotation).collect();
+        sidecar.doc_content_hash = doc_hash.to_string();
+    }
+    sidecar
+}
+
 /// Load sidecar annotations for a document. Migrates schema if needed.
 ///
 /// T1.3/A4: now `async` so the re-anchor computation can run on a blocking
@@ -514,6 +525,9 @@ pub fn save_file(
 /// annotations in-memory per the approved C-LOAD-WRITE decision — does NOT
 /// write the sidecar on load; re-anchored positions are returned to the
 /// frontend and persisted on the next normal save.
+///
+/// The re-anchor guard itself is in `apply_reanchor_to_sidecar` — a sync
+/// function that integration tests call directly (T1.4/R-OFFSET-TEST).
 #[tauri::command]
 pub async fn load_annotations(doc_path: String) -> IpcResult<Sidecar> {
     // Read the full doc content (we need it for re-anchoring and hashing).
@@ -539,31 +553,24 @@ pub async fn load_annotations(doc_path: String) -> IpcResult<Sidecar> {
     .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?
     .map_err(ann_err)?;
 
-    let mut sidecar = match load_result {
+    let sidecar = match load_result {
         crate::annotations::LoadResult::Loaded(s) => s,
         crate::annotations::LoadResult::NotFound(s) => s,
         crate::annotations::LoadResult::Quarantined { fallback, .. } => fallback,
     };
 
     // T1.3: if the doc has changed since last save, re-anchor in-memory.
-    // We pass `stored_hash` = sidecar's doc_content_hash; `doc_hash` = current.
-    if sidecar.doc_content_hash != doc_hash && !sidecar.annotations.is_empty() {
+    // Delegate to `apply_reanchor_to_sidecar` (the same function integration
+    // tests call directly) so the guard + hash-update logic is not duplicated.
+    let sidecar = {
         let content_clone = doc_content.clone();
-        let new_hash = doc_hash.clone();
-        let stored_hash = sidecar.doc_content_hash.clone();
-        let annotations_clone = sidecar.annotations.clone();
-
-        let results = tauri::async_runtime::spawn_blocking(move || {
-            crate::reanchor::reanchor_all(&annotations_clone, &content_clone, &new_hash, &stored_hash)
+        let hash_clone = doc_hash.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            apply_reanchor_to_sidecar(sidecar, &content_clone, &hash_clone)
         })
         .await
-        .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
-
-        // Apply the re-anchored positions + statuses back to the sidecar.
-        sidecar.annotations = results.into_iter().map(|r| r.annotation).collect();
-        // Update hash so the frontend sees the current hash, not the stale stored one.
-        sidecar.doc_content_hash = doc_hash;
-    }
+        .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?
+    };
 
     Ok(sidecar_to_ipc(sidecar))
 }

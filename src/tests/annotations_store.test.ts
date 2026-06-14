@@ -63,8 +63,8 @@ describe('annotationsStore save chain (T2.5/A8)', () => {
     });
 
     // Fire two mutations without awaiting — they must enqueue on the chain.
-    void annotationsStore.addAnnotation(1, 1, 0, 5, 'first', 'First comment');
-    void annotationsStore.addAnnotation(2, 2, 0, 6, 'second', 'Second comment');
+    annotationsStore.addAnnotation(1, 1, 0, 5, 'first', 'First comment');
+    annotationsStore.addAnnotation(2, 2, 0, 6, 'second', 'Second comment');
 
     // Flush the microtask queue.
     await flushChain();
@@ -103,12 +103,12 @@ describe('annotationsStore save chain (T2.5/A8)', () => {
     });
 
     // First mutation — will produce a rejected save.
-    void annotationsStore.addAnnotation(1, 1, 0, 5, 'first', 'First comment');
+    annotationsStore.addAnnotation(1, 1, 0, 5, 'first', 'First comment');
     await flushChain();
 
     // At this point the chain should have been reset after the error.
     // Second mutation must succeed (chain is unblocked).
-    void annotationsStore.addAnnotation(2, 2, 0, 6, 'second', 'Second comment');
+    annotationsStore.addAnnotation(2, 2, 0, 6, 'second', 'Second comment');
     await flushChain();
 
     // The second save_annotations call must have been made (chain reset worked).
@@ -131,7 +131,7 @@ describe('annotationsStore save chain (T2.5/A8)', () => {
       return Promise.resolve(undefined);
     });
 
-    void annotationsStore.addAnnotation(1, 1, 0, 5, 'text', 'body');
+    annotationsStore.addAnnotation(1, 1, 0, 5, 'text', 'body');
     await flushChain();
 
     const state = get(annotationsStore);
