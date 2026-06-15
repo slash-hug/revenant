@@ -370,5 +370,5 @@ export function hasRestKey(): Promise<boolean> {
  * never persisted by this command.
  */
 export function testObsidianConnection(key?: string): Promise<ConnStatus> {
-  return invoke<ConnStatus>("test_obsidian_connection", { key });
+  return invoke<ConnStatus>("test_obsidian_connection", { key: key ?? null });
 }
