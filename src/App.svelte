@@ -23,6 +23,7 @@
     SPLIT_DEFAULT, DRAWER_DEFAULT, SPLIT_MIN, SPLIT_MAX, DRAWER_MIN, DRAWER_MAX,
   } from './lib/layout';
   import ConflictModal from './lib/ConflictModal.svelte';
+  import ExportDialog from './lib/ExportDialog.svelte';
   import UnsavedChangesModal from './lib/UnsavedChangesModal.svelte';
   import KeyboardShortcutsModal from './lib/KeyboardShortcutsModal.svelte';
   import AnnotationComposer from './lib/AnnotationComposer.svelte';
@@ -37,8 +38,9 @@
   import { annotationFocus, clearFocus, focusAnnotation } from './lib/stores/annotationFocus';
   import Toast from './lib/Toast.svelte';
   import { deleteAnnotationWithUndo, cycleAnnotationId } from './lib/annotationActions';
-  import { openFile, getSettings, exportObsidian, saveFile, unwatchFile } from './lib/types/ipc';
+  import { openFile, getSettings, exportObsidian, saveFile, unwatchFile, exportHtml, exportPdf, readFileBytes } from './lib/types/ipc';
   import type { AnchorV1, Sidecar, IpcError, Annotation } from './lib/types/ipc';
+  import { buildExportDocument } from './lib/documentExport';
   import type { Command } from './lib/commandFilter';
   import { generateReview } from './lib/ReviewExporter';
   import { basename } from './lib/util/path';
@@ -95,6 +97,9 @@
   let bloom = $state(false); // suminagashi open-transition overlay
   // Styled annotation composer popover (replaces window.prompt); null = closed.
   let compose = $state<{ anchor: AnchorV1; x: number; y: number; quoted: string } | null>(null);
+
+  // Export dialog state — null = closed; string = pre-selected format ("pdf"|"html"|"").
+  let exportDialogPreset = $state<string | null>(null);
 
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
   let loadedPath: string | null = null;
@@ -341,6 +346,24 @@
   }
 
   // -------------------------------------------------------------------------
+  // Export document (PDF / HTML) — A8
+  // -------------------------------------------------------------------------
+
+  /**
+   * Open the ExportDialog (WS-C component).  Called from:
+   *   - Toolbar "Export ▾" → "Export document…" item (exportDocument event)
+   *   - Palette commands export-pdf / export-html (preset format)
+   *
+   * The dialog is owned by WS-C (ExportDialog.svelte); this handler only
+   * opens it with an optional preset format.  The dialog itself calls
+   * exportHtml / exportPdf via the IPC wrappers and fires toasts on result.
+   */
+  function handleExportDocument(preset: string = '') {
+    if (!$activeTab) return;
+    exportDialogPreset = preset;
+  }
+
+  // -------------------------------------------------------------------------
   // Welcome-screen actions
   // -------------------------------------------------------------------------
   async function handleOpenFile() {
@@ -450,6 +473,8 @@
     // Review
     cmds.push({ id: 'generate-review', title: 'Generate review', section: 'Review', hint: `${mod}⇧R`, keywords: 'export markdown comments report', run: () => void handleGenerateReview() });
     cmds.push({ id: 'export-obsidian', title: 'Export to Obsidian', section: 'Review', keywords: 'vault note publish', run: () => void handleExportObsidian() });
+    cmds.push({ id: 'export-pdf', title: 'Export as PDF', section: 'Review', keywords: 'pdf export save download print', run: () => handleExportDocument('pdf') });
+    cmds.push({ id: 'export-html', title: 'Export as HTML', section: 'Review', keywords: 'html export save download web', run: () => handleExportDocument('html') });
 
     // Comments
     const navigable = $annotationsStore.annotations.filter(
@@ -577,6 +602,7 @@
         on:viewMode={(e) => (viewMode = e.detail.mode)}
         on:generateReview={handleGenerateReview}
         on:exportObsidian={handleExportObsidian}
+        on:exportDocument={(e) => handleExportDocument(e.detail?.preset ?? '')}
         on:toggleDrawer={() => (drawerOpen = !drawerOpen)}
         on:openPalette={() => (paletteOpen = true)}
         on:openShortcuts={() => (shortcutsOpen = true)}
@@ -657,6 +683,24 @@
       {/if}
     </div>
   {/if}
+
+  <!--
+    ExportDialog (WS-C) — App-level z-index; open when exportDialogPreset is non-null.
+    Adapters thread readFileBytes (WS-A IPC wrapper) through buildExportDocument so
+    relative image paths are resolved by the Rust core against the doc directory.
+  -->
+  <ExportDialog
+    open={exportDialogPreset !== null}
+    preset={exportDialogPreset ?? ''}
+    docPath={$activeTab?.path ?? ''}
+    content={$activeTab?.content ?? ''}
+    annotations={$annotationsStore.annotations}
+    generalNotes={$annotationsStore.generalNotes}
+    buildExportDocument={(opts) => buildExportDocument({ ...opts, readFileBytes })}
+    exportHtml={exportHtml}
+    exportPdf={exportPdf}
+    on:close={() => (exportDialogPreset = null)}
+  />
 
   <ConflictModal open={conflict.open} filePath={conflict.path} on:reload={handleReload} on:keepMine={handleKeepMine} />
 

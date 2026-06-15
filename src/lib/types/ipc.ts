@@ -267,3 +267,52 @@ export function setSettings(settings: Settings): Promise<void> {
 export function snapshotWebview(): Promise<string> {
   return invoke<string>("snapshot_webview");
 }
+
+// ---------------------------------------------------------------------------
+// Export commands — A4
+// ---------------------------------------------------------------------------
+
+/**
+ * Write a self-contained HTML bundle to `outPath`.
+ *
+ * `outPath` must be an absolute path with a `.html`/`.HTML` extension (e.g.
+ * from a native Save dialog).  `html` is the complete document string produced
+ * by `buildExportDocument` in `documentExport.ts` (fonts, CSS, content all
+ * inlined as a single UTF-8 file).
+ *
+ * Throws IpcError with code "INVALID_PATH" if the path is invalid, "IO_ERROR"
+ * if the write fails.
+ */
+export function exportHtml(outPath: string, html: string): Promise<string> {
+  return invoke<string>("export_html", { outPath, html });
+}
+
+/**
+ * Convert an HTML bundle to a PDF file at `outPath`.
+ *
+ * On macOS this uses a hidden off-screen WKWebView + `createPDFWithConfiguration`.
+ * On non-macOS platforms it throws IpcError with code "PDF_EXPORT_UNSUPPORTED".
+ *
+ * `outPath` must be an absolute path with a `.pdf`/`.PDF` extension.
+ * `html` is the same bundle string as passed to `exportHtml`.
+ *
+ * On timeout or native failure throws IpcError with code "PDF_EXPORT_FAILED".
+ */
+export function exportPdf(outPath: string, html: string): Promise<string> {
+  return invoke<string>("export_pdf", { outPath, html });
+}
+
+/**
+ * Read a local image file and return its bytes as a base64 string.
+ *
+ * `docPath` is the path to the open document (used to derive the allowed
+ * directory root).  `imagePath` must be under `docPath`'s parent directory —
+ * paths outside that root or containing `..` are rejected.
+ *
+ * On success returns a raw base64 string (no data-URI prefix).  On failure
+ * (path violation, unreadable file) throws IpcError with code "IO_ERROR".
+ * Callers should treat IO_ERROR as a "skip" and fall back to alt text.
+ */
+export function readFileBytes(docPath: string, imagePath: string): Promise<string> {
+  return invoke<string>("read_file_bytes", { docPath, imagePath });
+}

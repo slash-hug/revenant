@@ -508,6 +508,75 @@ export async function renderMermaid(code: string, blockId: string): Promise<stri
   }
 }
 
+/**
+ * Render a Mermaid diagram with an **explicit** theme for the export pipeline.
+ *
+ * Used by documentExport.ts so the export always renders in light mode without
+ * mutating `document.documentElement data-theme`, which would trigger
+ * PreviewPane's MutationObserver and corrupt the live preview cache.
+ *
+ * NOTE: This function shares the module-level Mermaid singleton (`_mermaidPromise`,
+ * `_mermaidTheme`). It calls `mermaid.initialize()` and updates `_mermaidTheme`
+ * when the requested theme differs from the current one. This means an export that
+ * interleaves with a live re-render could momentarily cause the wrong theme to be
+ * used for that render (low practical risk since exports are discrete user actions,
+ * but worth being aware of). A future improvement would be to thread the theme
+ * through render options rather than via the global, but Mermaid v11 does not
+ * expose a per-call theme override.
+ *
+ * The result is NOT stored in `mermaidCache` because export renders use a
+ * different theme than the live preview and must not overwrite cached SVGs.
+ */
+export async function renderMermaidForExport(
+  code: string,
+  blockId: string,
+  theme: 'default' | 'dark' = 'default',
+): Promise<string> {
+  try {
+    if (!_mermaidPromise) {
+      _mermaidPromise = (async () => (await import('mermaid')).default)();
+    }
+    const mermaid = await _mermaidPromise;
+
+    // Re-initialize only if the requested theme differs from the current one.
+    // This mutates the shared _mermaidTheme singleton (see note in jsdoc above).
+    if (theme !== _mermaidTheme) {
+      const themeVariables = theme === 'dark'
+        ? {
+            darkMode: true,
+            background: '#1C1D20',
+            mainBkg: '#2b2f37',
+            nodeBorder: '#7FA6CC',
+            nodeTextColor: '#D6D7DA',
+            primaryColor: '#2b2f37',
+            primaryBorderColor: '#7FA6CC',
+            primaryTextColor: '#D6D7DA',
+            secondaryColor: '#343842',
+            tertiaryColor: '#23262d',
+            lineColor: '#9aa0a6',
+            textColor: '#D6D7DA',
+          }
+        : undefined;
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme, themeVariables });
+      _mermaidTheme = theme;
+    }
+
+    // Use an export-specific element id so it does not collide with live-preview ids.
+    const id = `mermaid-export-${blockId}`;
+    const { svg } = await mermaid.render(id, code);
+    const sanitized = DOMPurify.sanitize(
+      svg,
+      MERMAID_PURIFY_CONFIG as unknown as DOMPurifyConfig,
+    ) as unknown as string;
+    // Intentionally NOT stored in mermaidCache — export renders must not
+    // overwrite live-preview cached SVGs.
+    return sanitized;
+  } catch (err) {
+    const msg = err instanceof Error ? escapeHtml(err.message) : 'Diagram error';
+    return `<div class="mermaid-error" data-block-id="${blockId}"><strong>Diagram error:</strong> ${msg}</div>`;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

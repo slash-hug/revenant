@@ -2,11 +2,18 @@
   /**
    * Toolbar.svelte — top action bar.
    *  - Brand mark + segmented view-mode toggle (source / preview / split)
-   *  - "Generate review" (primary) + "Export to Obsidian" (secondary)
+   *  - "Generate review" (primary)
+   *  - Obsidian → compact icon button (per D5)
+   *  - "Export ▾" dropdown: "Export to PDF/HTML" | "Export to Obsidian"
    *  - Theme toggle
-   * Decisions: agent-agnostic label — never "Claude" (TRAP 2).
+   * Decisions:
+   *  - Agent-agnostic label — never "Claude" (TRAP 2).
+   *  - D5: Obsidian → icon-btn, new "Export ▾" dropdown holds export targets.
+   *  - D4: dropdown is a native <dialog> positioned to the button via
+   *         getBoundingClientRect. Esc and outside-click dismiss it.
+   *  - Collapses Export button text to icon at ≤1080px.
    */
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
   import ThemeToggle from './ThemeToggle.svelte';
 
   type ViewMode = 'source' | 'preview' | 'split';
@@ -18,6 +25,7 @@
     viewMode: { mode: ViewMode };
     generateReview: void;
     exportObsidian: void;
+    exportDocument: { preset?: string };
     toggleDrawer: void;
     openPalette: void;
     openShortcuts: void;
@@ -36,6 +44,100 @@
     if (viewMode === mode) return;
     viewMode = mode;
     dispatch('viewMode', { mode });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Export dropdown (D4/D5) — native <dialog> anchored to the button rect.
+  // ---------------------------------------------------------------------------
+
+  let exportDropDialog: HTMLDialogElement | undefined;
+  let exportBtnEl: HTMLButtonElement | undefined;
+  let dropOpen = false;
+
+  function openExportDrop() {
+    if (!exportDropDialog || !exportBtnEl) return;
+    exportDropDialog.show(); // render first so we can measure its width
+    dropOpen = true;
+    const rect = exportBtnEl.getBoundingClientRect();
+    // The trigger lives in the right cluster, so align the menu's RIGHT edge to
+    // the button's and clamp to the viewport — otherwise a menu wide enough for
+    // "Export document (PDF/HTML)…" runs off the right edge and clips.
+    const menuW = exportDropDialog.offsetWidth;
+    const left = Math.max(8, Math.min(rect.right - menuW, window.innerWidth - menuW - 8));
+    exportDropDialog.style.left = `${left}px`;
+    exportDropDialog.style.top = `${rect.bottom + 6}px`;
+    // dialog.show() runs the "dialog focusing steps" and focuses the first item,
+    // leaving it highlighted on open for mouse users. Move focus back to the
+    // trigger so nothing is highlighted; keyboard users press ArrowDown, which
+    // handleEscKeydown moves into the menu (idx -1 → first item). Esc / outside
+    // click still close it.
+    exportBtnEl.focus({ preventScroll: true });
+  }
+
+  function closeExportDrop() {
+    if (!exportDropDialog) return;
+    exportDropDialog.close();
+    dropOpen = false;
+    // Return focus to the trigger button so keyboard flow is preserved.
+    exportBtnEl?.focus();
+  }
+
+  function handleExportDocument() {
+    closeExportDrop();
+    dispatch('exportDocument', {});
+  }
+
+  function handleExportObsidian() {
+    closeExportDrop();
+    dispatch('exportObsidian');
+  }
+
+  // Outside-click dismiss — mirrors PreviewPane affordance-dismiss pattern
+  // (PreviewPane L576–588).
+  function handleOutsideClick(e: MouseEvent) {
+    if (!dropOpen) return;
+    const target = e.target as Element | null;
+    // Allow clicks on the trigger button itself (it will close via toggle).
+    if (target?.closest?.('.export-drop-menu') || target?.closest?.('.export-btn')) return;
+    closeExportDrop();
+  }
+
+  // Esc and ArrowUp/Down roving navigation for role="menu" AT semantics.
+  function handleEscKeydown(e: KeyboardEvent) {
+    if (!dropOpen) return;
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      closeExportDrop();
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!exportDropDialog) return;
+      e.preventDefault();
+      const items = Array.from(
+        exportDropDialog.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+      );
+      if (!items.length) return;
+      const focused = document.activeElement as HTMLElement | null;
+      const idx = items.indexOf(focused as HTMLElement);
+      const next = e.key === 'ArrowDown'
+        ? items[(idx + 1) % items.length]
+        : items[(idx - 1 + items.length) % items.length];
+      next.focus();
+    }
+  }
+
+  onMount(() => {
+    window.addEventListener('mousedown', handleOutsideClick, true);
+    window.addEventListener('keydown', handleEscKeydown, true);
+    return () => {
+      window.removeEventListener('mousedown', handleOutsideClick, true);
+      window.removeEventListener('keydown', handleEscKeydown, true);
+    };
+  });
+
+  function toggleExportDrop() {
+    if (dropOpen) closeExportDrop();
+    else openExportDrop();
   }
 </script>
 
@@ -89,17 +191,62 @@
       Generate review
     </button>
 
-    <button
-      type="button"
-      class="btn btn-secondary"
-      on:click={() => dispatch('exportObsidian')}
-      title="Export review to your Obsidian vault"
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 3 4 9v6l8 6 8-6V9l-8-6Z" /><path d="M12 3v18" />
-      </svg>
-      Export to Obsidian
-    </button>
+    <!-- Export dropdown trigger (D5 option c) -->
+    <div class="export-wrap">
+      <button
+        type="button"
+        class="btn btn-secondary export-btn"
+        class:active={dropOpen}
+        aria-expanded={dropOpen}
+        aria-haspopup="menu"
+        bind:this={exportBtnEl}
+        on:click={toggleExportDrop}
+        title="Export options"
+      >
+        <!-- Upload/export icon -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 16V4M8 8l4-4 4 4" />
+          <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+        </svg>
+        <span class="export-label">Export</span>
+        <svg class="chevron" class:flipped={dropOpen} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      <!-- Native non-modal <dialog> dropdown menu (D4) -->
+      <dialog
+        bind:this={exportDropDialog}
+        class="export-drop-menu"
+        role="menu"
+        aria-label="Export options"
+      >
+        <button
+          type="button"
+          class="drop-item"
+          role="menuitem"
+          on:click={handleExportDocument}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M5 21V5a2 2 0 0 1 2-2h7l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2Z" />
+          </svg>
+          Export to PDF/HTML
+        </button>
+        <div class="drop-divider" aria-hidden="true"></div>
+        <button
+          type="button"
+          class="drop-item"
+          role="menuitem"
+          on:click={handleExportObsidian}
+        >
+          <!-- Obsidian diamond icon -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3 4 9v6l8 6 8-6V9l-8-6Z" /><path d="M12 3v18" />
+          </svg>
+          Export to Obsidian
+        </button>
+      </dialog>
+    </div>
 
     <button
       type="button"
@@ -224,6 +371,7 @@
     box-shadow: var(--shadow-sm);
   }
   .btn-secondary:hover { border-color: var(--border-strong); }
+  .btn-secondary.active { border-color: var(--border-strong); background: var(--surface-2); }
 
   .icon-btn {
     display: inline-flex;
@@ -248,7 +396,7 @@
     margin: 0 var(--sp-1);
   }
 
-  /* Command-palette trigger — a quiet search affordance. */
+  /* Command-palette trigger */
   .cmdk-trigger {
     display: inline-flex;
     align-items: center;
@@ -270,11 +418,76 @@
     color: var(--text-faint);
   }
 
-  @media (max-width: 1080px) {
-    .cmdk-trigger kbd { display: none; }
+  /* Export dropdown wrapper */
+  .export-wrap {
+    position: relative;
   }
 
+  .export-btn .chevron {
+    width: 13px;
+    height: 13px;
+    transition: transform var(--dur-fast) var(--ease-out);
+  }
+  .export-btn .chevron.flipped { transform: rotate(180deg); }
+
+  /* Native <dialog> dropdown menu (D4: positioned via inline style from JS) */
+  .export-drop-menu {
+    /* dialog reset */
+    margin: 0;
+    padding: 4px;
+    position: fixed; /* overridden by JS-set left/top */
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow-pop);
+    width: max-content;        /* size to the widest item — no internal truncation */
+    min-width: 150px;
+    max-width: calc(100vw - 16px);
+    z-index: var(--z-dropdown, 500);
+    animation: drop-in var(--dur-fast) var(--ease-out);
+  }
+  .export-drop-menu[open] { display: flex; flex-direction: column; gap: 2px; }
+  @keyframes drop-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .export-drop-menu { animation: none; } }
+
+  .drop-item {
+    font: inherit;
+    font-size: var(--fs-sm);
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    border-radius: var(--r-md);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--dur-fast);
+    white-space: nowrap;
+  }
+  .drop-item svg { width: 15px; height: 15px; color: var(--text-muted); flex: none; }
+  .drop-item:hover,
+  .drop-item:focus-visible {
+    /* Soft highlight for both hover and keyboard focus — a menu-standard
+       indicator; no harsh accent ring (which the auto-focused first item showed
+       on open). */
+    background: var(--surface-2);
+    outline: none;
+  }
+
+  .drop-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 2px 0;
+  }
+
+  /* Responsive: at ≤1080px, hide "Export" text label — show icon only */
   @media (max-width: 1080px) {
+    .export-label { display: none; }
+    .cmdk-trigger kbd { display: none; }
     .brand-word { display: none; }
   }
 </style>

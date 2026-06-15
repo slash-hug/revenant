@@ -3,6 +3,7 @@
 // Sub-module stubs allow WS-B/C/D to fill implementations without editing this file.
 
 pub mod ipc;
+pub mod export;
 
 // Integration tests (all workstreams). Compiled only in test builds so they
 // never ship in the production binary.
@@ -128,6 +129,10 @@ pub fn run() {
             ipc::get_settings,
             ipc::set_settings,
             ipc::snapshot_webview,
+            // Export commands (A3)
+            ipc::export_html,
+            ipc::export_pdf,
+            ipc::read_file_bytes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
