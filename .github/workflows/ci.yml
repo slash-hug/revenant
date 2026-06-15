@@ -7,6 +7,25 @@ on:
     branches: [main]
 
 jobs:
+  security-guard:
+    name: Security guard (no fs/shell escalation)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # All file I/O is routed through path-confined Rust IPC commands. A webview
+      # `fs:`/`shell:` capability or a tauri-plugin-fs/shell init would bypass that
+      # confinement — fail the build if either is reintroduced (security #23).
+      - name: No fs/shell capability or plugin
+        run: |
+          set -e
+          if grep -REn '"(fs|shell):' src-tauri/capabilities/; then
+            echo "::error::Forbidden fs:/shell: capability — file I/O must stay in Rust IPC (#23)."; exit 1
+          fi
+          if grep -REn 'tauri_plugin_(fs|shell)::init' src-tauri/src/; then
+            echo "::error::tauri-plugin-fs/shell init reintroduced (#23)."; exit 1
+          fi
+          echo "OK — no fs/shell escalation."
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

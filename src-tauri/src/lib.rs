@@ -52,7 +52,10 @@ pub struct WatchHandle {
 pub fn run() {
     tauri::Builder::default()
         .manage(FileWatchers::default())
-        .plugin(tauri_plugin_fs::init())
+        // No tauri-plugin-fs: all file I/O is routed through our own #[command]s
+        // (path-confined in paths.rs). Registering the fs plugin would expose its
+        // commands to the webview the moment any `fs:` capability were added,
+        // bypassing that confinement — so it stays out entirely (security #23).
         .plugin(tauri_plugin_cli::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
