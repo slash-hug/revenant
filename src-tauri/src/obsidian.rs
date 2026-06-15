@@ -13,7 +13,8 @@ use crate::frontmatter::{merge_mappings, parse, reassemble};
 use crate::secrets::{get_rest_key, SecretsError};
 use crate::settings::{Settings, SettingsError};
 use reqwest::blocking::Client;
-use std::path::PathBuf;
+use serde::Serialize;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -27,6 +28,99 @@ pub const REST_DEFAULT_HTTPS_PORT: u16 = 27124;
 
 /// Connection timeout for REST reachability probes.
 const PROBE_TIMEOUT_SECS: u64 = 3;
+
+/// Result of a connection probe — tells the caller (and the UI settings panel)
+/// whether the Obsidian REST plugin is reachable and properly authorized.
+///
+/// Serialized with snake_case so the IPC layer can forward it to the frontend
+/// as `"ok"`, `"unauthorized"`, or `"unreachable"` without extra mapping.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnStatus {
+    /// The Local REST API plugin is running and the key is accepted.
+    Ok,
+    /// The plugin is running but the key was rejected (HTTP 401).
+    Unauthorized,
+    /// The plugin is not running or Obsidian is not open (connection refused / timeout).
+    Unreachable,
+}
+
+/// Probe the Obsidian Local REST API with a read-only authenticated `GET /vault/`
+/// (vault-root listing).
+///
+/// This is intentionally read-only so it can be called to test connectivity
+/// without side effects.  Maps HTTP responses as:
+/// - 2xx → `ConnStatus::Ok`
+/// - 401 → `ConnStatus::Unauthorized`
+/// - connection refused / timeout → `ConnStatus::Unreachable`
+pub fn probe_obsidian(api_key: &str, port: u16) -> ConnStatus {
+    let client = rest_client();
+    let url = format!("http://127.0.0.1:{port}/vault/");
+
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send();
+
+    match response {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            if (200..300).contains(&status) {
+                ConnStatus::Ok
+            } else if status == 401 {
+                ConnStatus::Unauthorized
+            } else {
+                // Any other non-2xx: treat as unreachable for probe purposes.
+                ConnStatus::Unreachable
+            }
+        }
+        Err(e) => {
+            if e.is_connect() || e.is_timeout() || is_connection_refused(&e) {
+                ConnStatus::Unreachable
+            } else {
+                ConnStatus::Unreachable
+            }
+        }
+    }
+}
+
+/// Synchronous helper that resolves the REST key and probes the Obsidian plugin.
+///
+/// Key resolution order:
+/// 1. Use the explicitly supplied `key` (typed, unsaved — used when the user is
+///    testing a key before saving it in the settings UI).
+/// 2. If `key` is `None`, load settings from `settings_path` and look up the
+///    stored `rest_key_ref` in the OS keychain.
+/// 3. If no key is available either way → `ConnStatus::Unreachable`.
+///
+/// The raw key is used ONLY for the probe and is NEVER persisted or logged.
+///
+/// Intended to be wrapped in `tauri::async_runtime::spawn_blocking` by the IPC
+/// layer (WS-A) so it doesn't block the async Tauri event loop.
+pub fn test_obsidian_connection(settings_path: &Path, key: Option<String>) -> ConnStatus {
+    let api_key = match key {
+        // Caller supplied an explicit (unsaved) key — use it directly.
+        Some(k) => k,
+        // No explicit key — load settings and retrieve from keychain.
+        None => {
+            use crate::settings::get_settings;
+            let settings = match get_settings(&settings_path.to_path_buf()) {
+                Ok(s) => s,
+                Err(_) => return ConnStatus::Unreachable,
+            };
+            let key_ref = match settings.rest_key_ref {
+                Some(r) => r,
+                None => return ConnStatus::Unreachable,
+            };
+            match get_rest_key(&key_ref) {
+                Ok(Some(k)) => k,
+                _ => return ConnStatus::Unreachable,
+            }
+        }
+    };
+
+    probe_obsidian(&api_key, REST_DEFAULT_HTTP_PORT)
+}
 
 /// A process-wide reqwest client, built once and reused (perf #4). The probe
 /// timeout bounds how long an unreachable Obsidian blocks before we fall back to

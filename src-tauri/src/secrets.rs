@@ -51,3 +51,33 @@ pub fn delete_rest_key(key_ref: &str) -> Result<(), SecretsError> {
         Err(e) => Err(SecretsError::Keychain(e)),
     }
 }
+
+/// Check whether a key is currently stored in the keychain for `key_ref`.
+///
+/// Returns `true` if a key exists and is retrievable, `false` otherwise.
+/// Useful for settings-panel "configured" indicators without exposing the key.
+pub fn has_rest_key(key_ref: &str) -> bool {
+    matches!(get_rest_key(key_ref), Ok(Some(_)))
+}
+
+// ── Test helpers ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+pub mod test_helpers {
+    /// Install the `keyring` in-memory mock credential builder for the current
+    /// test process.
+    ///
+    /// Call this once — typically at the top of a test that exercises keychain
+    /// code — to redirect all `keyring::Entry` calls to a process-local,
+    /// non-persistent store.  This avoids touching the real macOS Keychain or
+    /// Windows Credential Manager in CI.
+    ///
+    /// IMPORTANT: `set_default_credential_builder` is a one-way global write
+    /// (the keyring crate uses an `OnceLock` internally), so calling this more
+    /// than once per process is fine — subsequent calls are no-ops.  Tests that
+    /// run in parallel should each set up their own unique `key_ref` strings to
+    /// avoid cross-test interference within the shared in-memory store.
+    pub fn init_mock_keychain() {
+        keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+    }
+}

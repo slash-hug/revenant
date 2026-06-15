@@ -7,8 +7,12 @@
 /// 3. Missing file returns default settings.
 /// 4. Migration: version 0 (no version field) is migrated in-place to v1.
 /// 5. Unknown future version is quarantined (.bak) and returns an error.
+/// 6. (D-4) set/clear/has rest-key: keychain stores key + sets rest_key_ref;
+///    clearing nulls both; has_rest_key reflects state.
+use crate::secrets::test_helpers::init_mock_keychain;
+use crate::secrets::{delete_rest_key, get_rest_key, has_rest_key, store_rest_key};
 use crate::settings::{
-    get_settings, load_settings, save_settings, Settings, SettingsError,
+    get_settings, load_settings, save_settings, set_settings, Settings, SettingsError,
     CURRENT_SCHEMA_VERSION,
 };
 use std::path::PathBuf;
@@ -205,4 +209,192 @@ fn test_settings_struct_has_no_raw_key_field() {
             "Serialized default settings must not contain '{forbidden}'. JSON: {json}"
         );
     }
+}
+
+// ── D-4: set / clear / has rest-key lifecycle ────────────────────────────────
+//
+// These tests exercise the composition of `secrets` + `settings` to verify the
+// full store-key → reflect-in-settings → retrieve → clear lifecycle.
+//
+// The `keyring` mock credential builder (`keyring::mock::default_credential_builder`)
+// is per-Entry-instance: it creates a fresh `MockCredential` for every `Entry::new()`
+// call, so secrets do NOT persist across separate Entry instantiations.  This means
+// cross-call round-trips (store_rest_key → get_rest_key) cannot be tested with the
+// mock and are guarded with `#[ignore]` — they require the real OS keychain and are
+// validated manually or in an integration environment.
+//
+// What we CAN test without the real keychain:
+// - settings side: rest_key_ref persists / clears correctly in the JSON file.
+// - mock builder installs without panic (init_mock_keychain is callable).
+// - has_rest_key returns false for a key that was never stored via the mock.
+// - delete_rest_key is a no-op when no entry exists (NoEntry → Ok).
+
+/// Settings side of the "set key" flow:
+/// - persisting rest_key_ref in the settings JSON file works correctly.
+/// - the raw key never appears in the JSON.
+/// - clearing nulls rest_key_ref in the JSON.
+///
+/// This does NOT exercise the keychain; keychain operations are covered by the
+/// integration tests below (marked `#[ignore]`).
+#[test]
+fn test_settings_ref_persists_and_clears() {
+    let dir = TempDir::new().unwrap();
+    let path = tmp_settings_path(&dir);
+
+    let key_ref = "obsidian-rest";
+    let raw_key = "super-secret-key-must-not-appear";
+
+    // Simulate "set key" — write the ref (not the raw key) to settings.
+    let settings_with_ref = Settings {
+        rest_key_ref: Some(key_ref.to_string()),
+        ..Settings::default()
+    };
+    set_settings(&path, settings_with_ref).expect("save should succeed");
+
+    let raw_json = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        raw_json.contains("obsidian-rest"),
+        "rest_key_ref label must appear in settings JSON"
+    );
+    assert!(
+        !raw_json.contains(raw_key),
+        "raw API key must not appear in settings JSON: {raw_json}"
+    );
+
+    let loaded = load_settings(&path).expect("load should succeed");
+    assert_eq!(
+        loaded.rest_key_ref,
+        Some(key_ref.to_string()),
+        "settings must persist rest_key_ref"
+    );
+
+    // Simulate "clear key" — null the ref in settings.
+    let settings_cleared = Settings {
+        rest_key_ref: None,
+        ..Settings::default()
+    };
+    set_settings(&path, settings_cleared).expect("clear save should succeed");
+
+    let cleared = load_settings(&path).expect("load after clear should succeed");
+    assert_eq!(
+        cleared.rest_key_ref, None,
+        "rest_key_ref must be null after clearing"
+    );
+}
+
+/// `has_rest_key` returns false when no key has been stored (uses mock keychain).
+#[test]
+fn test_has_rest_key_false_when_no_key_stored() {
+    init_mock_keychain();
+    let key_ref = "obsidian-rest-d4-never-stored";
+    assert!(
+        !has_rest_key(key_ref),
+        "has_rest_key must return false for a key that was never stored"
+    );
+}
+
+/// `delete_rest_key` is a no-op (Ok) when no entry exists (mock keychain).
+#[test]
+fn test_delete_rest_key_no_op_when_absent() {
+    init_mock_keychain();
+    let key_ref = "obsidian-rest-d4-absent";
+    let result = delete_rest_key(key_ref);
+    assert!(
+        result.is_ok(),
+        "delete_rest_key must be Ok when no entry exists (NoEntry treated as Ok)"
+    );
+    // Second call is also fine.
+    assert!(delete_rest_key(key_ref).is_ok());
+}
+
+/// `get_rest_key` returns None for an unstored key (mock keychain).
+#[test]
+fn test_get_rest_key_returns_none_when_absent() {
+    init_mock_keychain();
+    let key_ref = "obsidian-rest-d4-get-absent";
+    let result = get_rest_key(key_ref).expect("get should not error when absent");
+    assert_eq!(result, None, "get_rest_key must return None when no key stored");
+}
+
+// ── Integration tests (require real OS keychain) ─────────────────────────────
+//
+// The `keyring` mock builder is per-Entry-instance (no cross-call persistence),
+// so round-trip tests (store → get, store → has, store → delete → get → None)
+// must run against the real macOS Keychain or Windows Credential Manager.
+// These are marked `#[ignore]` so CI passes without the OS keychain available.
+// Run manually with: cargo test -- --ignored
+
+/// Full round-trip: store key → get key returns same value.
+/// Requires real OS keychain.
+#[test]
+#[ignore = "requires real OS keychain (macOS Keychain / Windows Credential Manager)"]
+fn test_store_and_get_rest_key_round_trip() {
+    let key_ref = "obsidian-rest-d4-roundtrip";
+    let raw_key = "test-key-round-trip-abc123";
+
+    store_rest_key(key_ref, raw_key).expect("store should succeed");
+    let retrieved = get_rest_key(key_ref).expect("get should succeed");
+    assert_eq!(
+        retrieved,
+        Some(raw_key.to_string()),
+        "get must return the stored key"
+    );
+    let _ = delete_rest_key(key_ref); // cleanup
+}
+
+/// store → has_rest_key returns true; delete → has_rest_key returns false.
+/// Requires real OS keychain.
+#[test]
+#[ignore = "requires real OS keychain (macOS Keychain / Windows Credential Manager)"]
+fn test_has_rest_key_reflects_state() {
+    let key_ref = "obsidian-rest-d4-has";
+    let _ = delete_rest_key(key_ref); // ensure clean slate
+
+    assert!(!has_rest_key(key_ref), "has_rest_key must be false before storing");
+    store_rest_key(key_ref, "some-key").expect("store should succeed");
+    assert!(has_rest_key(key_ref), "has_rest_key must be true after storing");
+    delete_rest_key(key_ref).expect("delete should succeed");
+    assert!(!has_rest_key(key_ref), "has_rest_key must be false after deleting");
+}
+
+/// Full composition: settings + keychain set/clear lifecycle.
+/// Requires real OS keychain.
+#[test]
+#[ignore = "requires real OS keychain (macOS Keychain / Windows Credential Manager)"]
+fn test_full_set_clear_rest_key_lifecycle() {
+    let dir = TempDir::new().unwrap();
+    let path = tmp_settings_path(&dir);
+
+    let key_ref = "obsidian-rest-d4-lifecycle";
+    let raw_key = "lifecycle-secret-key-xyz";
+
+    // Store key in keychain.
+    store_rest_key(key_ref, raw_key).expect("store should succeed");
+
+    // Persist ref in settings.
+    let settings = Settings {
+        rest_key_ref: Some(key_ref.to_string()),
+        ..Settings::default()
+    };
+    set_settings(&path, settings).expect("save should succeed");
+
+    // Verify: key retrieved, ref in settings, raw key absent from JSON.
+    let retrieved = get_rest_key(key_ref).expect("get should succeed");
+    assert_eq!(retrieved, Some(raw_key.to_string()), "stored key must be retrievable");
+    let loaded = load_settings(&path).expect("load should succeed");
+    assert_eq!(loaded.rest_key_ref, Some(key_ref.to_string()), "ref must be in settings");
+    let raw_json = std::fs::read_to_string(&path).unwrap();
+    assert!(!raw_json.contains(raw_key), "raw key must not appear in settings JSON");
+    assert!(has_rest_key(key_ref), "has_rest_key must be true after storing");
+
+    // Clear: delete from keychain and null ref in settings.
+    delete_rest_key(key_ref).expect("delete should succeed");
+    let settings_cleared = Settings { rest_key_ref: None, ..Settings::default() };
+    set_settings(&path, settings_cleared).expect("clear should succeed");
+
+    // Verify cleared state.
+    assert_eq!(get_rest_key(key_ref).unwrap(), None, "key must be None after delete");
+    assert!(!has_rest_key(key_ref), "has_rest_key must be false after clearing");
+    let cleared = load_settings(&path).expect("load after clear should succeed");
+    assert_eq!(cleared.rest_key_ref, None, "settings ref must be null after clearing");
 }
