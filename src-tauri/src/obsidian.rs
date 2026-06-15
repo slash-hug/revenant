@@ -34,7 +34,7 @@ const PROBE_TIMEOUT_SECS: u64 = 3;
 ///
 /// Serialized with snake_case so the IPC layer can forward it to the frontend
 /// as `"ok"`, `"unauthorized"`, or `"unreachable"` without extra mapping.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnStatus {
     /// The Local REST API plugin is running and the key is accepted.
@@ -374,73 +374,6 @@ fn filesystem_copy(
     }
     std::fs::write(&normalized, content)?;
     Ok(())
-}
-
-/// Read-only probe for the Obsidian Local REST API.
-///
-/// Resolves the API key — uses `key` (in-memory, unsaved; D6) when `Some`,
-/// otherwise loads `settings.rest_key_ref` and retrieves from the keychain.
-/// When no key is available returns `ConnStatus::Unreachable` immediately.
-///
-/// Issues an authenticated `GET /vault/` against the configured REST port.
-/// Status mapping: 2xx → `Ok`, 401 → `Unauthorized`, network error/timeout →
-/// `Unreachable`.
-///
-/// The raw `key`, if provided, is used only for the duration of this call and
-/// is NEVER persisted or logged.
-///
-/// NOTE: WS-D owns this file and will replace this stub with the full
-/// implementation (mockito-tested probe).  WS-A adds the stub here so the
-/// IPC command shell (`ipc::test_obsidian_connection`) compiles in the
-/// isolated worktree before WS-D lands.
-pub fn test_obsidian_connection(
-    settings_path: &std::path::Path,
-    key: Option<String>,
-) -> crate::ipc::ConnStatus {
-    // Resolve the key: prefer the caller-supplied in-memory key (D6).
-    let api_key = if let Some(k) = key {
-        k
-    } else {
-        // Fall back to the saved keychain entry.
-        let settings = match crate::settings::get_settings(&settings_path.to_path_buf()) {
-            Ok(s) => s,
-            Err(_) => return crate::ipc::ConnStatus::Unreachable,
-        };
-        let key_ref = match settings.rest_key_ref {
-            Some(r) => r,
-            None => return crate::ipc::ConnStatus::Unreachable,
-        };
-        match crate::secrets::get_rest_key(&key_ref) {
-            Ok(Some(k)) => k,
-            _ => return crate::ipc::ConnStatus::Unreachable,
-        }
-    };
-
-    probe_obsidian(&api_key, REST_DEFAULT_HTTP_PORT)
-}
-
-/// Read-only probe: authenticated `GET /vault/` (vault-root listing, D3).
-///
-/// Status mapping:
-/// - 2xx → `ConnStatus::Ok`
-/// - 401 → `ConnStatus::Unauthorized`
-/// - Connection refused / timeout / any other error → `ConnStatus::Unreachable`
-pub fn probe_obsidian(api_key: &str, port: u16) -> crate::ipc::ConnStatus {
-    let client = rest_client();
-    let url = format!("http://127.0.0.1:{port}/vault/");
-    let response = client
-        .get(&url)
-        .header("Authorization", format!("Bearer {api_key}"))
-        .send();
-
-    match response {
-        Ok(resp) => match resp.status().as_u16() {
-            200..=299 => crate::ipc::ConnStatus::Ok,
-            401 => crate::ipc::ConnStatus::Unauthorized,
-            _ => crate::ipc::ConnStatus::Unreachable,
-        },
-        Err(_) => crate::ipc::ConnStatus::Unreachable,
-    }
 }
 
 /// Normalize a `PathBuf` by resolving `.` and `..` components lexically

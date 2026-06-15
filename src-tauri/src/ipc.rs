@@ -813,25 +813,13 @@ pub async fn set_settings(settings: Settings) -> IpcResult<()> {
 // Settings / keychain commands (A2) — store, clear, and probe the REST key.
 // ---------------------------------------------------------------------------
 
-/// Result of `test_obsidian_connection` — a typed probe outcome that is
-/// returned as `IpcResult<ConnStatus>` rather than being routed through
-/// `IpcError` / `obsidian_err()`.  The existing `obsidian_err()` mapping
-/// handles export errors; the probe needs its own success-typed result so
-/// the frontend can render a status chip without treating every non-ok state
-/// as a thrown exception.
+/// Re-export the canonical ConnStatus from obsidian.rs so it is part of the
+/// public IPC surface (serialised as `"ok"` | `"unauthorized"` | `"unreachable"`).
 ///
-/// Values are snake_case-serialized to match the TypeScript `ConnStatus` type:
-///   `"ok"` | `"unauthorized"` | `"unreachable"`.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnStatus {
-    /// REST server reachable, key accepted, vault listing succeeded.
-    Ok,
-    /// Server reachable but key was rejected (HTTP 401).
-    Unauthorized,
-    /// Server not running, connection refused, or timeout.
-    Unreachable,
-}
+/// `ConnStatus` is defined once in `crate::obsidian` (WS-D) and re-exported here
+/// so the Tauri command `test_obsidian_connection` can reference it without
+/// introducing a duplicate definition.
+pub use crate::obsidian::ConnStatus;
 
 /// Store the Obsidian REST API key in the OS keychain, persist the opaque
 /// reference in settings, and return the updated `Settings`.
