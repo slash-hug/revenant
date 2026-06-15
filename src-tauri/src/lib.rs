@@ -78,6 +78,25 @@ impl FileWatchers {
     }
 }
 
+/// Resolve a CLI path argument to an absolute path.
+///
+/// If `path` is already absolute, return it as-is. Otherwise, join it onto
+/// `cwd` (the working directory at capture time) and canonicalize. Falls back
+/// to the joined-but-uncanonicalized path if the file doesn't exist yet.
+fn resolve_cli_path(path: &str, cwd: &str) -> String {
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        return path.to_string();
+    }
+    let joined = std::path::Path::new(cwd).join(p);
+    // Try canonicalize (resolves symlinks, normalizes ./ and ../);
+    // fall back to the joined path if the file doesn't exist yet.
+    std::fs::canonicalize(&joined)
+        .unwrap_or(joined)
+        .to_string_lossy()
+        .into_owned()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -90,14 +109,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
-            tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            tauri_plugin_single_instance::init(|app, argv, cwd| {
                 // When a second instance is launched (e.g., `revenant another.md`),
                 // forward the file path argument to the already-running instance via
                 // the `open_file_request` event so the frontend can open a new tab.
                 // The webview is already loaded here, so emit immediately.
+                //
+                // Resolve relative paths against `cwd` (the second instance's working
+                // directory) — the running instance's CWD differs from the terminal.
                 if let Some(path) = argv.get(1) {
                     if !path.starts_with('-') {
-                        let _ = app.emit("open_file_request", path);
+                        let resolved = resolve_cli_path(path, &cwd);
+                        let _ = app.emit("open_file_request", resolved);
                     }
                 }
             }),
@@ -111,12 +134,17 @@ pub fn run() {
             // registered its `open_file_request` listener — emitting synchronously
             // here would be missed. The single-instance path above does not need
             // this delay (its window already exists).
+            //
+            // Resolve relative paths against the process CWD at startup so the
+            // path is absolute before the event reaches the frontend.
             if let Some(path) = std::env::args().nth(1) {
                 if !path.starts_with('-') {
+                    let cwd = std::env::current_dir().unwrap_or_default();
+                    let resolved = resolve_cli_path(&path, &cwd.to_string_lossy());
                     let handle = app.handle().clone();
                     std::thread::spawn(move || {
                         std::thread::sleep(std::time::Duration::from_millis(700));
-                        let _ = handle.emit("open_file_request", path);
+                        let _ = handle.emit("open_file_request", resolved);
                     });
                 }
             }
