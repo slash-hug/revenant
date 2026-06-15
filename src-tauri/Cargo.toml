@@ -46,7 +46,6 @@ tokio = { version = "1", features = ["full"] }
 fd-lock = "3"
 percent-encoding = "2"
 base64 = "0.21"
-semver = "1"
 
 # macOS-only: native WKWebView snapshot for the open transition (see snapshot.rs).
 # Versions match the objc2 family wry 0.55 already locks, so no extra crates are
