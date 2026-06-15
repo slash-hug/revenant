@@ -51,12 +51,15 @@ vi.mock('../lib/styles/markdown.css?raw', () => ({
   default: '/* markdown.css mock */',
 }));
 
-// Mock renderMermaid / renderCodeBlock to avoid loading heavy deps.
+// Mock renderMermaid / renderMermaidForExport / renderCodeBlock to avoid loading heavy deps.
 vi.mock('../lib/render/markdown', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/render/markdown')>();
   return {
     ...actual,
     renderMermaid: vi.fn().mockResolvedValue('<svg data-testid="mermaid-svg"><text>diagram</text></svg>'),
+    // renderMermaidForExport is used by hydrateMermaid in documentExport.ts;
+    // mock it to the same SVG stub so the jsdom environment (no getBBox) doesn't break.
+    renderMermaidForExport: vi.fn().mockResolvedValue('<svg data-testid="mermaid-svg"><text>diagram</text></svg>'),
     renderCodeBlock: vi.fn().mockImplementation((code: string, lang: string) =>
       Promise.resolve(
         `<pre><code class="hljs language-${lang || 'plaintext'}">${code}</code></pre>`,

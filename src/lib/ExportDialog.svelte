@@ -26,20 +26,24 @@
   import type { Annotation } from './types/ipc';
 
   // ---------------------------------------------------------------------------
-  // Types for WS-A/B deliverables (matched to plan contract)
-  // These props will be bound by App.svelte once WS-A and WS-B land.
+  // Types for WS-A/B deliverables (matched to actual signatures)
+  //
+  // buildExportDocument(opts: ExportOpts): Promise<string>  — single-arg object form
+  // exportHtml(outPath, html): Promise<string>              — returns written path
+  // exportPdf(outPath, html): Promise<string>               — returns written path
   // ---------------------------------------------------------------------------
 
   interface BuildExportOpts {
-    docPath: string;
-    includeComments: boolean;
-    annotations: Annotation[];
-    generalNotes: string;
+    content: string;
+    docPath?: string;
+    includeComments?: boolean;
+    annotations?: Annotation[];
+    generalNotes?: string;
   }
 
-  type BuildExportFn = (content: string, opts: BuildExportOpts) => Promise<string>;
-  type ExportHtmlFn = (outPath: string, html: string) => Promise<void>;
-  type ExportPdfFn = (outPath: string, html: string) => Promise<void>;
+  type BuildExportFn = (opts: BuildExportOpts) => Promise<string>;
+  type ExportHtmlFn = (outPath: string, html: string) => Promise<string>;
+  type ExportPdfFn = (outPath: string, html: string) => Promise<string>;
 
   // ---------------------------------------------------------------------------
   // Props
@@ -61,15 +65,16 @@
   export let content: string = '';
 
   /**
-   * WS-B deliverable: buildExportDocument. Injected by App.svelte once WS-B lands.
+   * WS-B deliverable: buildExportDocument. Injected by App.svelte.
+   * Signature: buildExportDocument(opts: ExportOpts) → Promise<string>.
    * Falls back to a no-op placeholder that returns the raw content so the dialog
    * does not crash if called before WS-B is integrated.
    */
-  export let buildExportDocument: BuildExportFn = async (src) => src;
+  export let buildExportDocument: BuildExportFn = async (opts) => opts.content ?? '';
 
   /**
    * WS-A deliverable: exportHtml IPC wrapper. Injected by App.svelte.
-   * Falls back to a no-op that logs a warning.
+   * Returns the written path string on success.
    */
   export let exportHtml: ExportHtmlFn = async () => {
     throw new Error('exportHtml: WS-A IPC wrapper not yet wired');
@@ -77,7 +82,7 @@
 
   /**
    * WS-A deliverable: exportPdf IPC wrapper. Injected by App.svelte.
-   * Falls back to a no-op that throws so the error toast fires.
+   * Returns the written path string on success; throws so the error toast fires.
    */
   export let exportPdf: ExportPdfFn = async () => {
     throw new Error('exportPdf: WS-A IPC wrapper not yet wired');
@@ -189,7 +194,8 @@
         return;
       }
 
-      const html = await buildExportDocument(content, {
+      const html = await buildExportDocument({
+        content,
         docPath,
         includeComments,
         annotations,

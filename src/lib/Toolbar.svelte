@@ -25,7 +25,7 @@
     viewMode: { mode: ViewMode };
     generateReview: void;
     exportObsidian: void;
-    exportDocument: void;
+    exportDocument: { preset?: string };
     toggleDrawer: void;
     openPalette: void;
     openShortcuts: void;
@@ -62,6 +62,10 @@
     exportDropDialog.style.top = `${rect.bottom + 6}px`;
     exportDropDialog.show(); // non-modal so clicks outside bubble normally
     dropOpen = true;
+    // Move focus to the first menu item so AT users get arrow-key navigation
+    // immediately after the menu opens (role="menu" AT convention).
+    const first = exportDropDialog.querySelector<HTMLElement>('[role="menuitem"]');
+    if (first) first.focus();
   }
 
   function closeExportDrop() {
@@ -74,7 +78,7 @@
 
   function handleExportDocument() {
     closeExportDrop();
-    dispatch('exportDocument');
+    dispatch('exportDocument', {});
   }
 
   function handleExportObsidian() {
@@ -92,11 +96,27 @@
     closeExportDrop();
   }
 
-  // Esc — close via keydown because non-modal dialog cancel doesn't fire.
+  // Esc and ArrowUp/Down roving navigation for role="menu" AT semantics.
   function handleEscKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && dropOpen) {
+    if (!dropOpen) return;
+    if (e.key === 'Escape') {
       e.stopPropagation();
       closeExportDrop();
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!exportDropDialog) return;
+      e.preventDefault();
+      const items = Array.from(
+        exportDropDialog.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+      );
+      if (!items.length) return;
+      const focused = document.activeElement as HTMLElement | null;
+      const idx = items.indexOf(focused as HTMLElement);
+      const next = e.key === 'ArrowDown'
+        ? items[(idx + 1) % items.length]
+        : items[(idx - 1 + items.length) % items.length];
+      next.focus();
     }
   }
 

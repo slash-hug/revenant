@@ -23,6 +23,7 @@
     SPLIT_DEFAULT, DRAWER_DEFAULT, SPLIT_MIN, SPLIT_MAX, DRAWER_MIN, DRAWER_MAX,
   } from './lib/layout';
   import ConflictModal from './lib/ConflictModal.svelte';
+  import ExportDialog from './lib/ExportDialog.svelte';
   import UnsavedChangesModal from './lib/UnsavedChangesModal.svelte';
   import KeyboardShortcutsModal from './lib/KeyboardShortcutsModal.svelte';
   import AnnotationComposer from './lib/AnnotationComposer.svelte';
@@ -37,8 +38,9 @@
   import { annotationFocus, clearFocus, focusAnnotation } from './lib/stores/annotationFocus';
   import Toast from './lib/Toast.svelte';
   import { deleteAnnotationWithUndo, cycleAnnotationId } from './lib/annotationActions';
-  import { openFile, getSettings, exportObsidian, saveFile, unwatchFile, exportHtml, exportPdf } from './lib/types/ipc';
+  import { openFile, getSettings, exportObsidian, saveFile, unwatchFile, exportHtml, exportPdf, readFileBytes } from './lib/types/ipc';
   import type { AnchorV1, Sidecar, IpcError, Annotation } from './lib/types/ipc';
+  import { buildExportDocument } from './lib/documentExport';
   import type { Command } from './lib/commandFilter';
   import { generateReview } from './lib/ReviewExporter';
   import { basename } from './lib/util/path';
@@ -683,16 +685,21 @@
   {/if}
 
   <!--
-    ExportDialog (WS-C) — mounted here so it has App-level z-index.
-    `exportDialogPreset` is null when closed; non-null ("pdf"|"html"|"") when open.
-    WS-C will add:
-      import ExportDialog from './lib/ExportDialog.svelte';
-      <ExportDialog
-        preset={exportDialogPreset}
-        on:close={() => (exportDialogPreset = null)}
-      />
-    Until then the dialog state (`exportDialogPreset`) is wired but no modal is rendered.
+    ExportDialog (WS-C) — App-level z-index; open when exportDialogPreset is non-null.
+    Adapters thread readFileBytes (WS-A IPC wrapper) through buildExportDocument so
+    relative image paths are resolved by the Rust core against the doc directory.
   -->
+  <ExportDialog
+    open={exportDialogPreset !== null}
+    docPath={$activeTab?.path ?? ''}
+    content={$activeTab?.content ?? ''}
+    annotations={$annotationsStore.annotations}
+    generalNotes={$annotationsStore.generalNotes}
+    buildExportDocument={(opts) => buildExportDocument({ ...opts, readFileBytes })}
+    exportHtml={exportHtml}
+    exportPdf={exportPdf}
+    on:close={() => (exportDialogPreset = null)}
+  />
 
   <ConflictModal open={conflict.open} filePath={conflict.path} on:reload={handleReload} on:keepMine={handleKeepMine} />
 

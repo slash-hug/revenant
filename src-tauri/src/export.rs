@@ -452,25 +452,35 @@ pub fn read_file_bytes(doc_path: &Path, image_path: &Path) -> IpcResult<String> 
         message: format!("doc path '{}' has no parent directory", doc_path.display()),
     })?;
 
-    // 3. Confinement check — canonicalize image_path so symlinks like /var →
-    //    /private/var (macOS) are resolved before the starts_with comparison.
-    let canon_image = std::fs::canonicalize(image_path).map_err(|e| IpcError {
+    // 3. Resolve relative image paths against the document's parent directory so
+    //    that references like "./images/fig.png" are found relative to the doc,
+    //    not the process CWD (which is unrelated in a Tauri app).
+    //    Absolute paths pass through unchanged.
+    let resolved_image = if image_path.is_absolute() {
+        image_path.to_path_buf()
+    } else {
+        doc_parent.join(image_path)
+    };
+
+    // 4. Confinement check — canonicalize the resolved path so symlinks like
+    //    /var → /private/var (macOS) are resolved before the starts_with comparison.
+    let canon_image = std::fs::canonicalize(&resolved_image).map_err(|e| IpcError {
         code: "IO_ERROR".into(),
-        message: format!("could not canonicalize image path '{}': {e}", image_path.display()),
+        message: format!("could not canonicalize image path '{}': {e}", resolved_image.display()),
     })?;
     crate::paths::assert_confined(&canon_image, &[doc_parent.to_path_buf()]).map_err(|_| IpcError {
         code: "IO_ERROR".into(),
         message: format!(
             "image path '{}' is outside the document directory '{}'",
-            image_path.display(),
+            resolved_image.display(),
             doc_parent.display()
         ),
     })?;
 
-    // 4. Read and base64-encode (use the canonicalized path).
+    // 5. Read and base64-encode (use the canonicalized path).
     let bytes = std::fs::read(&canon_image).map_err(|e| IpcError {
         code: "IO_ERROR".into(),
-        message: format!("could not read '{}': {e}", image_path.display()),
+        message: format!("could not read '{}': {e}", resolved_image.display()),
     })?;
 
     use base64::Engine;

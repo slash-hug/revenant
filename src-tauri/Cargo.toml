@@ -51,7 +51,6 @@ block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSData", "NSDictionary", "NSError", "NSString", "NSURL"] }
 objc2-app-kit = { version = "0.3", features = ["NSImage", "NSBitmapImageRep", "NSGraphics"] }
 objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKSnapshotConfiguration", "WKPDFConfiguration", "WKWebViewConfiguration", "WKNavigation", "WKNavigationDelegate", "block2"] }
-objc2-core-foundation = { version = "0.3" }
 dispatch2 = "0.3"
 
 [dev-dependencies]

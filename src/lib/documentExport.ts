@@ -43,7 +43,7 @@ import jbMono700Url from '@fontsource/jetbrains-mono/files/jetbrains-mono-latin-
 import {
   renderMarkdown,
   renderCodeBlock,
-  renderMermaid,
+  renderMermaidForExport,
   stripFrontmatter,
 } from './render/markdown';
 import type { Annotation } from './types/ipc';
@@ -358,36 +358,27 @@ async function hydrateMermaid(doc: Document): Promise<void> {
   );
   if (!pending.length) return;
 
-  // Force light theme for export: temporarily set data-theme on the live
-  // document root during the render call so currentMermaidTheme() returns
-  // 'default'. We restore it afterward.
-  const root = typeof document !== 'undefined' ? document.documentElement : null;
-  const prevTheme = root?.getAttribute('data-theme') ?? null;
-  root?.setAttribute('data-theme', 'light-export-forced');
-
-  try {
-    await Promise.all(
-      pending.map(async (el) => {
-        const code = el.textContent ?? '';
-        const blockId = el.getAttribute('data-block-id') ?? `mermaid-${Math.random()}`;
-        try {
-          const svg = await renderMermaid(code, blockId);
-          el.removeAttribute('data-mermaid-pending');
-          el.innerHTML = svg;
-        } catch {
-          // Per-block isolation: leave as-is on error.
-        }
-      }),
-    );
-  } finally {
-    if (root) {
-      if (prevTheme === null) {
-        root.removeAttribute('data-theme');
-      } else {
-        root.setAttribute('data-theme', prevTheme);
+  // Use renderMermaidForExport with an explicit 'default' (light) theme so we
+  // never mutate document.documentElement data-theme. Touching that attribute
+  // would trigger PreviewPane's MutationObserver → reRenderMermaidForTheme(),
+  // causing a visible flicker and overwriting the live preview's mermaidCache
+  // with light-theme SVGs even when the user is in dark mode.
+  await Promise.all(
+    pending.map(async (el) => {
+      const code = el.textContent ?? '';
+      // Use an export-namespaced id to avoid colliding with live blockIds in
+      // the shared mermaidCache (renderMermaidForExport does not write to it,
+      // but the id is also used as the SVG element id by Mermaid itself).
+      const blockId = (el.getAttribute('data-block-id') ?? `mermaid-${Math.random()}`) + '-export';
+      try {
+        const svg = await renderMermaidForExport(code, blockId, 'default');
+        el.removeAttribute('data-mermaid-pending');
+        el.innerHTML = svg;
+      } catch {
+        // Per-block isolation: leave as-is on error.
       }
-    }
-  }
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------

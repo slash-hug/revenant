@@ -508,6 +508,70 @@ export async function renderMermaid(code: string, blockId: string): Promise<stri
   }
 }
 
+/**
+ * Render a Mermaid diagram with an **explicit** theme, bypassing the module-level
+ * live-app theme state entirely.
+ *
+ * Used by the export pipeline (documentExport.ts) so it never needs to mutate
+ * `document.documentElement data-theme` to force a light render — which would
+ * trigger PreviewPane's MutationObserver and corrupt the live preview cache.
+ *
+ * The result is NOT stored in `mermaidCache` (keyed by blockId) because export
+ * renders use a different theme than the live preview and must not overwrite
+ * cached SVGs that the live preview will still use.
+ */
+export async function renderMermaidForExport(
+  code: string,
+  blockId: string,
+  theme: 'default' | 'dark' = 'default',
+): Promise<string> {
+  try {
+    // Import and initialize Mermaid for the requested theme without touching
+    // `_mermaidTheme` (the live-preview theme state).
+    if (!_mermaidPromise) {
+      _mermaidPromise = (async () => (await import('mermaid')).default)();
+    }
+    const mermaid = await _mermaidPromise;
+
+    // Re-initialize only if the requested theme differs from the current one so
+    // we avoid redundant work on repeated exports.
+    if (theme !== _mermaidTheme) {
+      const themeVariables = theme === 'dark'
+        ? {
+            darkMode: true,
+            background: '#1C1D20',
+            mainBkg: '#2b2f37',
+            nodeBorder: '#7FA6CC',
+            nodeTextColor: '#D6D7DA',
+            primaryColor: '#2b2f37',
+            primaryBorderColor: '#7FA6CC',
+            primaryTextColor: '#D6D7DA',
+            secondaryColor: '#343842',
+            tertiaryColor: '#23262d',
+            lineColor: '#9aa0a6',
+            textColor: '#D6D7DA',
+          }
+        : undefined;
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme, themeVariables });
+      _mermaidTheme = theme;
+    }
+
+    // Use an export-specific element id so it does not collide with live-preview ids.
+    const id = `mermaid-export-${blockId}`;
+    const { svg } = await mermaid.render(id, code);
+    const sanitized = DOMPurify.sanitize(
+      svg,
+      MERMAID_PURIFY_CONFIG as unknown as DOMPurifyConfig,
+    ) as unknown as string;
+    // Intentionally NOT stored in mermaidCache — export renders must not
+    // overwrite live-preview cached SVGs.
+    return sanitized;
+  } catch (err) {
+    const msg = err instanceof Error ? escapeHtml(err.message) : 'Diagram error';
+    return `<div class="mermaid-error" data-block-id="${blockId}"><strong>Diagram error:</strong> ${msg}</div>`;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

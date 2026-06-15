@@ -146,6 +146,34 @@ fn read_file_bytes_allows_subdir_path() {
     assert_eq!(&decoded[..4], b"\x89PNG");
 }
 
+/// A *relative* image path like "./images/fig.png" must be resolved against
+/// the document's parent directory, not the process CWD, so images embedded
+/// in the same folder as the document are actually found.
+#[test]
+fn read_file_bytes_resolves_relative_path_against_doc_dir() {
+    let dir = TempDir::new().unwrap();
+    let doc = dir.path().join("doc.md");
+    std::fs::write(&doc, "# Doc").unwrap();
+    let images_dir = dir.path().join("images");
+    std::fs::create_dir(&images_dir).unwrap();
+    let img = images_dir.join("fig.png");
+    std::fs::write(&img, b"\x89PNG").unwrap();
+
+    // Pass a relative path exactly as the frontend would send it.
+    let relative = std::path::Path::new("./images/fig.png");
+    let result = crate::export::read_file_bytes(&doc, relative);
+    assert!(
+        result.is_ok(),
+        "expected Ok for relative image path './images/fig.png', got {result:?}"
+    );
+
+    use base64::Engine;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(result.unwrap())
+        .expect("base64 decode failed");
+    assert_eq!(&decoded[..4], b"\x89PNG");
+}
+
 /// A `..` traversal must be rejected before confinement check.
 #[test]
 fn read_file_bytes_rejects_traversal() {
