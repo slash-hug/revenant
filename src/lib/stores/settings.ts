@@ -1,55 +1,83 @@
 /**
- * Settings store — WS-C implements the full version.
+ * settings.ts — client-side settings store.
  *
- * This stub is created by WS-A so that App.svelte (a WS-A file) can import
- * `loadSettings` and the `settings` store without waiting for WS-C to land.
- * WS-C will replace this file with the full writable store + `patchSettings`
- * + optimistic rollback.
+ * Single source of truth for Settings on the frontend. Eager-loaded at app
+ * start (D5) via `loadSettings()` so the panel never shows a null-state
+ * skeleton, and `handleExportObsidian` can read from the store rather than
+ * issuing its own IPC call.
  *
- * Exports (matching the signatures WS-C will provide):
- *   - `settings`: Svelte readable store of `Settings | null`
- *   - `loadSettings()`: eager-loads settings via IPC and populates the store
- *   - `patchSettings(partial)`: optimistic update with rollback on failure (WS-C stub — no-op here)
- *   - `restKeyConfigured`: derived boolean store (`rest_key_ref !== null`)
+ * `patchSettings(partial)` applies optimistic updates: it snapshots the prior
+ * value, sets the new value immediately, and reverts + toasts on IPC failure so
+ * the UI never stays stuck in a broken state.
+ *
+ * `restKeyConfigured` is a derived store that avoids a second `has_rest_key()`
+ * IPC call by reading `rest_key_ref != null` from the loaded settings (D5).
  */
 
-import { writable, derived } from "svelte/store";
-import type { Readable } from "svelte/store";
-import { getSettings } from "$lib/types/ipc";
-import type { Settings } from "$lib/types/ipc";
+import { writable, derived, get } from 'svelte/store';
+import type { Settings } from '../types/ipc';
+import { getSettings, setSettings } from '../types/ipc';
+import { toast } from './toast';
 
-/** Single client-side source of truth for persisted settings. */
+// ---------------------------------------------------------------------------
+// Core store
+// ---------------------------------------------------------------------------
+
 export const settings = writable<Settings | null>(null);
 
 /**
- * Derived store: `true` when a REST key reference is present in settings
- * (avoids a second `has_rest_key()` IPC round-trip on panel open; D5).
- */
-export const restKeyConfigured: Readable<boolean> = derived(
-  settings,
-  ($s) => $s?.rest_key_ref != null,
-);
-
-/**
- * Eager-load settings at app start (D5).
- * Populates the `settings` store with the current persisted values.
- * Call once from App.svelte `onMount` (or equivalent).
+ * Load (or reload) settings from the Rust core and populate the store.
+ * Called once at app start (D5 — eager load).
  */
 export async function loadSettings(): Promise<void> {
+  const loaded = await getSettings();
+  settings.set(loaded);
+}
+
+/**
+ * Apply a partial settings update optimistically.
+ *
+ * 1. Snapshot the prior value.
+ * 2. Merge `partial` into the current store value and set immediately.
+ * 3. Persist via `setSettings`. On failure: revert to the snapshot and show a
+ *    toast so the user knows the change did not land.
+ *
+ * Note: `setSettings` accepts a full `Settings` object. We call it with the
+ * merged value that already includes `schema_version: 1` from the original
+ * loaded settings, so the schema version is never silently dropped.
+ */
+export async function patchSettings(partial: Partial<Settings>): Promise<void> {
+  const prior = get(settings);
+  if (!prior) {
+    // Store has not loaded yet — this is a programming error; surface it.
+    toast.show('Settings not loaded yet. Please try again.');
+    return;
+  }
+
+  const next: Settings = { ...prior, ...partial };
+  settings.set(next);
+
   try {
-    const s = await getSettings();
-    settings.set(s);
+    await setSettings(next);
+    // On success `setSettings` returns void — keep `next` in the store.
   } catch {
-    // Non-fatal: store stays null; UI falls back to defaults.
+    // Revert to the snapshot and let the user know.
+    settings.set(prior);
+    toast.show("Couldn't save settings. Please try again.");
   }
 }
 
+// ---------------------------------------------------------------------------
+// Derived convenience stores
+// ---------------------------------------------------------------------------
+
 /**
- * Apply a partial settings update optimistically (stub — WS-C provides full impl).
- * WS-C will add prior-value snapshot + revert-on-failure + toast.
+ * True when the Obsidian REST key has been stored in the OS keychain
+ * (i.e. `rest_key_ref` is non-null in the loaded settings).
+ *
+ * Reading this avoids a separate `has_rest_key()` IPC round-trip on load (D5).
  */
-export async function patchSettings(
-  _partial: Partial<Settings>,
-): Promise<void> {
-  // WS-C stub: no-op until full implementation lands.
-}
+export const restKeyConfigured = derived(
+  settings,
+  ($settings) => $settings?.rest_key_ref != null,
+);
