@@ -144,6 +144,36 @@ jobs:
           # subcommand — run it via the npm "tauri" script.
           tauriScript: npm run tauri --
 
+      # Launch smoke (tasks/lessons.md): build + unit tests passing does NOT prove
+      # the binary boots. Two ship-time crashes survived green CI because nothing
+      # ran the app — a cli-plugin config panic before the window, and a macOS
+      # didFinishLaunching Obj-C exception (zero-size icon). Launch the built
+      # binary and require it to stay alive; if it aborts on startup the process
+      # exits early and this fails. Runs per-OS so a platform-specific launch
+      # crash (like the macOS one) is caught on that platform.
+      - name: Launch smoke (app boots without crashing)
+        shell: bash
+        run: |
+          set -u
+          case "$RUNNER_OS" in
+            Windows) BIN="src-tauri/target/release/revenant.exe" ;;
+            *)       BIN="src-tauri/target/release/revenant" ;;
+          esac
+          if [ ! -x "$BIN" ]; then echo "::error::built binary not found at $BIN"; exit 1; fi
+          "$BIN" &
+          PID=$!
+          sleep 15
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "OK — Revenant booted and stayed alive 15s."
+            kill "$PID" 2>/dev/null || true
+            # give it a moment, then SIGKILL if still around
+            sleep 2; kill -9 "$PID" 2>/dev/null || true
+          else
+            wait "$PID" 2>/dev/null; code=$?
+            echo "::error::Revenant crashed on launch (exit $code) — see tasks/lessons.md launch-smoke gate."
+            exit 1
+          fi
+
       - name: Upload artifacts (macOS)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
