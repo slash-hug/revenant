@@ -3,7 +3,8 @@
    * TabManager.svelte — horizontal tab strip.
    * C1 — open/close/switch, dirty dot, focus-existing on duplicate.
    */
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, tick } from 'svelte';
+  import { get } from 'svelte/store';
   import { tabsStore, tabList, activeTab } from './stores/tabs';
   import { basename } from './util/path';
 
@@ -20,6 +21,35 @@
     tabsStore.switchTab(id);
   }
 
+  // APG tablist keyboard model (a11y #30): Enter/Space activates; Left/Right move
+  // focus between tabs with automatic activation (roving tabindex — only the
+  // active tab is in the Tab order).
+  function handleTabKeydown(e: KeyboardEvent, id: string) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleSwitch(id);
+      return;
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      const tabs = get(tabList);
+      if (tabs.length === 0) return;
+      const idx = tabs.findIndex((t) => t.id === id);
+      let nextIdx: number;
+      if (e.key === 'Home') nextIdx = 0;
+      else if (e.key === 'End') nextIdx = tabs.length - 1;
+      else {
+        const dir = e.key === 'ArrowRight' ? 1 : -1;
+        nextIdx = (idx + dir + tabs.length) % tabs.length;
+      }
+      const next = tabs[nextIdx];
+      handleSwitch(next.id);
+      void tick().then(() => {
+        document.querySelector<HTMLElement>(`.ws-tabs [data-tab-id="${next.id}"]`)?.focus();
+      });
+    }
+  }
+
   function fileName(path: string): string {
     return basename(path);
   }
@@ -34,11 +64,12 @@
       class="tab"
       class:active={tab.id === $activeTab?.id}
       role="tab"
-      tabindex="0"
+      data-tab-id={tab.id}
+      tabindex={tab.id === $activeTab?.id ? 0 : -1}
       aria-selected={tab.id === $activeTab?.id}
       title={tab.path}
       on:click={() => handleSwitch(tab.id)}
-      on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSwitch(tab.id); } }}
+      on:keydown={(e) => handleTabKeydown(e, tab.id)}
     >
       {#if tab.dirty}
         <span class="dot" aria-label="Unsaved changes" title="Unsaved changes"></span>
@@ -115,6 +146,11 @@
 
   .tab-x {
     display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* 24×24 pointer target (WCAG 2.5.8). */
+    min-width: 24px;
+    min-height: 24px;
     color: var(--text-faint);
     padding: 2px;
     border-radius: var(--r-xs);

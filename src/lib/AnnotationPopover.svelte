@@ -54,6 +54,11 @@
   let placement: 'below' | 'above' = 'below';
   let caretLeft = 24; // px from the popover's left edge — points at the span center
 
+  // Focus management (#30): take focus into the dialog on open so keyboard users
+  // land on it (and Escape works); return focus to the opener on close (WCAG 2.4.3).
+  let previouslyFocused: HTMLElement | null = null;
+  let wasOpen = false;
+
 
 
   const dispatch = createEventDispatcher<{ delete: { id: string } }>();
@@ -159,9 +164,22 @@
     tick().then(() => {
       computePlacement();
       attachOutsideListener();
+      // On the open transition, remember the opener and move focus into the
+      // dialog. Skip on mere annotation→annotation changes (already open).
+      if (!wasOpen) {
+        previouslyFocused = document.activeElement as HTMLElement | null;
+        panel?.focus();
+        wasOpen = true;
+      }
     });
   } else {
     detachOutsideListener();
+    // Close transition: return focus to whoever opened the popover.
+    if (wasOpen) {
+      previouslyFocused?.focus?.();
+      previouslyFocused = null;
+      wasOpen = false;
+    }
   }
 
   // Re-run placement if anchorRect changes while a popover is open.
@@ -179,6 +197,7 @@
     role="dialog"
     aria-label="Annotation"
     aria-modal="false"
+    tabindex="-1"
   >
     <!-- Caret tying the popover to the span it's about. -->
     <span class="pop-caret" style="left: {caretLeft}px;" aria-hidden="true"></span>
@@ -230,6 +249,8 @@
     animation: pop-in var(--dur-fast) var(--ease-out);
     max-width: calc(100vw - 24px);
   }
+  /* Programmatic focus-in on open (#30) — no painted ring on the container. */
+  .popover:focus { outline: none; }
   @keyframes pop-in {
     from { opacity: 0; transform: translateY(4px) scale(.99); }
     to   { opacity: 1; transform: none; }
@@ -288,6 +309,11 @@
   .pop-icon {
     color: var(--text-faint);
     display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* 24×24 pointer target (WCAG 2.5.8). */
+    min-width: 24px;
+    min-height: 24px;
     padding: 3px;
     border-radius: var(--r-xs);
     border: none;

@@ -177,7 +177,15 @@
           <p class="detached-hint">These lost their anchor after the document was edited.</p>
           <ul class="cmt-list" role="list">
             {#each detachedAnnotations as ann (ann.id)}
-              <li class="cmt detached">
+              <!-- Focusable listitem so a keyboard user can reach the card to read
+                   it, matching the anchored cards (a11y #30). -->
+              <!-- svelte-ignore a11y-no-noninteractive-tabindex a11y-no-noninteractive-element-interactions -->
+              <li
+                class="cmt detached"
+                role="listitem"
+                tabindex="0"
+                on:keydown={(e) => handleCardKeydown(e, ann.id)}
+              >
                 <div class="cmt-top">
                   <span class="chip chip-detached">{anchorLabel(ann)}</span>
                   <span class="badge badge-detached">Anchor lost</span>
@@ -368,6 +376,11 @@
   .cmt-icon {
     color: var(--text-faint);
     display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* 24×24 pointer target (WCAG 2.5.8); the icon stays 14px, the box grows. */
+    min-width: 24px;
+    min-height: 24px;
     padding: 3px;
     border-radius: var(--r-xs);
     border: none;

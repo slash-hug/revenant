@@ -22,6 +22,9 @@
   let panel: HTMLDivElement;
   let left = x;
   let top = y;
+  // Element focused before the composer opened — focus returns here on close so
+  // keyboard users aren't dropped at the top of the document (WCAG 2.4.3, #30).
+  let previouslyFocused: HTMLElement | null = null;
 
   function clampToViewport() {
     if (!panel) return;
@@ -48,13 +51,18 @@
   }
 
   onMount(async () => {
+    previouslyFocused = document.activeElement as HTMLElement | null;
     await tick();
     clampToViewport();
     textarea?.focus();
     // Defer so the opening click doesn't immediately count as "outside".
     setTimeout(() => window.addEventListener('mousedown', handleOutside), 0);
   });
-  onDestroy(() => window.removeEventListener('mousedown', handleOutside));
+  onDestroy(() => {
+    window.removeEventListener('mousedown', handleOutside);
+    // Return focus to whatever held it before the composer opened.
+    previouslyFocused?.focus?.();
+  });
 </script>
 
 <div

@@ -78,8 +78,9 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    left: -4px;
-    right: -4px;
+    /* ≥24px pointer target (WCAG 2.5.8) without widening the 1px visual line. */
+    left: -12px;
+    right: -12px;
   }
   .resize-handle:hover,
   .resize-handle.dragging,

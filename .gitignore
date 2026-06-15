@@ -27,6 +27,10 @@ src-tauri/gen/
 *.annotations.json
 *.review.md
 
+# Generated export artifacts from the sample docs (PDF/HTML test outputs)
+samples/*.pdf
+samples/*.html
+
 # Workflow agent worktrees (transient)
 .claude/worktrees/
 
