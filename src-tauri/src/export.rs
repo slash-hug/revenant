@@ -26,7 +26,7 @@ use std::path::Path;
 // Shared validation helpers
 // ---------------------------------------------------------------------------
 
-fn validate_export_path(path: &Path, allowed_exts: &[&str]) -> IpcResult<()> {
+pub(crate) fn validate_export_path(path: &Path, allowed_exts: &[&str]) -> IpcResult<()> {
     if !path.is_absolute() {
         return Err(IpcError {
             code: "INVALID_PATH".into(),
@@ -133,6 +133,18 @@ pub async fn export_pdf(out_path: std::path::PathBuf, html: String) -> IpcResult
 // ---------------------------------------------------------------------------
 // macOS PDF implementation
 // ---------------------------------------------------------------------------
+//
+// G1 SMOKE TEST GATE — mandatory before merging any change to this section:
+//
+//   Run `cargo tauri dev`, open a real .md file, and trigger "Export as PDF".
+//   Verify: file is non-blank, fonts render, Mermaid diagrams appear, inline
+//   images are present, review comments (if any) appear in light mode even
+//   when the app is in dark mode, and no orphaned WKWebView process remains
+//   in Activity Monitor after the dialog closes.
+//
+//   Unit tests cannot exercise this path (WKWebView requires a GUI run-loop
+//   and a real macOS environment). CI green does NOT prove the binary exports
+//   a valid PDF. The G1 gate must be performed by a human on macOS.
 
 /// `WkSendPtr` is a `*mut std::ffi::c_void` wrapper that is `Send`.
 ///

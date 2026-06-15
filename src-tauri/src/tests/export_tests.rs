@@ -103,10 +103,34 @@ fn export_pdf_validate_rejects_wrong_extension() {
     assert!(err.message.contains(".pdf"));
 }
 
-/// .PDF uppercase extension should pass validation (may then fail with
-/// PDF_EXPORT_UNSUPPORTED on non-macOS, which is also acceptable).
+/// .PDF uppercase extension must pass path validation.
+///
+/// Previously this was tested by running the full async `export_pdf` path, which
+/// spawns a WKWebView on macOS and blocks for ~30 s waiting on the load timeout.
+/// We now test the synchronous `validate_export_path` helper directly (made
+/// `pub(crate)` for this purpose) so the assertion runs in microseconds.
 #[test]
 fn export_pdf_validate_accepts_uppercase_extension() {
+    let dir = TempDir::new().unwrap();
+    let p = dir.path().join("EXPORT.PDF");
+    // Must not return INVALID_PATH — case-insensitive extension check.
+    let result = crate::export::validate_export_path(&p, &["pdf"]);
+    assert!(
+        result.is_ok(),
+        "validate_export_path should accept .PDF (uppercase), got: {:?}",
+        result
+    );
+}
+
+/// Full async export_pdf path with uppercase extension on a live webview.
+///
+/// Gated behind #[ignore] because on macOS the off-screen WKWebView blocks for
+/// ~30 s while waiting for the load timeout (the HTML never fires `window.print`
+/// in a headless context).  Run manually with:
+///   cargo test export_pdf_async_uppercase_extension -- --ignored
+#[test]
+#[ignore = "spawns WKWebView on macOS — ~30 s timeout; run manually for smoke check"]
+fn export_pdf_async_uppercase_extension_slow() {
     let dir = TempDir::new().unwrap();
     let p = dir.path().join("EXPORT.PDF");
     let result = tokio::runtime::Builder::new_current_thread()

@@ -369,12 +369,39 @@ describe('buildExportDocument — C4 comments layer', () => {
   });
 
   it('quoted_text in endnotes is HTML-escaped', async () => {
+    // Use a real injection payload in quoted_text to verify escapeHtml is called.
+    // A regression that stopped escaping would let the raw tag appear as a live element.
+    // Note: the payload text may appear in the serialized output but with < > escaped;
+    // the key assertion is that a raw <img> element is NOT injected into the document.
+    const xssPayload = '</mark><img src=x onerror=alert(1)>';
     const result = await buildExportDocument({
       content: '# Hello\n\nSafe text here.',
       includeComments: true,
-      annotations: [makeAnnotation('a1', 'anchored', 'Escape check', 'Safe text here')],
+      annotations: [makeAnnotation('a1', 'anchored', 'Escape check', xssPayload)],
     });
-    // The body text in endnotes should be escaped.
+    // The raw '<img src=x' tag must not appear as live HTML (i.e. no unescaped '<img').
+    // Note: the escaped text '&lt;img' is fine — that is proof of correct escaping.
+    expect(result).not.toContain('<img src=x');
+    // The escaped form of '<' must be present somewhere, confirming escapeHtml ran.
+    expect(result).toContain('&lt;');
+  });
+
+  it('annotation body with HTML special chars is escaped in endnotes', async () => {
+    // Verify the body field is also escaped, not just quoted_text.
+    // The critical characters for injection are angle brackets and ampersand;
+    // double-quotes inside text content (not attribute values) may be normalised
+    // to bare " by the HTML pipeline, so we only assert the injection-critical escapes.
+    const htmlInBody = '<b>bold injection</b> & <script>evil()</script>';
+    const result = await buildExportDocument({
+      content: '# Hello\n\nBody escape test.',
+      includeComments: true,
+      annotations: [makeAnnotation('a2', 'detached', htmlInBody, 'quoted')],
+    });
+    // Raw injection tags must not appear.
+    expect(result).not.toContain('<b>bold injection</b>');
     expect(result).not.toContain('<script>');
+    // The escaped form of '<' must be present (confirms escapeHtml ran on body).
+    expect(result).toContain('&lt;b&gt;');
+    expect(result).toContain('&amp;');
   });
 });

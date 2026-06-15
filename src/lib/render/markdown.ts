@@ -509,16 +509,23 @@ export async function renderMermaid(code: string, blockId: string): Promise<stri
 }
 
 /**
- * Render a Mermaid diagram with an **explicit** theme, bypassing the module-level
- * live-app theme state entirely.
+ * Render a Mermaid diagram with an **explicit** theme for the export pipeline.
  *
- * Used by the export pipeline (documentExport.ts) so it never needs to mutate
- * `document.documentElement data-theme` to force a light render — which would
- * trigger PreviewPane's MutationObserver and corrupt the live preview cache.
+ * Used by documentExport.ts so the export always renders in light mode without
+ * mutating `document.documentElement data-theme`, which would trigger
+ * PreviewPane's MutationObserver and corrupt the live preview cache.
  *
- * The result is NOT stored in `mermaidCache` (keyed by blockId) because export
- * renders use a different theme than the live preview and must not overwrite
- * cached SVGs that the live preview will still use.
+ * NOTE: This function shares the module-level Mermaid singleton (`_mermaidPromise`,
+ * `_mermaidTheme`). It calls `mermaid.initialize()` and updates `_mermaidTheme`
+ * when the requested theme differs from the current one. This means an export that
+ * interleaves with a live re-render could momentarily cause the wrong theme to be
+ * used for that render (low practical risk since exports are discrete user actions,
+ * but worth being aware of). A future improvement would be to thread the theme
+ * through render options rather than via the global, but Mermaid v11 does not
+ * expose a per-call theme override.
+ *
+ * The result is NOT stored in `mermaidCache` because export renders use a
+ * different theme than the live preview and must not overwrite cached SVGs.
  */
 export async function renderMermaidForExport(
   code: string,
@@ -526,15 +533,13 @@ export async function renderMermaidForExport(
   theme: 'default' | 'dark' = 'default',
 ): Promise<string> {
   try {
-    // Import and initialize Mermaid for the requested theme without touching
-    // `_mermaidTheme` (the live-preview theme state).
     if (!_mermaidPromise) {
       _mermaidPromise = (async () => (await import('mermaid')).default)();
     }
     const mermaid = await _mermaidPromise;
 
-    // Re-initialize only if the requested theme differs from the current one so
-    // we avoid redundant work on repeated exports.
+    // Re-initialize only if the requested theme differs from the current one.
+    // This mutates the shared _mermaidTheme singleton (see note in jsdoc above).
     if (theme !== _mermaidTheme) {
       const themeVariables = theme === 'dark'
         ? {

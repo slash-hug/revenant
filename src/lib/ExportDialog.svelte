@@ -61,6 +61,14 @@
   /** General notes text (passed down from App annotationsStore). */
   export let generalNotes: string = '';
 
+  /**
+   * Optional preset format to seed when the dialog opens ('pdf' | 'html' | '').
+   * Passed from App.svelte when the user triggers 'Export as HTML' or 'Export as PDF'
+   * from the command palette so the dialog opens with the correct format pre-selected.
+   * An empty string (or any unrecognised value) leaves the default (PDF).
+   */
+  export let preset: string = '';
+
   /** Raw markdown source (passed to buildExportDocument). */
   export let content: string = '';
 
@@ -109,8 +117,11 @@
   }
 
   // Reset format/state when dialog opens afresh.
+  // Seed `format` from the preset so command-palette entries like "Export as HTML"
+  // open the dialog with the correct format pre-selected instead of always defaulting
+  // to PDF (fixes the silent preset-drop bug).
   $: if (open) {
-    format = 'pdf';
+    format = preset === 'html' ? 'html' : 'pdf';
     includeComments = false;
     exporting = false;
   }
@@ -202,12 +213,20 @@
         generalNotes,
       });
 
+      // Derive the display name from the actual save path so that if the user
+      // renames the file in the native Save dialog the toast reflects their choice.
+      function savedBaseName(p: string): string {
+        const slash = p.lastIndexOf('/');
+        const backslash = p.lastIndexOf('\\');
+        return p.slice(Math.max(slash, backslash) + 1);
+      }
+
       if (format === 'html') {
         await exportHtml(outPath, html);
-        toast.show(`HTML saved: ${docBaseName().replace(/\.md$/, '.html')}`);
+        toast.show(`HTML saved: ${savedBaseName(outPath)}`);
       } else {
         await exportPdf(outPath, html);
-        toast.show(`PDF saved: ${docBaseName().replace(/\.md$/, '.pdf')}`);
+        toast.show(`PDF saved: ${savedBaseName(outPath)}`);
       }
       close();
     } catch (err) {

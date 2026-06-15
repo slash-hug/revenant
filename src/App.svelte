@@ -691,6 +691,7 @@
   -->
   <ExportDialog
     open={exportDialogPreset !== null}
+    preset={exportDialogPreset ?? ''}
     docPath={$activeTab?.path ?? ''}
     content={$activeTab?.content ?? ''}
     annotations={$annotationsStore.annotations}
