@@ -1,0 +1,179 @@
+/*
+ * markdown.css — prose / document-content styles.
+ *
+ * Single source of truth for the reading column shared between:
+ *   - PreviewPane.svelte (live preview)
+ *   - documentExport.ts  (HTML export bundle)
+ *
+ * Scope: .prose container + .preview-content :global(...) content rules +
+ *        --ps-* / --lh-* prose tokens referenced only here.
+ *
+ * UI chrome (.preview-pane, .pv-scroll, .banner, .add-comment-affordance,
+ * .pv-header, .pv-title, .pv-meta, .pv-author, .pv-avatar, .pv-dot)
+ * stays in PreviewPane.svelte — it is not used by the exporter.
+ *
+ * The export bundle wraps content in <article class="prose"> and adds
+ * its own frontmatter header (see documentExport.ts).
+ */
+
+/* ---- reading column ---- */
+.prose {
+  padding: 32px 44px 64px;
+  font-family: var(--font-prose);
+  max-width: 760px;
+  color: var(--text);
+  position: relative;
+  z-index: 1;
+}
+
+/* ---- rendered markdown ---- */
+.preview-content h1 {
+  font-size: var(--ps-h1);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  letter-spacing: -.012em;
+  margin: 34px 0 14px;
+  text-wrap: balance;
+}
+.preview-content h2 {
+  font-family: var(--font-ui);
+  font-size: var(--ps-h2);
+  font-weight: var(--fw-semibold);
+  margin: 30px 0 11px;
+  color: var(--text);
+  text-wrap: balance;
+}
+.preview-content h3,
+.preview-content h4 {
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  color: var(--text-muted);
+  margin: 24px 0 8px;
+}
+.preview-content p {
+  font-size: var(--ps-base);
+  line-height: 1.62;
+  margin: 0 0 14px;
+  color: var(--text);
+  text-wrap: pretty;
+}
+.preview-content ul,
+.preview-content ol { margin: 0 0 16px; padding-left: 22px; }
+.preview-content li { font-size: var(--ps-base); line-height: 1.7; color: var(--text); }
+.preview-content li::marker { color: var(--accent); }
+.preview-content a { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+.preview-content strong { font-weight: var(--fw-semibold); }
+.preview-content hr { border: none; height: 1px; background: var(--border); margin: 28px 0; }
+
+/* inline code */
+.preview-content :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: .86em;
+  background: var(--surface-2);
+  border-radius: var(--r-xs);
+  padding: 1px 5px;
+  color: var(--text);
+}
+
+/* code blocks */
+.preview-content pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 15px 17px;
+  margin: 0 0 18px;
+  overflow: auto;
+}
+.preview-content pre code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text);
+  background: none;
+  padding: 0;
+}
+
+/* highlight.js token palette mapped onto our syntax roles */
+.preview-content .hljs-keyword,
+.preview-content .hljs-selector-tag,
+.preview-content .hljs-built_in { color: var(--accent-text); }
+.preview-content .hljs-string,
+.preview-content .hljs-attr,
+.preview-content .hljs-symbol { color: var(--success-text); }
+.preview-content .hljs-title,
+.preview-content .hljs-title.function_,
+.preview-content .hljs-section { color: var(--success-text); font-weight: var(--fw-medium); }
+.preview-content .hljs-type,
+.preview-content .hljs-number,
+.preview-content .hljs-literal,
+.preview-content .hljs-class .hljs-title { color: var(--warn-text); }
+.preview-content .hljs-comment,
+.preview-content .hljs-quote { color: var(--text-faint); font-style: italic; }
+.preview-content .hljs-punctuation,
+.preview-content .hljs-operator { color: var(--text-faint); }
+
+/* blockquote */
+.preview-content blockquote {
+  margin: 0 0 18px;
+  padding: 4px 0 4px 18px;
+  border-left: 3px solid var(--accent);
+  font-size: var(--ps-quote);
+  line-height: 1.55;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* tables */
+.preview-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0 0 18px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+}
+.preview-content th,
+.preview-content td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.preview-content th { color: var(--text-muted); font-weight: var(--fw-semibold); border-bottom-color: var(--border-strong); }
+.preview-content td { color: var(--text); }
+.preview-content tbody tr:hover td { background: var(--surface-2); }
+
+/* mermaid figure */
+.preview-content [data-block-type="mermaid"] {
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  padding: 22px;
+  margin: 0 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+.preview-content [data-mermaid-pending] {
+  min-height: 96px;
+  background: linear-gradient(100deg,
+    var(--surface-2) 30%,
+    color-mix(in srgb, var(--surface-2) 60%, var(--surface)) 50%,
+    var(--surface-2) 70%);
+  background-size: 200% 100%;
+  animation: pv-shimmer 1.4s var(--ease-in-out) infinite;
+  color: transparent;
+}
+@keyframes pv-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .preview-content [data-mermaid-pending] { animation: none; }
+}
+
+/* diagram error card */
+.preview-content .mermaid-error {
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
+  background: var(--danger-soft);
+  border-radius: var(--r-lg);
+  padding: 14px 16px;
+  margin: 0 0 18px;
+  font-size: var(--fs-base);
+  font-family: var(--font-ui);
+  color: var(--text);
+}
+.preview-content .mermaid-error strong { color: var(--danger-text); }
