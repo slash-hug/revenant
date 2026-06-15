@@ -972,6 +972,49 @@ pub fn read_file_bytes(doc_path: String, image_path: String) -> IpcResult<String
     crate::export::read_file_bytes(doc, img)
 }
 
+/// Result of check_for_updates — tells the caller whether a newer release is
+/// available and where to find it.
+///
+/// Mirrored in `src/lib/types/ipc.ts` as `UpdateCheck`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UpdateCheck {
+    /// Whether the latest GitHub release version is newer than the running binary.
+    pub update_available: bool,
+    /// The latest release tag (without leading `v`), e.g. `"1.2.0"`.
+    pub latest_version: String,
+    /// The current binary version, e.g. `"0.1.0"`.
+    pub current_version: String,
+    /// HTML URL of the latest GitHub release page.
+    pub release_url: String,
+}
+
+/// Check GitHub for a newer release.
+///
+/// Hits `GET https://api.github.com/repos/slash-hug/revenant/releases/latest`,
+/// parses `tag_name` + `html_url`, compares semver versions.  Network/parse
+/// failures are surfaced as `UPDATE_CHECK_FAILED`; the frontend must handle
+/// gracefully (no banner on error, just suppress).
+#[tauri::command]
+pub fn check_for_updates() -> IpcResult<UpdateCheck> {
+    crate::updates::check_for_updates().map_err(|e| IpcError {
+        code: "UPDATE_CHECK_FAILED".into(),
+        message: e.to_string(),
+    })
+}
+
+/// Open the latest release page in the system browser.
+///
+/// Validates `url` is an `https://github.com/slash-hug/revenant/releases/…`
+/// URL before opening (rejects http, evil hosts, and wrong repo paths).
+/// Returns `INVALID_URL` if validation fails.
+#[tauri::command]
+pub fn open_release_page(url: String) -> IpcResult<()> {
+    crate::updates::open_release_page(&url).map_err(|e| IpcError {
+        code: "INVALID_URL".into(),
+        message: e.to_string(),
+    })
+}
+
 /// Capture the current web content as a PNG data URL.
 ///
 /// Backs the suminagashi open transition: the frontend needs a faithful bitmap of
