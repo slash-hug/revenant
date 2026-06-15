@@ -287,9 +287,14 @@ unsafe fn create_wkwebview_on_main(html: String) -> Result<WkSendPtr, String> {
     // SAFETY: this function is only called from within a GCD main-queue block.
     let mtm = unsafe { objc2::MainThreadMarker::new_unchecked() };
 
+    // Lay the page out at US-Letter size (8.5×11in at 96 CSS px/in = 816×1056).
+    // A tiny frame (e.g. 1×1) makes the body shrink-wrap to its min-content width
+    // — every word wraps to its own line and code blocks clip — while @page still
+    // sizes the PDF to Letter, producing a skinny column on a wide page. createPDF
+    // captures the full content height regardless of the frame height.
     let frame = NSRect {
         origin: NSPoint { x: 0.0, y: 0.0 },
-        size: NSSize { width: 1.0, height: 1.0 },
+        size: NSSize { width: 816.0, height: 1056.0 },
     };
 
     let config = unsafe { WKWebViewConfiguration::new(mtm) };
