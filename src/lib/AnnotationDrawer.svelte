@@ -81,6 +81,7 @@
         <span id="gn-label" class="drawer-label">General notes</span>
         <textarea
           class="note-input"
+          aria-labelledby="gn-label"
           placeholder="Notes that apply to the whole document…"
           value={$annotationsStore.generalNotes}
           on:input={handleNotesInput}

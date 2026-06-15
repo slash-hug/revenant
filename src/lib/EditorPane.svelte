@@ -738,10 +738,12 @@
 </div>
 
 {#if showAddComment}
+  <!-- Positioning wrapper only; the interactive button inside is self-labeling.
+       (No role="tooltip" — a tooltip is non-interactive and would hide the button
+       from assistive tech.) -->
   <div
     class="add-comment-affordance"
     style="left: {addCommentX}px; top: {addCommentY + 4}px;"
-    role="tooltip"
   >
     <button class="add-comment-btn" on:click={handleAddCommentClick}>
       + Add comment

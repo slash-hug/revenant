@@ -150,7 +150,7 @@
 
   --text: #D6D7DA;
   --text-muted: #8C8E93;
-  --text-faint: #868990;   /* AA on Graphite surfaces (≥4.5:1) — carries status bar, paths, labels */
+  --text-faint: #8D8F9A;   /* AA on Graphite surfaces (≥4.5:1, incl. --surface #232427 at 4.82) — status bar, paths, labels */
   --text-on-accent: #0A1019;
 
   --border: #2A2B2F;

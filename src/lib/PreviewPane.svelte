@@ -638,7 +638,9 @@
   </div>
 
   {#if showAddComment}
-    <div class="add-comment-affordance" style="left: {btnX}px; top: {btnY + 6}px;" role="tooltip">
+    <!-- Positioning wrapper only; the button inside is self-labeling (no
+         role="tooltip" — that would hide the interactive button from AT). -->
+    <div class="add-comment-affordance" style="left: {btnX}px; top: {btnY + 6}px;">
       <button class="add-comment-btn" type="button" on:click={handleAddCommentClick}>
         + Add comment
         <span class="add-comment-kbd" aria-hidden="true">{addCommentShortcut}</span>
