@@ -22,11 +22,16 @@ import {
   exportHtml,
   exportPdf,
   readFileBytes,
+  setRestKey,
+  clearRestKey,
+  hasRestKey,
+  testObsidianConnection,
   type Annotation,
   type Sidecar,
   type Settings,
   type FileResult,
   type IpcError,
+  type ConnStatus,
 } from "$lib/types/ipc";
 
 const mockInvoke = vi.mocked(invoke);
@@ -46,6 +51,11 @@ describe("IPC contract", () => {
     expect(typeof exportHtml).toBe("function");
     expect(typeof exportPdf).toBe("function");
     expect(typeof readFileBytes).toBe("function");
+    // Settings / keychain commands (A1)
+    expect(typeof setRestKey).toBe("function");
+    expect(typeof clearRestKey).toBe("function");
+    expect(typeof hasRestKey).toBe("function");
+    expect(typeof testObsidianConnection).toBe("function");
   });
 
   it("openFile calls invoke with correct command name", async () => {
@@ -162,5 +172,75 @@ describe("IPC contract", () => {
       imagePath: "/docs/images/fig.png",
     });
     expect(b64).toBe("base64encodedstring==");
+  });
+
+  // ─── Settings / keychain commands (A1) ─────────────────────────────────────
+
+  it("setRestKey calls set_rest_key with the key and returns Settings", async () => {
+    const updatedSettings: Settings = {
+      schema_version: 1,
+      vaults: [],
+      default_export_subfolder: "",
+      theme: "system",
+      export_on_save: false,
+      rest_key_ref: "obsidian-rest",
+    };
+    mockInvoke.mockResolvedValueOnce(updatedSettings);
+    const result = await setRestKey("my-secret-key");
+    expect(mockInvoke).toHaveBeenCalledWith("set_rest_key", {
+      key: "my-secret-key",
+    });
+    expect(result.rest_key_ref).toBe("obsidian-rest");
+  });
+
+  it("clearRestKey calls clear_rest_key with no args and returns Settings", async () => {
+    const updatedSettings: Settings = {
+      schema_version: 1,
+      vaults: [],
+      default_export_subfolder: "",
+      theme: "system",
+      export_on_save: false,
+      rest_key_ref: null,
+    };
+    mockInvoke.mockResolvedValueOnce(updatedSettings);
+    const result = await clearRestKey();
+    expect(mockInvoke).toHaveBeenCalledWith("clear_rest_key");
+    expect(result.rest_key_ref).toBeNull();
+  });
+
+  it("hasRestKey calls has_rest_key with no args and returns a boolean", async () => {
+    mockInvoke.mockResolvedValueOnce(true);
+    const present = await hasRestKey();
+    expect(mockInvoke).toHaveBeenCalledWith("has_rest_key");
+    expect(present).toBe(true);
+  });
+
+  it("testObsidianConnection calls test_obsidian_connection with null key when not provided", async () => {
+    const status: ConnStatus = "ok";
+    mockInvoke.mockResolvedValueOnce(status);
+    const result = await testObsidianConnection();
+    expect(mockInvoke).toHaveBeenCalledWith("test_obsidian_connection", {
+      key: null,
+    });
+    expect(result).toBe("ok");
+  });
+
+  it("testObsidianConnection passes the key when provided (in-memory probe, D6)", async () => {
+    const status: ConnStatus = "unauthorized";
+    mockInvoke.mockResolvedValueOnce(status);
+    const result = await testObsidianConnection("typed-key");
+    expect(mockInvoke).toHaveBeenCalledWith("test_obsidian_connection", {
+      key: "typed-key",
+    });
+    expect(result).toBe("unauthorized");
+  });
+
+  it("ConnStatus values cover all three probe outcomes", () => {
+    // Type-level check: all valid string literals should pass the type guard.
+    const statuses: ConnStatus[] = ["ok", "unauthorized", "unreachable"];
+    expect(statuses).toHaveLength(3);
+    expect(statuses).toContain("ok");
+    expect(statuses).toContain("unauthorized");
+    expect(statuses).toContain("unreachable");
   });
 });

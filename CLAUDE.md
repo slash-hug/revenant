@@ -74,7 +74,7 @@ revenant/
 ## Key conventions
 
 ### IPC contract (ipc.rs / ipc.ts) — FROZEN
-All IPC commands and types live in `src-tauri/src/ipc.rs` (Rust) and `src/lib/types/ipc.ts` (TS mirror). WS-A froze this surface. Do NOT add new commands without updating both files. Commands: `open_file`, `unwatch_file`, `save_file(expected_hash)`, `load_annotations`, `save_annotations`, `generate_review`, `export_obsidian`, `get_settings`, `set_settings`, `snapshot_webview`. Events: `open_file_request`, `file_changed`.
+All IPC commands and types live in `src-tauri/src/ipc.rs` (Rust) and `src/lib/types/ipc.ts` (TS mirror). WS-A froze this surface. Do NOT add new commands without updating both files. Commands: `open_file`, `unwatch_file`, `save_file(expected_hash)`, `load_annotations`, `save_annotations`, `generate_review`, `export_obsidian`, `get_settings`, `set_settings`, `snapshot_webview`, `export_html`, `export_pdf`, `read_file_bytes`, `set_rest_key`, `clear_rest_key`, `has_rest_key`, `test_obsidian_connection`. Events: `open_file_request`, `file_changed`.
 
 ### Module ownership
 `lib.rs` is owned by WS-A only. WS-B/C/D fill their own module files; they never edit `lib.rs`. All `#[command]` registrations are in `lib.rs`.
@@ -126,3 +126,7 @@ See `tasks/lessons.md` (created as issues are discovered).
 - **Missing DOMPurify:** Never inject markdown-it or Mermaid output into the DOM without sanitizing first.
 - **Single-instance forwarding edge cases:** Windows elevation / AV can interfere; validate on the actual Windows target.
 - **HASH_MISMATCH not handled:** Always handle the conflict case in the frontend; never silently clobber.
+- **ConnStatus is a dedicated IPC type:** The probe result enum (`ok`/`unauthorized`/`unreachable`) is defined in `ipc.rs` as a Serde type. Do NOT route it through `IpcError`/`obsidian_err()` — it is a success-typed result, not an error path.
+- **set_rest_key/clear_rest_key must return Settings:** These commands return the updated `Settings` (not `()`) to avoid stale-store races where a subsequent `patchSettings` clobbers `rest_key_ref`.
+- **dialog:allow-open is already granted:** `dialog:default` in `capabilities/default.json` includes `allow-open`. Do NOT add it explicitly — it is redundant and adds confusion.
+- **In-memory probe key is transient:** `test_obsidian_connection(key?)` accepts an unsaved raw key for D6 probing. The key must never be logged, echoed back, or persisted inside this command.
