@@ -310,6 +310,19 @@ fn test_url_reject_non_releases_path() {
     );
 }
 
+/// A path like /releases-anything must be rejected — the prefix check must
+/// require the releases segment to be followed by '/' or end-of-path.
+/// Regression: the previous `starts_with("/releases")` check (no boundary)
+/// would have passed this URL because the prefix matched as a substring.
+#[test]
+fn test_url_reject_releases_prefix_without_boundary() {
+    let url = "https://github.com/slash-hug/revenant/releases-evil";
+    assert!(
+        matches!(validate_release_url(url), Err(UpdatesError::InvalidUrl(_))),
+        "path with /releases- prefix (no boundary) must be rejected"
+    );
+}
+
 /// A completely malformed URL must be rejected.
 #[test]
 fn test_url_reject_malformed() {

@@ -5,8 +5,9 @@
 /// - `check_for_updates()` — GETs the latest GitHub release, compares semver
 ///   versions, returns an `ipc::UpdateCheck`.
 /// - `open_release_page(url)` — validates the URL is a legitimate revenant
-///   release URL (https, github.com, correct repo path prefix) and then opens
-///   it in the default system browser.
+///   release URL (https, github.com, correct repo path prefix).  The actual
+///   browser launch is handled by the `ipc::open_release_page` command via
+///   `tauri_plugin_opener` — this module contains only the pure validation.
 ///
 /// Design decisions:
 /// - A dedicated `reqwest::blocking::Client` (shared via `OnceLock`) with a
@@ -145,18 +146,18 @@ pub(crate) fn check_for_updates_from(
 // D3 — open_release_page
 // ---------------------------------------------------------------------------
 
-/// Validate `url` and open it in the system browser.
+/// Validate `url` against the expected release-page shape.
 ///
 /// Accepted URL shape:
 /// - scheme must be `https`
 /// - host must be `github.com`
-/// - path must start with `/<GITHUB_SLUG>/releases`
+/// - path must start with `/<GITHUB_SLUG>/releases` followed by `/` or end-of-path
 ///
 /// On validation failure → `UpdatesError::InvalidUrl`.
-/// On browser-launch failure → `UpdatesError::InvalidUrl` with OS error detail.
+/// Callers are responsible for actually opening the URL (e.g. via
+/// `tauri_plugin_opener`) after validation succeeds.
 pub fn open_release_page(url: &str) -> Result<(), UpdatesError> {
-    validate_release_url(url)?;
-    open_url_in_browser(url)
+    validate_release_url(url)
 }
 
 /// URL validation (pure, used in both the public function and tests).
@@ -182,39 +183,14 @@ pub(crate) fn validate_release_url(url: &str) -> Result<(), UpdatesError> {
     }
 
     let expected_prefix = format!("/{}/releases", GITHUB_SLUG);
-    if !parsed.path().starts_with(&expected_prefix) {
+    let path = parsed.path();
+    let valid = path == expected_prefix
+        || path.starts_with(&format!("{}/", expected_prefix));
+    if !valid {
         return Err(UpdatesError::InvalidUrl(format!(
-            "path must start with '{expected_prefix}', got '{}'",
-            parsed.path()
+            "path must be '{expected_prefix}' or start with '{expected_prefix}/', got '{path}'"
         )));
     }
 
     Ok(())
-}
-
-/// Open a validated URL in the default system browser.
-///
-/// Dispatches to the platform-appropriate command:
-/// - macOS: `open <url>`
-/// - Windows: `cmd /c start "" <url>`
-/// - Linux/other: `xdg-open <url>`
-///
-/// The function spawns the child process and returns immediately (fire-and-
-/// forget); it does not wait for the browser to fully open.  This avoids
-/// blocking the IPC thread for the lifetime of the browser.
-fn open_url_in_browser(url: &str) -> Result<(), UpdatesError> {
-    #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open").arg(url).spawn();
-
-    #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("cmd")
-        .args(["/c", "start", "", url])
-        .spawn();
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let result = std::process::Command::new("xdg-open").arg(url).spawn();
-
-    result.map(|_| ()).map_err(|e| {
-        UpdatesError::InvalidUrl(format!("failed to launch system browser: {e}"))
-    })
 }

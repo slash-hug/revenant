@@ -1031,9 +1031,17 @@ pub async fn check_for_updates() -> IpcResult<UpdateCheck> {
 /// path.  Validation is performed inside `crate::updates::open_release_page`
 /// before the URL is handed to the OS opener.  Invalid URLs are rejected with
 /// `UPDATE_CHECK_FAILED` rather than silently opened (security #open-url).
+///
+/// The actual browser launch goes through `tauri_plugin_opener` (not a raw
+/// `std::process::Command` shell-out) — this preserves the design decision
+/// that the app never spawns OS processes directly.
 #[tauri::command]
-pub fn open_release_page(url: String) -> IpcResult<()> {
-    crate::updates::open_release_page(&url).map_err(updates_err)
+pub fn open_release_page(app: AppHandle, url: String) -> IpcResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    crate::updates::open_release_page(&url).map_err(updates_err)?;
+    app.opener()
+        .open_url(&url, None::<&str>)
+        .map_err(|e| updates_err(crate::updates::UpdatesError::InvalidUrl(e.to_string())))
 }
 
 // ---------------------------------------------------------------------------

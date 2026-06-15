@@ -19,15 +19,19 @@
    *   warning (amber) or success (green) — semantic correctness.
    * - Spinner SVG + @keyframes spin lifted from ObsidianSection pattern.
    *
-   * IPC note: calls `get_app_version`, `check_for_updates`, `open_release_page`
-   * via `invoke` directly (WS-A will add typed wrappers to ipc.ts; this
-   * component uses invoke to remain buildable before WS-A merges).
+   * IPC note: uses typed wrappers from ipc.ts (getAppVersion, checkForUpdates,
+   * openReleasePage) as the single source of truth for the IPC surface.
    */
 
   import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { getAppVersion, checkForUpdates, openReleasePage } from '../types/ipc';
+  import type { UpdateCheck } from '../types/ipc';
   import { aboutChipState } from './aboutChipState';
-  import type { AboutStatus, UpdateCheckResult } from './aboutChipState';
+  import type { AboutStatus } from './aboutChipState';
+
+  // UpdateCheckResult is re-exported from ipc.ts as UpdateCheck — use the
+  // canonical alias so this component stays in sync with the IPC contract.
+  type UpdateCheckResult = UpdateCheck;
 
   // ---------------------------------------------------------------------------
   // Version
@@ -38,7 +42,7 @@
 
   onMount(async () => {
     try {
-      version = await invoke<string>('get_app_version');
+      version = await getAppVersion();
     } catch {
       version = '—';
     }
@@ -60,7 +64,7 @@
     status = 'checking';
     lastCheck = undefined;
     try {
-      const check = await invoke<UpdateCheckResult>('check_for_updates');
+      const check = await checkForUpdates();
       lastCheck = check;
       status = check.update_available ? 'update-available' : 'up-to-date';
     } catch {
@@ -72,7 +76,7 @@
     if (!lastCheck) return;
     downloadBusy = true;
     try {
-      await invoke<void>('open_release_page', { url: lastCheck.release_url });
+      await openReleasePage(lastCheck.release_url);
     } catch {
       // Best-effort — open_release_page validates the URL; if it rejects,
       // silently ignore rather than showing a confusing error for a button click.

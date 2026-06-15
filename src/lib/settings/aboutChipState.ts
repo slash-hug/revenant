@@ -5,18 +5,13 @@
  * Extracted as a pure function so it can be unit-tested without rendering
  * the Svelte component (component mounting is not wired in this repo's vitest
  * setup — it resolves to the SSR build).
- *
- * UpdateCheckStatus mirrors the ipc.ts UpdateCheck type so this module
- * can be tested independently of WS-A's ipc.ts additions.
  */
 
-/** Mirrors `UpdateCheck` from `src/lib/types/ipc.ts` (added by WS-A). */
-export interface UpdateCheckResult {
-  current: string;
-  latest: string;
-  update_available: boolean;
-  release_url: string;
-}
+// Import then re-export the canonical type from the frozen IPC contract so
+// callers get a single source of truth. The previous local mirror is removed
+// to prevent it diverging from ipc.ts if the IPC surface is ever updated.
+import type { UpdateCheck } from '../types/ipc';
+export type UpdateCheckResult = UpdateCheck;
 
 /** The set of states the About section can be in. */
 export type AboutStatus =
