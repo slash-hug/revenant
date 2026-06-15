@@ -90,7 +90,7 @@
       </section>
 
       <!-- Comments -->
-      <section class="drawer-sec" aria-labelledby="cmt-label">
+      <section class="drawer-sec" aria-labelledby="cmt-label" aria-keyshortcuts="Alt+ArrowDown Alt+ArrowUp">
         <div class="drawer-head" id="cmt-label">
           <span>Comments</span>
           <span class="count">{activeAnnotations.length}</span>

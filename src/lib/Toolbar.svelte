@@ -20,6 +20,7 @@
     exportObsidian: void;
     toggleDrawer: void;
     openPalette: void;
+    openShortcuts: void;
   }>();
 
   const isMac = typeof navigator !== 'undefined' && /Mac|iP(hone|ad)/.test(navigator.platform);
@@ -112,6 +113,20 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect x="3" y="4" width="18" height="16" rx="2" />
         <line x1="15" y1="4" x2="15" y2="20" />
+      </svg>
+    </button>
+
+    <button
+      type="button"
+      class="icon-btn"
+      on:click={() => dispatch('openShortcuts')}
+      title="Keyboard shortcuts"
+      aria-label="Keyboard shortcuts"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9.5" />
+        <path d="M9.4 9.3a2.6 2.6 0 1 1 3.5 2.4c-.6.3-.9.7-.9 1.5" />
+        <path d="M12 16.6h.01" />
       </svg>
     </button>
 

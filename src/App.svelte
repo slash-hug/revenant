@@ -24,6 +24,7 @@
   } from './lib/layout';
   import ConflictModal from './lib/ConflictModal.svelte';
   import UnsavedChangesModal from './lib/UnsavedChangesModal.svelte';
+  import KeyboardShortcutsModal from './lib/KeyboardShortcutsModal.svelte';
   import AnnotationComposer from './lib/AnnotationComposer.svelte';
   import AnnotationPopover from './lib/AnnotationPopover.svelte';
   import ThemeToggle from './lib/ThemeToggle.svelte';
@@ -85,6 +86,7 @@
     drawerWidth = nextDrawerWidth(drawerWidth, dx);
   }
   let paletteOpen = $state(false); // ⌘K command palette (#9)
+  let shortcutsOpen = $state(false); // keyboard-shortcuts help overlay (#25)
   let editorRef = $state<{ save: () => Promise<'saved' | 'conflict' | 'error' | 'noop'> } | null>(null);
   let closing = $state<Tab | null>(null); // tab pending an unsaved-changes guard (#22)
   let conflict = $state<{ open: boolean; path: string }>({ open: false, path: '' });
@@ -427,6 +429,10 @@
       id: 'open', title: 'Open file…', section: 'File', hint: `${mod}O`,
       keywords: 'open document markdown', run: () => void handleOpenFile(),
     });
+    cmds.push({
+      id: 'shortcuts', title: 'Keyboard shortcuts', section: 'Help',
+      keywords: 'help keys cheat sheet reference bindings', run: () => (shortcutsOpen = true),
+    });
 
     if (!$activeTab) return cmds;
 
@@ -573,6 +579,7 @@
         on:exportObsidian={handleExportObsidian}
         on:toggleDrawer={() => (drawerOpen = !drawerOpen)}
         on:openPalette={() => (paletteOpen = true)}
+        on:openShortcuts={() => (shortcutsOpen = true)}
       />
 
       <TabManager on:close={(e) => requestCloseTab(e.detail.id)} />
@@ -675,6 +682,9 @@
 
   <!-- ⌘K command palette (#9) — keyboard launcher over all app actions. -->
   <CommandPalette bind:open={paletteOpen} commands={paletteCommands} />
+
+  <!-- Keyboard-shortcut reference (#25) — opened from the palette or toolbar "?". -->
+  <KeyboardShortcutsModal open={shortcutsOpen} on:close={() => (shortcutsOpen = false)} />
 
   <!-- Transient status toast (undoable delete, etc.) -->
   <Toast />
