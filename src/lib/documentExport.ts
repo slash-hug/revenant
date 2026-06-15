@@ -47,6 +47,9 @@ import {
   stripFrontmatter,
 } from './render/markdown';
 import type { Annotation } from './types/ipc';
+// findSpan is a PURE string matcher (whitespace- and markdown-tolerant); it touches
+// no live DOM / CSS.highlights, so it is safe to reuse here for the comments layer.
+import { findSpan } from './annotationHighlight';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -497,32 +500,50 @@ async function embedLocalImages(
 // ---------------------------------------------------------------------------
 
 /**
- * Walk text nodes in `root` searching for `quoted_text`.
- * Returns the first text node that contains the full text, plus its offset,
- * or null if not found.
+ * Locate an annotation's `quoted_text` in the rendered document and return a DOM
+ * Range covering it, or null.
+ *
+ * Two failure modes of a naive per-node `indexOf` are handled:
+ *  - **whitespace:** `quoted_text` comes from `selection.toString()`, which
+ *    collapses soft line-breaks to spaces, while the rendered text node keeps
+ *    literal `\n`. `findSpan` normalizes whitespace on both sides.
+ *  - **inline formatting:** a span crossing a `**bold**`/`*em*` word lives in
+ *    multiple text nodes. We search a single concatenation of all text nodes and
+ *    map the match offsets back to (node, offset), so the Range can cross nodes.
  */
-function findAnchorSpan(
-  doc: Document,
-  ann: Annotation,
-): { textNode: Text; offset: number } | null {
+function findAnchorRange(doc: Document, ann: Annotation): Range | null {
   const target = ann.quoted_text;
   if (!target) return null;
 
-  const walker = doc.createTreeWalker(
-    doc.body,
-    // NodeFilter.SHOW_TEXT = 4
-    4,
-  );
-
-  let node = walker.nextNode() as Text | null;
-  while (node) {
-    const idx = node.textContent?.indexOf(target) ?? -1;
-    if (idx !== -1) {
-      return { textNode: node, offset: idx };
-    }
-    node = walker.nextNode() as Text | null;
+  // Concatenate text nodes, recording where each starts in the combined string.
+  const walker = doc.createTreeWalker(doc.body, 4 /* NodeFilter.SHOW_TEXT */);
+  let combined = '';
+  const segments: Array<{ node: Text; start: number }> = [];
+  for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
+    segments.push({ node: n, start: combined.length });
+    combined += n.textContent ?? '';
   }
-  return null;
+  if (combined.length === 0 || segments.length === 0) return null;
+
+  const span = findSpan(combined, target); // whitespace/markdown-tolerant; null if absent
+  if (!span) return null;
+
+  // Map a combined-string offset → (text node, local offset). `to` is exclusive.
+  const locate = (pos: number): { node: Text; offset: number } => {
+    for (let i = segments.length - 1; i >= 0; i--) {
+      if (pos >= segments[i].start) {
+        return { node: segments[i].node, offset: Math.min(pos - segments[i].start, segments[i].node.length) };
+      }
+    }
+    return { node: segments[0].node, offset: 0 };
+  };
+  const start = locate(span.from);
+  const end = locate(span.to);
+
+  const range = doc.createRange();
+  range.setStart(start.node, start.offset);
+  range.setEnd(end.node, end.offset);
+  return range;
 }
 
 /**
@@ -546,33 +567,20 @@ function insertCommentsLayer(
 
   for (const ann of anchored) {
     markNumber++;
-    const found = findAnchorSpan(doc, ann);
-    if (found) {
-      const { textNode, offset } = found;
-      const target = ann.quoted_text;
-
-      // Split text node: [before][target][after]
-      const before = textNode.textContent!.slice(0, offset);
-      const after = textNode.textContent!.slice(offset + target.length);
-
-      const parent = textNode.parentNode!;
-
+    const range = findAnchorRange(doc, ann);
+    if (range) {
       const mark = doc.createElement('mark');
       mark.className = 'ann-mark';
-      mark.textContent = target;
+      // extractContents pulls the (possibly multi-node) range contents into the
+      // mark, splitting inline-formatting elements at the boundaries if needed —
+      // formatting is preserved, the span is wrapped intact.
+      mark.appendChild(range.extractContents());
 
       const sup = doc.createElement('sup');
       sup.textContent = String(markNumber);
       mark.appendChild(sup);
 
-      // Replace the text node with [beforeText, mark, afterText].
-      const beforeNode = doc.createTextNode(before);
-      const afterNode = doc.createTextNode(after);
-      parent.insertBefore(beforeNode, textNode);
-      parent.insertBefore(mark, textNode);
-      parent.insertBefore(afterNode, textNode);
-      parent.removeChild(textNode);
-
+      range.insertNode(mark);
       endnotes.push({ n: markNumber, ann, found: true });
     } else {
       endnotes.push({ n: markNumber, ann, found: false });

@@ -277,6 +277,35 @@ describe('buildExportDocument — C4 comments layer', () => {
     expect(result).toContain('<sup>1</sup>');
   });
 
+  it('marks a MULTI-LINE anchored span (quoted_text has spaces where the DOM has newlines)', async () => {
+    // The paragraph renders as one text node containing literal "\n"; quoted_text
+    // (from selection.toString()) collapses those to spaces. Exact indexOf would
+    // miss it — findSpan's whitespace normalization must still place the <mark>.
+    const result = await buildExportDocument({
+      content: '# Hello\n\nOpen this in Revenant\nand confirm each block\nis syntax colored.',
+      includeComments: true,
+      annotations: [
+        makeAnnotation('a1', 'anchored', 'fix wording', 'Open this in Revenant and confirm each block is syntax colored'),
+      ],
+    });
+    expect(result).toContain('class="ann-mark"');
+    expect(result).toContain('<sup>1</sup>');
+    // It must be a real in-text mark, not just a "not found" endnote.
+    expect(/<mark class="ann-mark">[\s\S]*Revenant[\s\S]*<sup>1<\/sup><\/mark>/.test(result)).toBe(true);
+  });
+
+  it('marks a span that crosses inline **bold** formatting (multi-node range)', async () => {
+    const result = await buildExportDocument({
+      content: '# Hello\n\nThese are the **curated** languages we ship.',
+      includeComments: true,
+      annotations: [
+        makeAnnotation('a1', 'anchored', 'note', 'the curated languages'),
+      ],
+    });
+    expect(result).toContain('class="ann-mark"');
+    expect(result).toContain('<sup>1</sup>');
+  });
+
   it('appends matching endnotes for anchored annotations', async () => {
     const result = await buildExportDocument({
       content: '# Hello\n\nThis is sample text for review.',
