@@ -4,7 +4,7 @@
    *  - Brand mark + segmented view-mode toggle (source / preview / split)
    *  - "Generate review" (primary)
    *  - Obsidian → compact icon button (per D5)
-   *  - "Export ▾" dropdown: "Export document (PDF/HTML)…" | "Export to Obsidian"
+   *  - "Export ▾" dropdown: "Export to PDF/HTML" | "Export to Obsidian"
    *  - Theme toggle
    * Decisions:
    *  - Agent-agnostic label — never "Claude" (TRAP 2).
@@ -56,16 +56,22 @@
 
   function openExportDrop() {
     if (!exportDropDialog || !exportBtnEl) return;
-    const rect = exportBtnEl.getBoundingClientRect();
-    // Position the menu below-right of the button.
-    exportDropDialog.style.left = `${rect.left}px`;
-    exportDropDialog.style.top = `${rect.bottom + 6}px`;
-    exportDropDialog.show(); // non-modal so clicks outside bubble normally
+    exportDropDialog.show(); // render first so we can measure its width
     dropOpen = true;
-    // Move focus to the first menu item so AT users get arrow-key navigation
-    // immediately after the menu opens (role="menu" AT convention).
-    const first = exportDropDialog.querySelector<HTMLElement>('[role="menuitem"]');
-    if (first) first.focus();
+    const rect = exportBtnEl.getBoundingClientRect();
+    // The trigger lives in the right cluster, so align the menu's RIGHT edge to
+    // the button's and clamp to the viewport — otherwise a menu wide enough for
+    // "Export document (PDF/HTML)…" runs off the right edge and clips.
+    const menuW = exportDropDialog.offsetWidth;
+    const left = Math.max(8, Math.min(rect.right - menuW, window.innerWidth - menuW - 8));
+    exportDropDialog.style.left = `${left}px`;
+    exportDropDialog.style.top = `${rect.bottom + 6}px`;
+    // dialog.show() runs the "dialog focusing steps" and focuses the first item,
+    // leaving it highlighted on open for mouse users. Move focus back to the
+    // trigger so nothing is highlighted; keyboard users press ArrowDown, which
+    // handleEscKeydown moves into the menu (idx -1 → first item). Esc / outside
+    // click still close it.
+    exportBtnEl.focus({ preventScroll: true });
   }
 
   function closeExportDrop() {
@@ -224,7 +230,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M5 21V5a2 2 0 0 1 2-2h7l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2Z" />
           </svg>
-          Export document (PDF/HTML)…
+          Export to PDF/HTML
         </button>
         <div class="drop-divider" aria-hidden="true"></div>
         <button
@@ -435,7 +441,9 @@
     background: var(--surface);
     color: var(--text);
     box-shadow: var(--shadow-pop);
-    min-width: 220px;
+    width: max-content;        /* size to the widest item — no internal truncation */
+    min-width: 150px;
+    max-width: calc(100vw - 16px);
     z-index: var(--z-dropdown, 500);
     animation: drop-in var(--dur-fast) var(--ease-out);
   }
@@ -461,10 +469,13 @@
     white-space: nowrap;
   }
   .drop-item svg { width: 15px; height: 15px; color: var(--text-muted); flex: none; }
-  .drop-item:hover { background: var(--surface-2); }
+  .drop-item:hover,
   .drop-item:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
+    /* Soft highlight for both hover and keyboard focus — a menu-standard
+       indicator; no harsh accent ring (which the auto-focused first item showed
+       on open). */
+    background: var(--surface-2);
+    outline: none;
   }
 
   .drop-divider {
