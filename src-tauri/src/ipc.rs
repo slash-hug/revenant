@@ -302,6 +302,11 @@ fn settings_err(e: crate::settings::SettingsError) -> IpcError {
     IpcError { code: "SETTINGS_ERROR".into(), message: e.to_string() }
 }
 
+/// Map a `secrets::SecretsError` to an `IpcError`.
+fn secrets_err(e: crate::secrets::SecretsError) -> IpcError {
+    IpcError { code: "SECRETS_ERROR".into(), message: e.to_string() }
+}
+
 /// Map an `obsidian::ObsidianError` to an `IpcError`.
 fn obsidian_err(e: crate::obsidian::ObsidianError) -> IpcError {
     use crate::obsidian::ObsidianError::*;
@@ -799,6 +804,110 @@ pub async fn set_settings(settings: Settings) -> IpcResult<()> {
         let path = settings_file_path();
         let store_settings = settings_from_ipc(settings);
         crate::settings::set_settings(&path, store_settings).map_err(settings_err)
+    })
+    .await
+    .map_err(task_err)?
+}
+
+// ---------------------------------------------------------------------------
+// Settings / keychain commands (A2) — store, clear, and probe the REST key.
+// ---------------------------------------------------------------------------
+
+/// Result of `test_obsidian_connection` — a typed probe outcome that is
+/// returned as `IpcResult<ConnStatus>` rather than being routed through
+/// `IpcError` / `obsidian_err()`.  The existing `obsidian_err()` mapping
+/// handles export errors; the probe needs its own success-typed result so
+/// the frontend can render a status chip without treating every non-ok state
+/// as a thrown exception.
+///
+/// Values are snake_case-serialized to match the TypeScript `ConnStatus` type:
+///   `"ok"` | `"unauthorized"` | `"unreachable"`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnStatus {
+    /// REST server reachable, key accepted, vault listing succeeded.
+    Ok,
+    /// Server reachable but key was rejected (HTTP 401).
+    Unauthorized,
+    /// Server not running, connection refused, or timeout.
+    Unreachable,
+}
+
+/// Store the Obsidian REST API key in the OS keychain, persist the opaque
+/// reference in settings, and return the updated `Settings`.
+///
+/// The raw `key` is written only to the OS credential store.  It is never
+/// included in the returned `Settings` struct and is never written to disk.
+/// The `rest_key_ref` field in `Settings` holds only the opaque entry name
+/// used to retrieve the key later via `secrets::get_rest_key`.
+#[tauri::command]
+pub async fn set_rest_key(key: String) -> IpcResult<Settings> {
+    tauri::async_runtime::spawn_blocking(move || -> IpcResult<Settings> {
+        let path = settings_file_path();
+        // Store the raw key in the OS keychain.
+        crate::secrets::store_rest_key("obsidian-rest", &key).map_err(secrets_err)?;
+        // Load current settings so we can update the key reference field.
+        let mut settings = crate::settings::get_settings(&path).map_err(settings_err)?;
+        settings.rest_key_ref = Some("obsidian-rest".to_string());
+        // Persist the updated settings (only rest_key_ref changes; key is NOT written).
+        crate::settings::set_settings(&path, settings.clone()).map_err(settings_err)?;
+        Ok(settings_to_ipc(settings))
+    })
+    .await
+    .map_err(task_err)?
+}
+
+/// Remove the Obsidian REST API key from the OS keychain, clear the
+/// `rest_key_ref` field in settings, and return the updated `Settings`.
+#[tauri::command]
+pub async fn clear_rest_key() -> IpcResult<Settings> {
+    tauri::async_runtime::spawn_blocking(|| -> IpcResult<Settings> {
+        let path = settings_file_path();
+        // Delete the key from the OS keychain (no-op if absent).
+        crate::secrets::delete_rest_key("obsidian-rest").map_err(secrets_err)?;
+        // Clear the key reference in settings.
+        let mut settings = crate::settings::get_settings(&path).map_err(settings_err)?;
+        settings.rest_key_ref = None;
+        crate::settings::set_settings(&path, settings.clone()).map_err(settings_err)?;
+        Ok(settings_to_ipc(settings))
+    })
+    .await
+    .map_err(task_err)?
+}
+
+/// Return `true` if an Obsidian REST key is currently present in the OS keychain.
+///
+/// Lightweight check: does not load the full settings, does not attempt a
+/// network probe.  The frontend uses this to drive the masked-vs-entry UI state
+/// on first panel open when the settings store is already loaded (avoids a
+/// second round-trip vs reading `rest_key_ref != null` from the store).
+#[tauri::command]
+pub async fn has_rest_key() -> IpcResult<bool> {
+    tauri::async_runtime::spawn_blocking(|| -> IpcResult<bool> {
+        let present = crate::secrets::get_rest_key("obsidian-rest")
+            .map_err(secrets_err)?
+            .is_some();
+        Ok(present)
+    })
+    .await
+    .map_err(task_err)?
+}
+
+/// Probe the Obsidian Local REST API and return a `ConnStatus` result.
+///
+/// `key` — optional raw API key for an in-session probe before saving (D6).
+/// When `Some`, the provided key is used transiently for this probe only and
+/// is NEVER persisted.  When `None`, the saved keychain entry is used.
+///
+/// Delegates to `obsidian::test_obsidian_connection` (WS-D) which resolves the
+/// key, issues a read-only `GET /vault/` probe, and maps the response to a
+/// `ConnStatus`.  The blocking network I/O runs on a `spawn_blocking` thread
+/// so the IPC command pool stays responsive during the 3s probe timeout.
+#[tauri::command]
+pub async fn test_obsidian_connection(key: Option<String>) -> IpcResult<ConnStatus> {
+    tauri::async_runtime::spawn_blocking(move || -> IpcResult<ConnStatus> {
+        let status = crate::obsidian::test_obsidian_connection(&settings_file_path(), key);
+        Ok(status)
     })
     .await
     .map_err(task_err)?

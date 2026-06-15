@@ -316,3 +316,59 @@ export function exportPdf(outPath: string, html: string): Promise<string> {
 export function readFileBytes(docPath: string, imagePath: string): Promise<string> {
   return invoke<string>("read_file_bytes", { docPath, imagePath });
 }
+
+// ---------------------------------------------------------------------------
+// Settings / keychain commands — A1
+// ---------------------------------------------------------------------------
+
+/**
+ * Connection probe result for test_obsidian_connection.
+ *
+ * - "ok"           — REST server reachable, key accepted, vault listing succeeded.
+ * - "unauthorized" — Server reachable but key was rejected (HTTP 401).
+ * - "unreachable"  — Server not running or network timeout.
+ */
+export type ConnStatus = "ok" | "unauthorized" | "unreachable";
+
+/**
+ * Store the Obsidian REST API key in the OS keychain and persist the opaque
+ * key reference in settings.  Returns the updated Settings so the frontend
+ * store can stay in sync without a separate round-trip.
+ *
+ * The raw `key` is written only to the OS credential store and is never
+ * included in the returned Settings struct.
+ */
+export function setRestKey(key: string): Promise<Settings> {
+  return invoke<Settings>("set_rest_key", { key });
+}
+
+/**
+ * Remove the Obsidian REST API key from the OS keychain and clear the
+ * `rest_key_ref` field in settings.  Returns the updated Settings.
+ */
+export function clearRestKey(): Promise<Settings> {
+  return invoke<Settings>("clear_rest_key");
+}
+
+/**
+ * Return true if an Obsidian REST key is currently stored in the OS keychain.
+ * Lightweight alternative to loading the full settings when only key presence
+ * is needed.
+ */
+export function hasRestKey(): Promise<boolean> {
+  return invoke<boolean>("has_rest_key");
+}
+
+/**
+ * Probe the Obsidian Local REST API and return a ConnStatus result.
+ *
+ * Accepts an optional `key` for an in-memory, unsaved probe (D6): pass the
+ * typed password text when testing before saving so the user does not have to
+ * save first.  When `key` is omitted the saved keychain entry is used.
+ *
+ * The raw key, if provided, is used only for the duration of the probe and is
+ * never persisted by this command.
+ */
+export function testObsidianConnection(key?: string): Promise<ConnStatus> {
+  return invoke<ConnStatus>("test_obsidian_connection", { key: key ?? null });
+}

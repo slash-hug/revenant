@@ -31,14 +31,16 @@
   import ThemeToggle from './lib/ThemeToggle.svelte';
   import Suminagashi from './lib/Suminagashi.svelte';
   import CommandPalette from './lib/CommandPalette.svelte';
+  import SettingsPanel from './lib/SettingsPanel.svelte';
 
   import { tabsStore, activeTab, tabList } from './lib/stores/tabs';
   import type { Tab } from './lib/stores/tabs';
   import { annotationsStore } from './lib/stores/annotations';
+  import { settings, loadSettings } from './lib/stores/settings';
   import { annotationFocus, clearFocus, focusAnnotation } from './lib/stores/annotationFocus';
   import Toast from './lib/Toast.svelte';
   import { deleteAnnotationWithUndo, cycleAnnotationId } from './lib/annotationActions';
-  import { openFile, getSettings, exportObsidian, saveFile, unwatchFile, exportHtml, exportPdf, readFileBytes } from './lib/types/ipc';
+  import { openFile, exportObsidian, saveFile, unwatchFile, exportHtml, exportPdf, readFileBytes } from './lib/types/ipc';
   import type { AnchorV1, Sidecar, IpcError, Annotation } from './lib/types/ipc';
   import { buildExportDocument } from './lib/documentExport';
   import type { Command } from './lib/commandFilter';
@@ -89,6 +91,7 @@
   }
   let paletteOpen = $state(false); // ⌘K command palette (#9)
   let shortcutsOpen = $state(false); // keyboard-shortcuts help overlay (#25)
+  let settingsOpen = $state(false); // ⌘, settings panel
   let editorRef = $state<{ save: () => Promise<'saved' | 'conflict' | 'error' | 'noop'> } | null>(null);
   let closing = $state<Tab | null>(null); // tab pending an unsaved-changes guard (#22)
   let conflict = $state<{ open: boolean; path: string }>({ open: false, path: '' });
@@ -335,15 +338,18 @@
     // immediate feedback rather than letting the UI look frozen (#29).
     showToast('Exporting to Obsidian…');
     try {
-      const settings = await getSettings();
-      if (!settings.vaults.length) {
-        showToast('No Obsidian vault configured yet.');
+      // D5: read from the eager-loaded settings store (single source of truth)
+      // instead of calling getSettings() inline on every export.
+      const currentSettings = $settings;
+      if (!currentSettings?.vaults.length) {
+        showToast('No Obsidian vault configured yet. Open Settings to add one.');
+        settingsOpen = true;
         return;
       }
       const res = await exportObsidian({
         doc_path: tab.path,
-        vault_path: settings.vaults[0],
-        subfolder: settings.default_export_subfolder ?? '',
+        vault_path: currentSettings.vaults[0],
+        subfolder: currentSettings.default_export_subfolder ?? '',
       });
       showToast(
         res.method === 'rest'
@@ -394,6 +400,11 @@
   // Event wiring
   // -------------------------------------------------------------------------
   onMount(() => {
+    // D5: eager-load settings at app start so the store is populated before
+    // any tab or export action runs.  One short IPC round-trip; avoids
+    // first-open flicker and the null-state skeleton in the settings panel.
+    void loadSettings();
+
     const unlisteners: Array<Promise<() => void>> = [];
 
     // `revenant <file.md>` — cold start (delayed emit) and single-instance.
@@ -464,6 +475,12 @@
       id: 'open', title: 'Open file…', section: 'File', hint: `${mod}O`,
       keywords: 'open document markdown', run: () => void handleOpenFile(),
     });
+    // Settings command — available even from the welcome screen (first-run setup).
+    cmds.push({
+      id: 'settings', title: 'Settings…', section: 'File', hint: `${mod},`,
+      keywords: 'preferences obsidian vault key configuration appearance theme',
+      run: () => (settingsOpen = true),
+    });
     cmds.push({
       id: 'shortcuts', title: 'Keyboard shortcuts', section: 'Help',
       keywords: 'help keys cheat sheet reference bindings', run: () => (shortcutsOpen = true),
@@ -524,12 +541,15 @@
 
   function handleGlobalKeydown(e: KeyboardEvent) {
     if (!(e.metaKey || e.ctrlKey)) return;
-    // Palette + open work even from the welcome screen, so they run before the
-    // "no document open" guard below.
+    // Palette + open + settings work even from the welcome screen, so they run
+    // before the "no document open" guard below.
     if (!e.altKey && !e.shiftKey) {
       const k = e.key.toLowerCase();
       if (k === 'k') { e.preventDefault(); paletteOpen = !paletteOpen; return; }
       if (k === 'o') { e.preventDefault(); void handleOpenFile(); return; }
+      // ⌘, / Ctrl+, — open Settings panel (D7). Must run before the no-tabs
+      // guard so settings are reachable before any file is open (first-run).
+      if (e.key === ',') { e.preventDefault(); settingsOpen = true; return; }
     }
     if ($tabList.length === 0) return;
     // ⌘⌥ combos — keyboard navigation of annotations (#16). ⌘⌥M (add comment on
@@ -557,6 +577,21 @@
     <!-- Welcome / empty state (C11) -->
     <div class="welcome" role="region" aria-label="Welcome">
       <div class="welcome-top">
+        <!-- D1: gear button so Settings is reachable before any file is open.
+             Placed beside ThemeToggle in the top-right cluster. -->
+        <button
+          class="icon-btn welcome-gear"
+          type="button"
+          title="Settings"
+          aria-label="Open settings"
+          onclick={() => (settingsOpen = true)}
+        >
+          <svg viewBox="0 0 17 17" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="8.5" cy="8.5" r="2.4" />
+            <path d="M8.5 1v2M8.5 14v2M1 8.5h2M14 8.5h2M3.2 3.2l1.4 1.4M12.4 12.4l1.4 1.4M12.4 3.2l-1.4 1.4M3.2 12.4l1.4-1.4" />
+          </svg>
+        </button>
         <ThemeToggle />
       </div>
 
@@ -619,6 +654,7 @@
         on:toggleDrawer={() => (drawerOpen = !drawerOpen)}
         on:openPalette={() => (paletteOpen = true)}
         on:openShortcuts={() => (shortcutsOpen = true)}
+        on:openSettings={() => (settingsOpen = true)}
       />
 
       <TabManager on:close={(e) => requestCloseTab(e.detail.id)} />
@@ -743,6 +779,9 @@
   <!-- Keyboard-shortcut reference (#25) — opened from the palette or toolbar "?". -->
   <KeyboardShortcutsModal open={shortcutsOpen} on:close={() => (shortcutsOpen = false)} />
 
+  <!-- Settings panel — opened via gear, ⌘, or palette "Settings…" command. -->
+  <SettingsPanel open={settingsOpen} on:close={() => (settingsOpen = false)} />
+
   <!-- Transient status toast (undoable delete, etc.) -->
   <Toast />
 
@@ -782,7 +821,24 @@
 
   /* ============ Welcome ============ */
   .welcome { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; align-items: center; }
-  .welcome-top { width: 100%; display: flex; justify-content: flex-end; padding: 18px 22px; }
+  .welcome-top { width: 100%; display: flex; justify-content: flex-end; align-items: center; gap: 6px; padding: 18px 22px; }
+
+  /* D1 — gear button in the welcome-top cluster beside ThemeToggle. */
+  .welcome-gear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--r-sm, 4px);
+    border: none;
+    background: transparent;
+    color: var(--text-faint);
+    cursor: pointer;
+    transition: color var(--dur-fast, 100ms), background var(--dur-fast, 100ms);
+  }
+  .welcome-gear:hover { color: var(--text); background: var(--surface-2, var(--surface)); }
+  .welcome-gear svg { width: 17px; height: 17px; }
   .welcome-inner {
     width: 100%;
     max-width: 540px;

@@ -247,3 +247,39 @@ and unmistakably "annotated."
 - One token drives a themed mark cleanly: `--ann-underline` (light/dark) for the
   SVG fill, plus `--ann-brush-img` / `--ann-brush-img-faint` data-URIs (color
   baked per theme) for the editor's background-image brush.
+
+## WS-A Settings/IPC round: define cross-module types in the owner module (2026-06-14)
+
+**What happened:** The plan called for `ConnStatus` to be defined in `obsidian.rs`
+(WS-D's file) and imported into `ipc.rs` (WS-A's file). In a parallel-worktree
+implementation the WS-D stub hadn't landed, so `ipc.rs` couldn't import from
+`obsidian.rs`. The type was moved to `ipc.rs` (the IPC contract module) where it
+logically belongs — it is a value that crosses the IPC seam, not an Obsidian
+internal detail. `obsidian.rs` references `crate::ipc::ConnStatus`.
+
+**Rule:** Types that cross the IPC boundary (serialized to/from the frontend)
+belong in `ipc.rs`. Module-internal types (error variants, intermediate structs)
+belong in their owning module. When a type appears in both a Rust module and the
+TypeScript mirror, it belongs in `ipc.rs`.
+
+## Stale FROZEN command list was never updated when export commands were added (2026-06-14)
+
+**What happened:** `CLAUDE.md`'s FROZEN command list omitted `export_html`,
+`export_pdf`, and `read_file_bytes` — commands already registered in `lib.rs`
+since the export-commands round. The stale list was misleading: implementers
+checking it before adding a command would think those three didn't exist.
+
+**Rule:** Any time a new `#[tauri::command]` is registered in `lib.rs`, the FROZEN
+command list in `CLAUDE.md` must be updated in the same commit. Treat the FROZEN
+list as a source of truth for the IPC surface — a stale list is a bug.
+
+## keyring is a Cargo crate, not a Tauri plugin — do not add plugins.keyring block (2026-06-14)
+
+**What happened (anticipated):** The plan noted that a spurious `plugins.keyring`
+block in `tauri.conf.json` would panic at startup. `keyring` is a pure Cargo
+dependency (`secrets.rs`); it is not a Tauri plugin and needs no configuration entry.
+
+**Rule:** Only Tauri plugins that implement `Plugin` + require config need a
+`plugins.<name>` block. Cargo crates accessed via `use keyring::...` directly need
+nothing in `tauri.conf.json`. When adding a new Cargo dependency, explicitly verify
+whether it is a Tauri plugin before touching `tauri.conf.json`.

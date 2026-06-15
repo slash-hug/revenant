@@ -133,6 +133,11 @@ pub fn run() {
             ipc::export_html,
             ipc::export_pdf,
             ipc::read_file_bytes,
+            // Settings / keychain commands (A3 — new surface)
+            ipc::set_rest_key,
+            ipc::clear_rest_key,
+            ipc::has_rest_key,
+            ipc::test_obsidian_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
