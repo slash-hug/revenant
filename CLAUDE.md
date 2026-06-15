@@ -74,7 +74,7 @@ revenant/
 ## Key conventions
 
 ### IPC contract (ipc.rs / ipc.ts) — FROZEN
-All IPC commands and types live in `src-tauri/src/ipc.rs` (Rust) and `src/lib/types/ipc.ts` (TS mirror). WS-A froze this surface. Do NOT add new commands without updating both files. Commands: `open_file`, `save_file(expected_hash)`, `load_annotations`, `save_annotations`, `generate_review`, `export_obsidian`, `get_settings`, `set_settings`. Events: `open_file_request`, `file_changed`.
+All IPC commands and types live in `src-tauri/src/ipc.rs` (Rust) and `src/lib/types/ipc.ts` (TS mirror). WS-A froze this surface. Do NOT add new commands without updating both files. Commands: `open_file`, `unwatch_file`, `save_file(expected_hash)`, `load_annotations`, `save_annotations`, `generate_review`, `export_obsidian`, `get_settings`, `set_settings`, `snapshot_webview`. Events: `open_file_request`, `file_changed`.
 
 ### Module ownership
 `lib.rs` is owned by WS-A only. WS-B/C/D fill their own module files; they never edit `lib.rs`. All `#[command]` registrations are in `lib.rs`.

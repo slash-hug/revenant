@@ -48,6 +48,32 @@ pub struct WatchHandle {
     pub last_written: Arc<Mutex<Option<String>>>,
 }
 
+impl FileWatchers {
+    /// Stop watching `path`, releasing its OS watcher + thread (called when the
+    /// document's tab closes — without this every opened file leaks a watcher for
+    /// the app's lifetime, #26). The map is keyed by canonical path, and the
+    /// frontend passes the canonical path it got from `open_file`; canonicalize
+    /// anyway (idempotent) and fall back to the raw path if the file is now gone.
+    /// No-op if the path isn't being watched.
+    pub fn unwatch(&self, path: &str) {
+        let mut map = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let key = std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+        map.remove(&key);
+    }
+
+    /// Number of live watchers (test-only).
+    #[cfg(test)]
+    pub fn watch_count(&self) -> usize {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -93,6 +119,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ipc::open_file,
+            ipc::unwatch_file,
             ipc::save_file,
             ipc::load_annotations,
             ipc::save_annotations,

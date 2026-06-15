@@ -381,6 +381,14 @@ fn watch_file(
     }
 }
 
+/// Stop watching a file — called from the frontend when its tab closes so the OS
+/// watcher + thread are released instead of leaking for the app's lifetime (#26).
+/// No-op if the path isn't being watched.
+#[tauri::command]
+pub fn unwatch_file(watchers: State<crate::FileWatchers>, path: String) {
+    watchers.unwatch(&path);
+}
+
 // ---------------------------------------------------------------------------
 // IPC Commands — delegating to WS-B/D modules.
 // ---------------------------------------------------------------------------

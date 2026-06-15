@@ -189,6 +189,15 @@ export function openFile(path: string): Promise<FileResult> {
 }
 
 /**
+ * Stop watching a file for external changes — call when its tab closes so the
+ * Rust core releases the OS watcher instead of leaking it for the app's lifetime
+ * (#26). No-op if the path isn't being watched.
+ */
+export function unwatchFile(path: string): Promise<void> {
+  return invoke<void>("unwatch_file", { path });
+}
+
+/**
  * Save file content with optimistic concurrency (sha256 hash check).
  * Throws IpcError with code "HASH_MISMATCH" if on-disk content changed since last read.
  */

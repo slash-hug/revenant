@@ -36,7 +36,7 @@
   import { annotationFocus, clearFocus, focusAnnotation } from './lib/stores/annotationFocus';
   import Toast from './lib/Toast.svelte';
   import { deleteAnnotationWithUndo, cycleAnnotationId } from './lib/annotationActions';
-  import { openFile, getSettings, exportObsidian, saveFile } from './lib/types/ipc';
+  import { openFile, getSettings, exportObsidian, saveFile, unwatchFile } from './lib/types/ipc';
   import type { AnchorV1, Sidecar, IpcError, Annotation } from './lib/types/ipc';
   import type { Command } from './lib/commandFilter';
   import { generateReview } from './lib/ReviewExporter';
@@ -248,7 +248,14 @@
     const tab = $tabList.find((t) => t.id === id);
     if (!tab) return;
     if (tab.dirty) closing = tab;
-    else tabsStore.closeTab(id);
+    else doCloseTab(id);
+  }
+
+  /** Close a tab and release its file watcher in the Rust core (#26). */
+  function doCloseTab(id: string) {
+    const path = $tabList.find((t) => t.id === id)?.path;
+    tabsStore.closeTab(id);
+    if (path) void unwatchFile(path).catch(() => {});
   }
 
   /** Save the pending tab, then close it. Active tabs save through the live
@@ -273,13 +280,13 @@
     }
     closing = null;
     // Only close on a clean save; on conflict/error keep the tab so nothing is lost.
-    if (outcome === 'saved') tabsStore.closeTab(tab.id);
+    if (outcome === 'saved') doCloseTab(tab.id);
   }
 
   function handleCloseDiscard() {
     const tab = closing;
     closing = null;
-    if (tab) tabsStore.closeTab(tab.id);
+    if (tab) doCloseTab(tab.id);
   }
 
   // -------------------------------------------------------------------------
