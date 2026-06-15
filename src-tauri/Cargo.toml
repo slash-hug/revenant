@@ -39,11 +39,12 @@ similar = { version = "2", features = ["text"] }
 notify = "6"
 thiserror = "2"
 hex = "0.4"
-reqwest = { version = "0.12", features = ["blocking", "rustls-tls"] }
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls", "json"] }
 tokio = { version = "1", features = ["full"] }
 fd-lock = "3"
 percent-encoding = "2"
 base64 = "0.21"
+semver = "1"
 
 # macOS-only: native WKWebView snapshot for the open transition (see snapshot.rs).
 # Versions match the objc2 family wry 0.55 already locks, so no extra crates are

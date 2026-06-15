@@ -10,3 +10,5 @@ pub mod settings_tests;
 pub mod obsidian_tests;
 // WS-A: export tests (path validation + I/O for export_html, read_file_bytes)
 pub mod export_tests;
+// WS-D: update-check engine tests (semver compare, mockito parse, URL validation)
+pub mod updates_tests;

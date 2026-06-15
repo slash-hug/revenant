@@ -21,6 +21,7 @@ pub mod paths;
 pub mod settings;
 pub mod secrets;
 pub mod obsidian;
+pub mod updates;
 
 // Native macOS WKWebView snapshot (open-transition document capture).
 #[cfg(target_os = "macos")]
@@ -138,6 +139,9 @@ pub fn run() {
             ipc::clear_rest_key,
             ipc::has_rest_key,
             ipc::test_obsidian_connection,
+            // Update-check commands (WS-D)
+            ipc::check_for_updates,
+            ipc::open_release_page,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
