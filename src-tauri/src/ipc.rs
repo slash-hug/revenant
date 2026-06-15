@@ -290,6 +290,13 @@ fn ann_err(e: crate::annotations::AnnotationError) -> IpcError {
     IpcError { code: "ANNOTATION_ERROR".into(), message: e.to_string() }
 }
 
+/// Map a `spawn_blocking` join error (task panicked/cancelled) to an `IpcError`.
+/// Write commands offload their blocking fs I/O to a blocking thread (perf #28)
+/// so the IPC command pool stays responsive on large docs.
+fn task_err<E: std::fmt::Display>(e: E) -> IpcError {
+    IpcError { code: "INTERNAL".into(), message: format!("background task failed: {e}") }
+}
+
 /// Map a `settings::SettingsError` to an `IpcError`.
 fn settings_err(e: crate::settings::SettingsError) -> IpcError {
     IpcError { code: "SETTINGS_ERROR".into(), message: e.to_string() }
@@ -451,45 +458,53 @@ pub fn open_file(
 /// Write confinement fails *closed*: if vault list cannot be loaded we reject
 /// the write rather than falling back to "allow all".
 #[tauri::command]
-pub fn save_file(
+pub async fn save_file(
     app: AppHandle,
-    watchers: State<crate::FileWatchers>,
+    watchers: State<'_, crate::FileWatchers>,
     request: SaveFileRequest,
 ) -> IpcResult<FileResult> {
-    let p = std::path::Path::new(&request.path);
+    // Confinement check + the fd-locked write are blocking fs work — offload to a
+    // blocking thread so a large-doc save doesn't stall the IPC command pool
+    // (perf #28). `watch_file` (which needs the non-'static AppHandle/State) runs
+    // back on the async side after the write returns.
+    let (canon, new_hash, path) = tauri::async_runtime::spawn_blocking(
+        move || -> IpcResult<(std::path::PathBuf, String, String)> {
+            let p = std::path::Path::new(&request.path);
 
-    // Confinement check before any write.
-    let canon = std::fs::canonicalize(p)
-        .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
-    let settings_path = settings_file_path();
-    let settings = crate::settings::get_settings(&settings_path).map_err(|e| {
-        IpcError {
-            code: "SETTINGS_ERROR".into(),
-            message: format!("cannot load settings for confinement check: {e}"),
-        }
-    })?;
+            let canon = std::fs::canonicalize(p)
+                .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
+            let settings_path = settings_file_path();
+            let settings = crate::settings::get_settings(&settings_path).map_err(|e| IpcError {
+                code: "SETTINGS_ERROR".into(),
+                message: format!("cannot load settings for confinement check: {e}"),
+            })?;
 
-    if !settings.vaults.is_empty() {
-        // Allowed dirs come ONLY from the pre-configured vault list — never from
-        // the (frontend-supplied, untrusted) target path.
-        let allowed: Vec<std::path::PathBuf> = settings.vaults.iter()
-            .filter_map(|v| std::fs::canonicalize(v).ok())
-            .collect();
-        crate::paths::assert_confined(&canon, &allowed)
-            .map_err(|e| IpcError { code: "PATH_CONFINED".into(), message: e.to_string() })?;
-    }
-    // When no vaults are configured (first-run), saves are unrestricted.
-    // Once vaults are configured, every save must be inside them.
+            if !settings.vaults.is_empty() {
+                // Allowed dirs come ONLY from the pre-configured vault list — never
+                // from the (frontend-supplied, untrusted) target path.
+                let allowed: Vec<std::path::PathBuf> = settings.vaults.iter()
+                    .filter_map(|v| std::fs::canonicalize(v).ok())
+                    .collect();
+                crate::paths::assert_confined(&canon, &allowed)
+                    .map_err(|e| IpcError { code: "PATH_CONFINED".into(), message: e.to_string() })?;
+            }
+            // No vaults configured (first-run) → unrestricted; once configured every
+            // save must be inside them.
 
-    let new_hash = crate::file_io::save_file(p, &request.content, &request.expected_hash)
-        .map_err(file_io_err)?;
+            let new_hash = crate::file_io::save_file(p, &request.content, &request.expected_hash)
+                .map_err(file_io_err)?;
+            Ok((canon, new_hash, request.path))
+        },
+    )
+    .await
+    .map_err(task_err)??;
 
     // Record our own write so the watcher's resulting event is recognized as
     // internal (external == false) and does NOT trigger a false conflict prompt.
     watch_file(&app, &watchers, &canon, &new_hash);
 
     Ok(FileResult {
-        path: request.path,
+        path,
         content_hash: new_hash,
         content: String::new(),
     })
@@ -591,27 +606,34 @@ pub async fn load_annotations(doc_path: String) -> IpcResult<Sidecar> {
 /// context fields). This is the single source of truth for context; the
 /// frontend never supplies it.
 #[tauri::command]
-pub fn save_annotations(doc_path: String, sidecar: Sidecar) -> IpcResult<()> {
-    let p = std::path::Path::new(&doc_path);
+pub async fn save_annotations(doc_path: String, sidecar: Sidecar) -> IpcResult<()> {
+    // Reads the whole doc + writes the sidecar — blocking fs, offloaded (perf #28).
+    tauri::async_runtime::spawn_blocking(move || -> IpcResult<()> {
+        let p = std::path::Path::new(&doc_path);
 
-    // Read the current doc content so we can derive annotation context lines.
-    let doc_content = std::fs::read_to_string(p)
-        .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
-    let doc_lines: Vec<&str> = doc_content.lines().collect();
+        // Read the current doc content so we can derive annotation context lines.
+        let doc_content = std::fs::read_to_string(p)
+            .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
+        let doc_lines: Vec<&str> = doc_content.lines().collect();
 
-    let store_sidecar = sidecar_from_ipc_with_context(sidecar, &doc_lines);
+        let store_sidecar = sidecar_from_ipc_with_context(sidecar, &doc_lines);
 
-    // Ensure gitignore entry on first write.
-    if let Some(dir) = p.parent() {
-        let _ = crate::paths::ensure_gitignore_entry(dir);
-    }
-    crate::annotations::save_annotations(p, &store_sidecar).map_err(ann_err)
+        // Ensure gitignore entry on first write.
+        if let Some(dir) = p.parent() {
+            let _ = crate::paths::ensure_gitignore_entry(dir);
+        }
+        crate::annotations::save_annotations(p, &store_sidecar).map_err(ann_err)
+    })
+    .await
+    .map_err(task_err)?
 }
 
 /// Write a pre-formatted review markdown file beside the document.
 /// Frontend (ReviewExporter.ts) builds the markdown payload.
 #[tauri::command]
-pub fn generate_review(payload: ReviewPayload) -> IpcResult<ReviewResult> {
+pub async fn generate_review(payload: ReviewPayload) -> IpcResult<ReviewResult> {
+    // Canonicalize + write the .review.md — blocking fs, offloaded (perf #28).
+    tauri::async_runtime::spawn_blocking(move || -> IpcResult<ReviewResult> {
     let doc_p = std::path::Path::new(&payload.doc_path);
 
     // Path confinement (A7/C16): the review file is written next to its source
@@ -643,6 +665,9 @@ pub fn generate_review(payload: ReviewPayload) -> IpcResult<ReviewResult> {
     Ok(ReviewResult {
         review_path: review_path.to_string_lossy().into_owned(),
     })
+    })
+    .await
+    .map_err(task_err)?
 }
 
 /// Export the document to an Obsidian vault (REST or filesystem fallback).
@@ -756,18 +781,27 @@ fn export_obsidian_blocking(request: ExportObsidianRequest) -> IpcResult<ExportO
 
 /// Load persisted user settings.
 #[tauri::command]
-pub fn get_settings() -> IpcResult<Settings> {
-    let path = settings_file_path();
-    let settings = crate::settings::get_settings(&path).map_err(settings_err)?;
-    Ok(settings_to_ipc(settings))
+pub async fn get_settings() -> IpcResult<Settings> {
+    // Settings file read — small, but still fs; offloaded for consistency (perf #28).
+    tauri::async_runtime::spawn_blocking(|| -> IpcResult<Settings> {
+        let path = settings_file_path();
+        let settings = crate::settings::get_settings(&path).map_err(settings_err)?;
+        Ok(settings_to_ipc(settings))
+    })
+    .await
+    .map_err(task_err)?
 }
 
 /// Persist user settings (rest_key is NOT accepted here — use keychain via secrets module).
 #[tauri::command]
-pub fn set_settings(settings: Settings) -> IpcResult<()> {
-    let path = settings_file_path();
-    let store_settings = settings_from_ipc(settings);
-    crate::settings::set_settings(&path, store_settings).map_err(settings_err)
+pub async fn set_settings(settings: Settings) -> IpcResult<()> {
+    tauri::async_runtime::spawn_blocking(move || -> IpcResult<()> {
+        let path = settings_file_path();
+        let store_settings = settings_from_ipc(settings);
+        crate::settings::set_settings(&path, store_settings).map_err(settings_err)
+    })
+    .await
+    .map_err(task_err)?
 }
 
 // ---------------------------------------------------------------------------
