@@ -23,6 +23,7 @@
     SPLIT_DEFAULT, DRAWER_DEFAULT, SPLIT_MIN, SPLIT_MAX, DRAWER_MIN, DRAWER_MAX,
   } from './lib/layout';
   import ConflictModal from './lib/ConflictModal.svelte';
+  import UnsavedChangesModal from './lib/UnsavedChangesModal.svelte';
   import AnnotationComposer from './lib/AnnotationComposer.svelte';
   import AnnotationPopover from './lib/AnnotationPopover.svelte';
   import ThemeToggle from './lib/ThemeToggle.svelte';
@@ -30,11 +31,12 @@
   import CommandPalette from './lib/CommandPalette.svelte';
 
   import { tabsStore, activeTab, tabList } from './lib/stores/tabs';
+  import type { Tab } from './lib/stores/tabs';
   import { annotationsStore } from './lib/stores/annotations';
   import { annotationFocus, clearFocus, focusAnnotation } from './lib/stores/annotationFocus';
   import Toast from './lib/Toast.svelte';
   import { deleteAnnotationWithUndo, cycleAnnotationId } from './lib/annotationActions';
-  import { openFile, getSettings, exportObsidian } from './lib/types/ipc';
+  import { openFile, getSettings, exportObsidian, saveFile } from './lib/types/ipc';
   import type { AnchorV1, Sidecar, IpcError, Annotation } from './lib/types/ipc';
   import type { Command } from './lib/commandFilter';
   import { generateReview } from './lib/ReviewExporter';
@@ -83,6 +85,8 @@
     drawerWidth = nextDrawerWidth(drawerWidth, dx);
   }
   let paletteOpen = $state(false); // ⌘K command palette (#9)
+  let editorRef = $state<{ save: () => Promise<'saved' | 'conflict' | 'error' | 'noop'> } | null>(null);
+  let closing = $state<Tab | null>(null); // tab pending an unsaved-changes guard (#22)
   let conflict = $state<{ open: boolean; path: string }>({ open: false, path: '' });
   let toast = $state<string>('');
   let recentFiles = $state<string[]>(loadRecent());
@@ -233,6 +237,49 @@
     // Keep in-app edits; the on-disk change is ignored until the next save
     // attempt (which will surface the conflict again). No data loss.
     conflict = { open: false, path: '' };
+  }
+
+  // -------------------------------------------------------------------------
+  // Tab close with unsaved-changes guard (#22)
+  // -------------------------------------------------------------------------
+  /** Close a tab, guarding against losing unsaved edits. Clean tabs close
+   *  immediately; dirty tabs raise the styled Save/Discard/Cancel modal. */
+  function requestCloseTab(id: string) {
+    const tab = $tabList.find((t) => t.id === id);
+    if (!tab) return;
+    if (tab.dirty) closing = tab;
+    else tabsStore.closeTab(id);
+  }
+
+  /** Save the pending tab, then close it. Active tabs save through the live
+   *  editor (flushes un-debounced keystrokes); a non-active dirty tab's content
+   *  is already flushed to the store (EditorPane flushes on unmount). */
+  async function handleCloseSave() {
+    const tab = closing;
+    if (!tab) return;
+    let outcome: 'saved' | 'conflict' | 'error' | 'noop';
+    if (tab.id === $activeTab?.id && editorRef) {
+      outcome = await editorRef.save();
+    } else {
+      try {
+        const res = await saveFile({ path: tab.path, content: tab.content, expected_hash: tab.contentHash });
+        tabsStore.markSaved(tab.id, res.content_hash);
+        outcome = 'saved';
+      } catch (err) {
+        const code = (err as IpcError)?.code;
+        if (code === 'HASH_MISMATCH') { handleConflict(tab.path); outcome = 'conflict'; }
+        else { showToast(`Save failed: ${errMessage(err)}`); outcome = 'error'; }
+      }
+    }
+    closing = null;
+    // Only close on a clean save; on conflict/error keep the tab so nothing is lost.
+    if (outcome === 'saved') tabsStore.closeTab(tab.id);
+  }
+
+  function handleCloseDiscard() {
+    const tab = closing;
+    closing = null;
+    if (tab) tabsStore.closeTab(tab.id);
   }
 
   // -------------------------------------------------------------------------
@@ -417,7 +464,7 @@
     }
     cmds.push({
       id: 'close-tab', title: 'Close current tab', section: 'Tabs',
-      keywords: 'tab close', run: () => { const id = $activeTab?.id; if (id) tabsStore.closeTab(id); },
+      keywords: 'tab close', run: () => { const id = $activeTab?.id; if (id) requestCloseTab(id); },
     });
 
     return cmds;
@@ -521,7 +568,7 @@
         on:openPalette={() => (paletteOpen = true)}
       />
 
-      <TabManager />
+      <TabManager on:close={(e) => requestCloseTab(e.detail.id)} />
 
       <div class="ws-body">
         <div class="panes view-{viewMode}" bind:this={panesEl} style="--split-editor: {splitEditorFrac * 100}%">
@@ -530,6 +577,7 @@
               {#if viewMode === 'source' || viewMode === 'split'}
                 <div class="pane editor-wrap">
                   <EditorPane
+                    bind:this={editorRef}
                     tabId={$activeTab.id}
                     content={$activeTab.content}
                     filePath={$activeTab.path}
@@ -597,6 +645,15 @@
   {/if}
 
   <ConflictModal open={conflict.open} filePath={conflict.path} on:reload={handleReload} on:keepMine={handleKeepMine} />
+
+  <!-- Unsaved-changes guard on tab close (#22) — Save / Discard / Cancel. -->
+  <UnsavedChangesModal
+    open={closing !== null}
+    filePath={closing?.path ?? ''}
+    on:save={handleCloseSave}
+    on:discard={handleCloseDiscard}
+    on:cancel={() => (closing = null)}
+  />
 
   <!-- Shared annotation popover — portal-mounted at App root, position: fixed.
        Driven by $annotationFocus.activeId. Placement is coordinate-driven from

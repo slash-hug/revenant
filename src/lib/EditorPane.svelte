@@ -596,8 +596,17 @@
   // Save (Ctrl/Cmd+S)
   // -------------------------------------------------------------------------
 
-  async function handleSave() {
-    if (!view || !filePath) return;
+  /**
+   * Save the active document. Exposed (via bind:this) so the parent can trigger a
+   * save from the unsaved-changes guard (#22) and react to the outcome. Returns
+   * 'saved' | 'conflict' | 'error' | 'noop'.
+   */
+  export async function save(): Promise<'saved' | 'conflict' | 'error' | 'noop'> {
+    return handleSave();
+  }
+
+  async function handleSave(): Promise<'saved' | 'conflict' | 'error' | 'noop'> {
+    if (!view || !filePath) return 'noop';
 
     // Flush any pending debounced change first: Mod-s can fire within DEBOUNCE_MS
     // of a keystroke, before scheduleChange() has pushed the latest buffer into
@@ -611,7 +620,7 @@
 
     const snapshot = tabsStore.snapshot;
     const tab = snapshot.tabs.find((t) => t.id === tabId);
-    if (!tab) return;
+    if (!tab) return 'noop';
 
     try {
       // The Rust save_file returns a FileResult (with content_hash) on success
@@ -625,17 +634,19 @@
       });
       tabsStore.markSaved(tabId, result.content_hash);
       dispatch('saved', { newHash: result.content_hash });
+      return 'saved';
     } catch (err) {
       const code = (err as IpcError)?.code;
       if (code === 'HASH_MISMATCH') {
         // The file changed on disk since we opened it. Do NOT clobber — hand off
         // to the conflict modal so the user picks Reload vs Keep mine (A5/C12).
         dispatch('conflict', { filePath });
-      } else {
-        const message = (err as IpcError)?.message ?? String(err);
-        console.error('[EditorPane] save failed:', err);
-        dispatch('saveError', { message });
+        return 'conflict';
       }
+      const message = (err as IpcError)?.message ?? String(err);
+      console.error('[EditorPane] save failed:', err);
+      dispatch('saveError', { message });
+      return 'error';
     }
   }
 

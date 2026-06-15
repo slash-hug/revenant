@@ -3,16 +3,17 @@
    * TabManager.svelte — horizontal tab strip.
    * C1 — open/close/switch, dirty dot, focus-existing on duplicate.
    */
+  import { createEventDispatcher } from 'svelte';
   import { tabsStore, tabList, activeTab } from './stores/tabs';
   import { basename } from './util/path';
 
+  // Closing is routed through the parent so a dirty tab can show the styled
+  // Save/Discard/Cancel guard (#22) instead of a native confirm.
+  const dispatch = createEventDispatcher<{ close: { id: string } }>();
+
   function handleClose(e: MouseEvent, id: string) {
     e.stopPropagation();
-    const tab = $tabList.find((t) => t.id === id);
-    if (tab?.dirty) {
-      if (!confirm(`"${fileName(tab.path)}" has unsaved changes. Close anyway?`)) return;
-    }
-    tabsStore.closeTab(id);
+    dispatch('close', { id });
   }
 
   function handleSwitch(id: string) {
