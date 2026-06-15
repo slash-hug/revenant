@@ -19,6 +19,9 @@ import {
   getSettings,
   setSettings,
   snapshotWebview,
+  exportHtml,
+  exportPdf,
+  readFileBytes,
   type Annotation,
   type Sidecar,
   type Settings,
@@ -39,6 +42,10 @@ describe("IPC contract", () => {
     expect(typeof getSettings).toBe("function");
     expect(typeof setSettings).toBe("function");
     expect(typeof snapshotWebview).toBe("function");
+    // Export commands (A9)
+    expect(typeof exportHtml).toBe("function");
+    expect(typeof exportPdf).toBe("function");
+    expect(typeof readFileBytes).toBe("function");
   });
 
   it("openFile calls invoke with correct command name", async () => {
@@ -123,5 +130,37 @@ describe("IPC contract", () => {
     const url = await snapshotWebview();
     expect(mockInvoke).toHaveBeenCalledWith("snapshot_webview");
     expect(url).toBe("data:image/png;base64,AAAA");
+  });
+
+  // ─── Export commands (A9) ───────────────────────────────────────────────────
+
+  it("exportHtml calls invoke with correct command name and args", async () => {
+    mockInvoke.mockResolvedValueOnce("/tmp/export.html");
+    const path = await exportHtml("/tmp/export.html", "<html/>");
+    expect(mockInvoke).toHaveBeenCalledWith("export_html", {
+      outPath: "/tmp/export.html",
+      html: "<html/>",
+    });
+    expect(path).toBe("/tmp/export.html");
+  });
+
+  it("exportPdf calls invoke with correct command name and args", async () => {
+    mockInvoke.mockResolvedValueOnce("/tmp/export.pdf");
+    const path = await exportPdf("/tmp/export.pdf", "<html/>");
+    expect(mockInvoke).toHaveBeenCalledWith("export_pdf", {
+      outPath: "/tmp/export.pdf",
+      html: "<html/>",
+    });
+    expect(path).toBe("/tmp/export.pdf");
+  });
+
+  it("readFileBytes calls invoke with correct command name and args", async () => {
+    mockInvoke.mockResolvedValueOnce("base64encodedstring==");
+    const b64 = await readFileBytes("/docs/readme.md", "/docs/images/fig.png");
+    expect(mockInvoke).toHaveBeenCalledWith("read_file_bytes", {
+      docPath: "/docs/readme.md",
+      imagePath: "/docs/images/fig.png",
+    });
+    expect(b64).toBe("base64encodedstring==");
   });
 });

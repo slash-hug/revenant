@@ -770,6 +770,58 @@ pub fn set_settings(settings: Settings) -> IpcResult<()> {
     crate::settings::set_settings(&path, store_settings).map_err(settings_err)
 }
 
+// ---------------------------------------------------------------------------
+// Export commands (A2) — delegating to crate::export
+// ---------------------------------------------------------------------------
+
+/// Write a self-contained HTML bundle to the user-chosen `out_path`.
+///
+/// `out_path` must be absolute with a `.html`/`.HTML` extension and no
+/// parent-directory traversal.  `html` is the full document string produced by
+/// the frontend's `buildExportDocument` helper (fonts, CSS, and all content
+/// inlined).
+///
+/// Returns the written path on success; `INVALID_PATH` or `IO_ERROR` on failure.
+#[tauri::command]
+pub fn export_html(out_path: String, html: String) -> IpcResult<String> {
+    let p = std::path::Path::new(&out_path);
+    crate::export::export_html(p, &html)
+}
+
+/// Convert an HTML bundle to a PDF file at the user-chosen `out_path`.
+///
+/// On macOS: creates a hidden off-screen WKWebView, loads the bundle, waits
+/// for it to render, calls `createPDFWithConfiguration`, and writes the bytes.
+/// Bounded to 30 s total; returns `PDF_EXPORT_FAILED` on timeout or native
+/// failure.
+///
+/// On non-macOS: returns `PDF_EXPORT_UNSUPPORTED` immediately so the frontend
+/// can surface a friendly message.
+///
+/// `out_path` must be absolute with a `.pdf`/`.PDF` extension and no
+/// parent-directory traversal.
+#[tauri::command]
+pub async fn export_pdf(out_path: String, html: String) -> IpcResult<String> {
+    let p = std::path::PathBuf::from(&out_path);
+    crate::export::export_pdf(p, html).await
+}
+
+/// Read an image file at `image_path` and return its bytes as a base64 string.
+///
+/// `image_path` must be under `doc_path`'s parent directory (all
+/// subdirectories included).  A `has_parent_traversal` pre-guard is applied
+/// before the confinement check so dot-dot paths cannot escape.
+///
+/// On failure (path out of bounds, unreadable) returns `IO_ERROR`.  The
+/// frontend treats this as a "skip" and degrades to alt text — it must not
+/// abort the entire export.
+#[tauri::command]
+pub fn read_file_bytes(doc_path: String, image_path: String) -> IpcResult<String> {
+    let doc = std::path::Path::new(&doc_path);
+    let img = std::path::Path::new(&image_path);
+    crate::export::read_file_bytes(doc, img)
+}
+
 /// Capture the current web content as a PNG data URL.
 ///
 /// Backs the suminagashi open transition: the frontend needs a faithful bitmap of

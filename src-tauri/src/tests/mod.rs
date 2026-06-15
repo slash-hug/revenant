@@ -8,3 +8,5 @@ pub mod watcher_tests;
 // WS-D: settings, secrets & Obsidian tests
 pub mod settings_tests;
 pub mod obsidian_tests;
+// WS-A: export tests (path validation + I/O for export_html, read_file_bytes)
+pub mod export_tests;
