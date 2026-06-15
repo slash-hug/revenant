@@ -14,8 +14,6 @@
 </script>
 
 <section class="appearance-section" aria-label="Appearance settings">
-  <h4 class="section-title">Appearance</h4>
-
   <div class="field-row">
     <span class="field-label">Theme</span>
     <ThemeToggle />
@@ -27,15 +25,6 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-  }
-
-  .section-title {
-    margin: 0 0 4px;
-    font-size: var(--fs-xs);
-    font-weight: var(--fw-semibold);
-    letter-spacing: .05em;
-    text-transform: uppercase;
-    color: var(--text-faint);
   }
 
   .field-row {

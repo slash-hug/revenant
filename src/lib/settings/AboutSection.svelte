@@ -87,8 +87,6 @@
 </script>
 
 <section class="about-section" aria-label="About">
-  <h4 class="section-title">About</h4>
-
   <!-- ── Version ───────────────────────────────────────────────────────────── -->
   <div class="field-row">
     <span class="field-label">Version</span>
@@ -155,15 +153,6 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-  }
-
-  .section-title {
-    margin: 0 0 4px;
-    font-size: var(--fs-xs);
-    font-weight: var(--fw-semibold);
-    letter-spacing: .05em;
-    text-transform: uppercase;
-    color: var(--text-faint);
   }
 
   .field-row {

@@ -150,8 +150,6 @@
 </script>
 
 <section class="obs-section" aria-label="Obsidian settings">
-  <h4 class="section-title">Obsidian</h4>
-
   <!-- ── Vault ─────────────────────────────────────────────────────────────── -->
   <div class="field-row">
     <label class="field-label" for="obs-vault">Vault folder</label>
@@ -269,15 +267,6 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-  }
-
-  .section-title {
-    margin: 0 0 4px;
-    font-size: var(--fs-xs);
-    font-weight: var(--fw-semibold);
-    letter-spacing: .05em;
-    text-transform: uppercase;
-    color: var(--text-faint);
   }
 
   .field-row {

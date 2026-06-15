@@ -40,3 +40,26 @@ describe('SettingsPanel — CSS display invariant (regression #37)', () => {
     expect(m![1]).toMatch(/display\s*:\s*flex/);
   });
 });
+
+describe('SettingsPanel — master-detail sidebar (settings redesign)', () => {
+  const src = readFileSync(resolve(process.cwd(), 'src/lib/SettingsPanel.svelte'), 'utf8');
+
+  it('renders a vertical tablist sidebar', () => {
+    expect(src).toMatch(/role="tablist"/);
+    expect(src).toMatch(/aria-orientation="vertical"/);
+    expect(src).toMatch(/role="tabpanel"/);
+  });
+
+  it('defines the three categories (General / Integrations / About)', () => {
+    for (const label of ['General', 'Integrations', 'About']) {
+      expect(src, `expected category "${label}"`).toMatch(new RegExp(`label:\\s*'${label}'`));
+    }
+  });
+
+  it('section components carry no top-level section-title heading (the pane title names them)', () => {
+    for (const f of ['AppearanceSection', 'ObsidianSection', 'AboutSection']) {
+      const s = readFileSync(resolve(process.cwd(), `src/lib/settings/${f}.svelte`), 'utf8');
+      expect(s, `${f} should not declare a section-title`).not.toMatch(/class="section-title"/);
+    }
+  });
+});
