@@ -651,6 +651,31 @@
 </div>
 
 <style>
+  /* Mermaid loading state (#29): a diagram block before its SVG hydrates. Hide
+     the raw source and overlay "Rendering diagram…". The attribute is removed on
+     hydration, so this only styles the transient pending state. Preview-only —
+     export pre-renders Mermaid, so no pending block ever reaches the bundle. */
+  :global(.preview-content [data-mermaid-pending]) {
+    position: relative;
+    min-height: 64px;
+    color: transparent;
+    user-select: none;
+    background: var(--surface-2);
+    border-radius: var(--r-md);
+    overflow: hidden;
+  }
+  :global(.preview-content [data-mermaid-pending]::before) {
+    content: "Rendering diagram…";
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-faint);
+    font-size: var(--fs-sm);
+    font-style: italic;
+  }
+
   .preview-pane {
     display: flex;
     flex-direction: column;

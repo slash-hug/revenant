@@ -100,6 +100,9 @@
 
   // Export dialog state — null = closed; string = pre-selected format ("pdf"|"html"|"").
   let exportDialogPreset = $state<string | null>(null);
+  // In-flight toolbar action (#29) — drives the busy/disabled state on the
+  // Generate-review and Export buttons so slow ops don't look frozen.
+  let busyAction = $state<'review' | 'obsidian' | null>(null);
 
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
   let loadedPath: string | null = null;
@@ -313,17 +316,24 @@
       general_notes: s.generalNotes,
       annotations: s.annotations,
     };
+    busyAction = 'review';
     try {
       await generateReview(sidecar, tab.path);
       showToast(`Review written: ${basename(tab.path)}.review.md`);
     } catch (err) {
       showToast(`Generate review failed: ${errMessage(err)}`);
+    } finally {
+      busyAction = null;
     }
   }
 
   async function handleExportObsidian() {
     const tab = $activeTab;
-    if (!tab) return;
+    if (!tab || busyAction === 'obsidian') return;
+    busyAction = 'obsidian';
+    // The REST probe can take up to ~3s when Obsidian is unreachable, so give
+    // immediate feedback rather than letting the UI look frozen (#29).
+    showToast('Exporting to Obsidian…');
     try {
       const settings = await getSettings();
       if (!settings.vaults.length) {
@@ -342,6 +352,8 @@
       );
     } catch (err) {
       showToast(`Obsidian export failed: ${errMessage(err)}`);
+    } finally {
+      busyAction = null;
     }
   }
 
@@ -599,6 +611,7 @@
       <Toolbar
         {viewMode}
         {drawerOpen}
+        busy={busyAction}
         on:viewMode={(e) => (viewMode = e.detail.mode)}
         on:generateReview={handleGenerateReview}
         on:exportObsidian={handleExportObsidian}

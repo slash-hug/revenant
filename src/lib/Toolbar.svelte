@@ -20,6 +20,8 @@
 
   export let viewMode: ViewMode = 'split';
   export let drawerOpen: boolean = true;
+  /** In-flight async action (#29) — disables + spins the matching button. */
+  export let busy: 'review' | 'obsidian' | null = null;
 
   const dispatch = createEventDispatcher<{
     viewMode: { mode: ViewMode };
@@ -183,12 +185,21 @@
       type="button"
       class="btn btn-primary"
       on:click={() => dispatch('generateReview')}
+      disabled={busy === 'review'}
+      aria-busy={busy === 'review'}
       title="Generate a .review.md file from your annotations (⌘⇧R)"
     >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M5 21V5a2 2 0 0 1 2-2h7l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2Z" /><path d="m9 14 2 2 4-4" />
-      </svg>
-      Generate review
+      {#if busy === 'review'}
+        <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="42 60" />
+        </svg>
+        Generating…
+      {:else}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M5 21V5a2 2 0 0 1 2-2h7l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2Z" /><path d="m9 14 2 2 4-4" />
+        </svg>
+        Generate review
+      {/if}
     </button>
 
     <!-- Export dropdown trigger (D5 option c) -->
@@ -199,15 +210,23 @@
         class:active={dropOpen}
         aria-expanded={dropOpen}
         aria-haspopup="menu"
+        aria-busy={busy === 'obsidian'}
+        disabled={busy === 'obsidian'}
         bind:this={exportBtnEl}
         on:click={toggleExportDrop}
         title="Export options"
       >
-        <!-- Upload/export icon -->
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 16V4M8 8l4-4 4 4" />
-          <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-        </svg>
+        {#if busy === 'obsidian'}
+          <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="42 60" />
+          </svg>
+        {:else}
+          <!-- Upload/export icon -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 16V4M8 8l4-4 4 4" />
+            <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+          </svg>
+        {/if}
         <span class="export-label">Export</span>
         <svg class="chevron" class:flipped={dropOpen} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="m6 9 6 6 6-6" />
@@ -356,6 +375,12 @@
       border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
   }
   .btn svg { width: 14px; height: 14px; }
+  .btn:disabled { opacity: 0.72; cursor: default; }
+  /* In-flight spinner (#29). Reduced motion → slow it, don't stop it (it IS the
+     loading signal). */
+  .spinner { width: 14px; height: 14px; animation: tb-spin 0.7s linear infinite; }
+  @keyframes tb-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 1.8s; } }
   .btn-primary {
     background: var(--accent);
     color: var(--text-on-accent);
