@@ -26,6 +26,37 @@ jobs:
           fi
           echo "OK — no fs/shell escalation."
 
+  audit:
+    name: Supply-chain audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install npm dependencies (ci, lockfile-exact)
+        run: npm ci
+      # Gate on PRODUCTION dependencies — the surface actually shipped in the app.
+      # DOMPurify is the sole XSS barrier, so its floor is load-bearing (#27).
+      # Dev/build tooling (esbuild → vite → vitest) carries its own dev-server-only
+      # advisories that don't ship; tracked separately, not gated here.
+      - name: npm audit (production deps, high+)
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Setup Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # Fails on RUSTSEC *vulnerabilities*. Unmaintained/unsound *warnings* from
+      # the transitive Tauri/GTK/wry stack (unic-*, glib, …) are out of our control
+      # and do not fail the default audit.
+      - name: cargo audit
+        run: cargo audit -f src-tauri/Cargo.lock
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
