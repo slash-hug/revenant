@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [windows-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -40,8 +40,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           # The Tauri CLI ships as an npm devDependency here, not a cargo
           # subcommand — run it via the npm "tauri" script.
@@ -52,19 +50,13 @@ jobs:
             See the changelog for details.
 
             **Installation:**
-            - **macOS:** Download the `.dmg` file and drag Revenant to Applications.
             - **Windows:** Download the `.exe` installer. Opens a new terminal after install to pick up the PATH change.
 
             > **Windows PATH note:** Run `revenant --version` in a new terminal after installation to verify the PATH is set correctly.
-          releaseDraft: true
-          prerelease: false
 
-      - name: Upload macOS installer
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
-        with:
-          name: revenant-${{ github.ref_name }}-macos
-          path: src-tauri/target/release/bundle/dmg/*.dmg
+            > **Windows SmartScreen note:** Windows may show an 'unknown publisher' prompt — choose More info → Run anyway.
+          releaseDraft: false
+          prerelease: false
 
       - name: Upload Windows installer
         if: runner.os == 'Windows'
