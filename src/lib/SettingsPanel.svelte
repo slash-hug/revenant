@@ -86,14 +86,18 @@
     border-radius: var(--r-xl);
     box-shadow: var(--shadow-lg);
     padding: 0;
-    display: flex;
-    flex-direction: column;
     /* Prevent the dialog from growing taller than the viewport */
     max-height: 90vh;
     overflow: hidden;
   }
+  /* Display is gated on [open] ONLY — a base `display: flex` would override the
+     UA `dialog:not([open]) { display: none }`, leaving the panel visible on the
+     splash screen and impossible to dismiss (it never opened modally, so
+     dialog.open stays false and dialog.close() is never reached). Match the
+     ConflictModal / KeyboardShortcutsModal pattern. */
   .sp[open] {
     display: flex;
+    flex-direction: column;
     animation: sp-in var(--dur-slow) var(--ease-out);
   }
   .sp::backdrop {
