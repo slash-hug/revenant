@@ -23,6 +23,7 @@
    *  - addAnnotation : { anchor: AnchorV1 }  — preview-side "Add comment" (C8).
    */
   import { onMount, onDestroy, afterUpdate, createEventDispatcher, tick } from 'svelte';
+  import './styles/markdown.css';
   import {
     renderMarkdown,
     renderCodeBlock,
@@ -719,17 +720,13 @@
   }
   .banner svg { width: 15px; height: 15px; flex: none; }
 
-  /* reading column */
-  .prose {
-    padding: 32px 44px 64px;
-    font-family: var(--font-prose);
-    max-width: 760px;
-    color: var(--text);
-    /* Sit above the wash layer (z-index: 0) and below the seals (z-index: 2) so the
-       ink brush paints behind the text (AnnotationSeals .wash-layer / .seals-layer). */
-    position: relative;
-    z-index: 1;
-  }
+  /*
+   * .prose content rules have moved to src/lib/styles/markdown.css.
+   * The z-index comment below documents the stacking context requirement
+   * for the AnnotationSeals overlay — z-index: 1 is set in markdown.css.
+   * Sit above the wash layer (z-index: 0) and below the seals (z-index: 2)
+   * so the ink brush paints behind the text.
+   */
 
   .pv-header { margin-bottom: 28px; }
   .pv-title {
@@ -765,155 +762,6 @@
   }
   .pv-dot { color: var(--text-faint); }
 
-  /* ---- rendered markdown ---- */
-  .preview-content :global(h1) {
-    font-size: var(--ps-h1);
-    font-weight: var(--fw-semibold);
-    line-height: var(--lh-tight);
-    letter-spacing: -.012em;
-    margin: 34px 0 14px;
-    text-wrap: balance;
-  }
-  .preview-content :global(h2) {
-    font-family: var(--font-ui);
-    font-size: var(--ps-h2);
-    font-weight: var(--fw-semibold);
-    margin: 30px 0 11px;
-    color: var(--text);
-    text-wrap: balance;
-  }
-  .preview-content :global(h3),
-  .preview-content :global(h4) {
-    font-family: var(--font-ui);
-    font-size: var(--fs-base);
-    font-weight: var(--fw-semibold);
-    color: var(--text-muted);
-    margin: 24px 0 8px;
-  }
-  .preview-content :global(p) {
-    font-size: var(--ps-base);
-    line-height: 1.62;
-    margin: 0 0 14px;
-    color: var(--text);
-    text-wrap: pretty;
-  }
-  .preview-content :global(ul),
-  .preview-content :global(ol) { margin: 0 0 16px; padding-left: 22px; }
-  .preview-content :global(li) { font-size: var(--ps-base); line-height: 1.7; color: var(--text); }
-  .preview-content :global(li::marker) { color: var(--accent); }
-  .preview-content :global(a) { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
-  .preview-content :global(strong) { font-weight: var(--fw-semibold); }
-  .preview-content :global(hr) { border: none; height: 1px; background: var(--border); margin: 28px 0; }
-
-  /* inline code */
-  .preview-content :global(:not(pre) > code) {
-    font-family: var(--font-mono);
-    font-size: .86em;
-    background: var(--surface-2);
-    border-radius: var(--r-xs);
-    padding: 1px 5px;
-    color: var(--text);
-  }
-
-  /* code blocks */
-  .preview-content :global(pre) {
-    background: var(--code-bg);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: 15px 17px;
-    margin: 0 0 18px;
-    overflow: auto;
-  }
-  .preview-content :global(pre code) {
-    font-family: var(--font-mono);
-    font-size: 12.5px;
-    line-height: 1.7;
-    color: var(--text);
-    background: none;
-    padding: 0;
-  }
-
-  /* highlight.js token palette mapped onto our syntax roles */
-  .preview-content :global(.hljs-keyword),
-  .preview-content :global(.hljs-selector-tag),
-  .preview-content :global(.hljs-built_in) { color: var(--accent-text); }
-  .preview-content :global(.hljs-string),
-  .preview-content :global(.hljs-attr),
-  .preview-content :global(.hljs-symbol) { color: var(--success-text); }
-  .preview-content :global(.hljs-title),
-  .preview-content :global(.hljs-title.function_),
-  .preview-content :global(.hljs-section) { color: var(--success-text); font-weight: var(--fw-medium); }
-  .preview-content :global(.hljs-type),
-  .preview-content :global(.hljs-number),
-  .preview-content :global(.hljs-literal),
-  .preview-content :global(.hljs-class .hljs-title) { color: var(--warn-text); }
-  .preview-content :global(.hljs-comment),
-  .preview-content :global(.hljs-quote) { color: var(--text-faint); font-style: italic; }
-  .preview-content :global(.hljs-punctuation),
-  .preview-content :global(.hljs-operator) { color: var(--text-faint); }
-
-  /* blockquote */
-  .preview-content :global(blockquote) {
-    margin: 0 0 18px;
-    padding: 4px 0 4px 18px;
-    border-left: 3px solid var(--accent);
-    font-size: var(--ps-quote);
-    line-height: 1.55;
-    color: var(--text-muted);
-    font-style: italic;
-  }
-
-  /* tables */
-  .preview-content :global(table) {
-    border-collapse: collapse;
-    width: 100%;
-    margin: 0 0 18px;
-    font-family: var(--font-ui);
-    font-size: var(--fs-base);
-  }
-  .preview-content :global(th),
-  .preview-content :global(td) { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
-  .preview-content :global(th) { color: var(--text-muted); font-weight: var(--fw-semibold); border-bottom-color: var(--border-strong); }
-  .preview-content :global(td) { color: var(--text); }
-  .preview-content :global(tbody tr:hover td) { background: var(--surface-2); }
-
-  /* mermaid figure */
-  .preview-content :global([data-block-type="mermaid"]) {
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    background: var(--surface);
-    padding: 22px;
-    margin: 0 0 18px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: auto;
-  }
-  .preview-content :global([data-mermaid-pending]) {
-    min-height: 96px;
-    background: linear-gradient(100deg,
-      var(--surface-2) 30%,
-      color-mix(in srgb, var(--surface-2) 60%, var(--surface)) 50%,
-      var(--surface-2) 70%);
-    background-size: 200% 100%;
-    animation: pv-shimmer 1.4s var(--ease-in-out) infinite;
-    color: transparent;
-  }
-  @keyframes pv-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
-  @media (prefers-reduced-motion: reduce) {
-    .preview-content :global([data-mermaid-pending]) { animation: none; }
-  }
-
-  /* diagram error card */
-  .preview-content :global(.mermaid-error) {
-    border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
-    background: var(--danger-soft);
-    border-radius: var(--r-lg);
-    padding: 14px 16px;
-    margin: 0 0 18px;
-    font-size: var(--fs-base);
-    font-family: var(--font-ui);
-    color: var(--text);
-  }
-  .preview-content :global(.mermaid-error strong) { color: var(--danger-text); }
+  /* Rendered markdown content rules live in src/lib/styles/markdown.css
+     (imported above). Keeping only the empty rule comment for orientation. */
 </style>
