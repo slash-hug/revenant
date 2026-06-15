@@ -316,3 +316,51 @@ export function exportPdf(outPath: string, html: string): Promise<string> {
 export function readFileBytes(docPath: string, imagePath: string): Promise<string> {
   return invoke<string>("read_file_bytes", { docPath, imagePath });
 }
+
+// ---------------------------------------------------------------------------
+// Settings / keychain commands — added by WS-A (A-1)
+// WS-C depends on these signatures; WS-A owns the canonical implementation.
+// ---------------------------------------------------------------------------
+
+/**
+ * Connection status returned by test_obsidian_connection.
+ * Mirrors the Rust `ConnStatus` enum in obsidian.rs (WS-D / D-1).
+ */
+export type ConnStatus = 'ok' | 'unauthorized' | 'unreachable';
+
+/**
+ * Store the Obsidian REST API key in the OS keychain.
+ * Returns the updated Settings (avoids a read-modify-write race on rest_key_ref).
+ * Throws IpcError with code "SECRETS_ERROR" if the keychain write fails.
+ */
+export function setRestKey(key: string): Promise<Settings> {
+  return invoke<Settings>("set_rest_key", { key });
+}
+
+/**
+ * Remove the Obsidian REST API key from the OS keychain.
+ * Returns the updated Settings (rest_key_ref set to null).
+ * Throws IpcError with code "SECRETS_ERROR" if the keychain delete fails.
+ */
+export function clearRestKey(): Promise<Settings> {
+  return invoke<Settings>("clear_rest_key");
+}
+
+/**
+ * Check whether the Obsidian REST API key exists in the OS keychain.
+ */
+export function hasRestKey(): Promise<boolean> {
+  return invoke<boolean>("has_rest_key");
+}
+
+/**
+ * Probe the Obsidian Local REST API (GET /vault/) to verify connectivity and
+ * authentication.
+ *
+ * @param key - Optional raw key for an in-memory probe (D6). When non-empty,
+ *   the command uses this key transiently without persisting it. When omitted,
+ *   the command falls back to the saved keychain key via rest_key_ref.
+ */
+export function testObsidianConnection(key?: string): Promise<ConnStatus> {
+  return invoke<ConnStatus>("test_obsidian_connection", { key });
+}

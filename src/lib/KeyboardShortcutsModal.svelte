@@ -50,6 +50,7 @@
       title: 'General',
       items: [
         { keys: [mod, 'K'], label: 'Command palette' },
+        { keys: [mod, ','], label: 'Settings' },
         { keys: ['Esc'], label: 'Close dialog / popover' },
       ],
     },
