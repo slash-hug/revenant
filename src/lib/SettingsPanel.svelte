@@ -21,6 +21,7 @@
   import { createEventDispatcher } from 'svelte';
   import ObsidianSection from './settings/ObsidianSection.svelte';
   import AppearanceSection from './settings/AppearanceSection.svelte';
+  import AboutSection from './settings/AboutSection.svelte';
 
   export let open: boolean = false;
 
@@ -67,6 +68,7 @@
   <div class="sp-body">
     <ObsidianSection />
     <AppearanceSection />
+    <AboutSection />
   </div>
 
   <!-- Pinned footer -->
