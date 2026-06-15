@@ -122,6 +122,20 @@ pub struct ReviewResult {
     pub review_path: String,
 }
 
+/// Update-check result returned by `check_for_updates`.
+/// The Ok variant of `IpcResult<UpdateCheck>`; failures map to `IpcError`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateCheck {
+    /// Current installed version (from CARGO_PKG_VERSION).
+    pub current: String,
+    /// Latest published version from GitHub Releases.
+    pub latest: String,
+    /// Whether `latest` is semantically newer than `current`.
+    pub update_available: bool,
+    /// URL of the latest release page (html_url from GitHub API).
+    pub release_url: String,
+}
+
 /// Request for Obsidian export.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExportObsidianRequest {
@@ -305,6 +319,11 @@ fn settings_err(e: crate::settings::SettingsError) -> IpcError {
 /// Map a `secrets::SecretsError` to an `IpcError`.
 fn secrets_err(e: crate::secrets::SecretsError) -> IpcError {
     IpcError { code: "SECRETS_ERROR".into(), message: e.to_string() }
+}
+
+/// Map a `updates::UpdatesError` to an `IpcError`.
+fn updates_err(e: crate::updates::UpdatesError) -> IpcError {
+    IpcError { code: "UPDATE_CHECK_FAILED".into(), message: e.to_string() }
 }
 
 /// Map an `obsidian::ObsidianError` to an `IpcError`.
@@ -975,6 +994,46 @@ pub async fn snapshot_webview(window: tauri::WebviewWindow) -> IpcResult<String>
             message: "native webview snapshot is only available on macOS".into(),
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// Version / update-check commands (A1)
+// ---------------------------------------------------------------------------
+
+/// Return the current application version as a string (e.g. "0.1.0").
+/// Sourced from CARGO_PKG_VERSION at compile time — always accurate.
+#[tauri::command]
+pub fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Probe GitHub Releases for a newer version of Revenant.
+///
+/// Delegates the HTTP request and semver comparison to `crate::updates`.
+/// Runs on a `spawn_blocking` thread so the IPC command pool stays responsive
+/// during the 3 s network timeout.
+///
+/// On success returns `IpcResult<UpdateCheck>` (the Ok variant).
+/// On failure (network, parse, invalid URL) returns `IpcError` with code
+/// `UPDATE_CHECK_FAILED`.
+#[tauri::command]
+pub async fn check_for_updates() -> IpcResult<UpdateCheck> {
+    tauri::async_runtime::spawn_blocking(|| -> IpcResult<UpdateCheck> {
+        crate::updates::check_for_updates().map_err(updates_err)
+    })
+    .await
+    .map_err(task_err)?
+}
+
+/// Open the Revenant release page in the system browser.
+///
+/// `url` must be an https URL on github.com under the /slash-hug/revenant/releases
+/// path.  Validation is performed inside `crate::updates::open_release_page`
+/// before the URL is handed to the OS opener.  Invalid URLs are rejected with
+/// `UPDATE_CHECK_FAILED` rather than silently opened (security #open-url).
+#[tauri::command]
+pub fn open_release_page(url: String) -> IpcResult<()> {
+    crate::updates::open_release_page(&url).map_err(updates_err)
 }
 
 // ---------------------------------------------------------------------------

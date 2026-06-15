@@ -22,6 +22,9 @@ pub mod settings;
 pub mod secrets;
 pub mod obsidian;
 
+// Update-check engine (WS-D implements the body; WS-A declares the module).
+pub mod updates;
+
 // Native macOS WKWebView snapshot (open-transition document capture).
 #[cfg(target_os = "macos")]
 pub mod snapshot;
@@ -85,6 +88,7 @@ pub fn run() {
         // bypassing that confinement — so it stays out entirely (security #23).
         .plugin(tauri_plugin_cli::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_single_instance::init(|app, argv, _cwd| {
                 // When a second instance is launched (e.g., `revenant another.md`),
@@ -138,6 +142,10 @@ pub fn run() {
             ipc::clear_rest_key,
             ipc::has_rest_key,
             ipc::test_obsidian_connection,
+            // Version / update-check commands (A4)
+            ipc::get_app_version,
+            ipc::check_for_updates,
+            ipc::open_release_page,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

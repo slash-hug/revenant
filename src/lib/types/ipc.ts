@@ -128,6 +128,21 @@ export interface ExportObsidianResult {
   destination: string;
 }
 
+/**
+ * Update-check result returned by checkForUpdates.
+ * The Ok variant of the IpcResult — failures become thrown IpcErrors.
+ */
+export interface UpdateCheck {
+  /** Current installed version (e.g. "0.1.0"). */
+  current: string;
+  /** Latest published version from GitHub Releases. */
+  latest: string;
+  /** Whether latest is semantically newer than current. */
+  update_available: boolean;
+  /** URL of the latest GitHub release page. */
+  release_url: string;
+}
+
 // ---------------------------------------------------------------------------
 // Anchor types — used by the annotation UI (C8 / A10)
 // ---------------------------------------------------------------------------
@@ -371,4 +386,37 @@ export function hasRestKey(): Promise<boolean> {
  */
 export function testObsidianConnection(key?: string): Promise<ConnStatus> {
   return invoke<ConnStatus>("test_obsidian_connection", { key: key ?? null });
+}
+
+// ---------------------------------------------------------------------------
+// Version / update-check commands — A3
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the current application version string (e.g. "0.1.0").
+ * Sourced from CARGO_PKG_VERSION at compile time.
+ */
+export function getAppVersion(): Promise<string> {
+  return invoke<string>("get_app_version");
+}
+
+/**
+ * Probe GitHub Releases for a newer version of Revenant.
+ *
+ * Returns an UpdateCheck on success.  Throws IpcError with code
+ * "UPDATE_CHECK_FAILED" on network, parse, or other failure.
+ */
+export function checkForUpdates(): Promise<UpdateCheck> {
+  return invoke<UpdateCheck>("check_for_updates");
+}
+
+/**
+ * Open the Revenant release page in the system browser.
+ *
+ * `url` must be an https URL on github.com under the /slash-hug/revenant/releases
+ * path.  Throws IpcError with code "UPDATE_CHECK_FAILED" if the URL fails
+ * validation in the Rust layer.
+ */
+export function openReleasePage(url: string): Promise<void> {
+  return invoke<void>("open_release_page", { url });
 }

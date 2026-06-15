@@ -26,12 +26,16 @@ import {
   clearRestKey,
   hasRestKey,
   testObsidianConnection,
+  getAppVersion,
+  checkForUpdates,
+  openReleasePage,
   type Annotation,
   type Sidecar,
   type Settings,
   type FileResult,
   type IpcError,
   type ConnStatus,
+  type UpdateCheck,
 } from "$lib/types/ipc";
 
 const mockInvoke = vi.mocked(invoke);
@@ -56,6 +60,10 @@ describe("IPC contract", () => {
     expect(typeof clearRestKey).toBe("function");
     expect(typeof hasRestKey).toBe("function");
     expect(typeof testObsidianConnection).toBe("function");
+    // Version / update-check commands (A6)
+    expect(typeof getAppVersion).toBe("function");
+    expect(typeof checkForUpdates).toBe("function");
+    expect(typeof openReleasePage).toBe("function");
   });
 
   it("openFile calls invoke with correct command name", async () => {
@@ -242,5 +250,50 @@ describe("IPC contract", () => {
     expect(statuses).toContain("ok");
     expect(statuses).toContain("unauthorized");
     expect(statuses).toContain("unreachable");
+  });
+
+  // ─── Version / update-check commands (A6) ──────────────────────────────────
+
+  it("getAppVersion calls invoke with correct command name", async () => {
+    mockInvoke.mockResolvedValueOnce("0.1.0");
+    const version = await getAppVersion();
+    expect(mockInvoke).toHaveBeenCalledWith("get_app_version");
+    expect(version).toBe("0.1.0");
+  });
+
+  it("checkForUpdates calls invoke with correct command name", async () => {
+    const updateCheck: UpdateCheck = {
+      current: "0.1.0",
+      latest: "0.2.0",
+      update_available: true,
+      release_url: "https://github.com/slash-hug/revenant/releases/tag/v0.2.0",
+    };
+    mockInvoke.mockResolvedValueOnce(updateCheck);
+    const result = await checkForUpdates();
+    expect(mockInvoke).toHaveBeenCalledWith("check_for_updates");
+    expect(result.update_available).toBe(true);
+    expect(result.latest).toBe("0.2.0");
+  });
+
+  it("openReleasePage calls invoke with correct command name and url", async () => {
+    mockInvoke.mockResolvedValueOnce(undefined);
+    const url = "https://github.com/slash-hug/revenant/releases/tag/v0.2.0";
+    await openReleasePage(url);
+    expect(mockInvoke).toHaveBeenCalledWith("open_release_page", { url });
+  });
+
+  it("UpdateCheck type has all required shape fields", () => {
+    // Compile-time shape assertion: if UpdateCheck interface changes, this test
+    // catches it immediately (mirrors the Settings / Sidecar pattern above).
+    const check: UpdateCheck = {
+      current: "0.1.0",
+      latest: "0.1.0",
+      update_available: false,
+      release_url: "https://github.com/slash-hug/revenant/releases/tag/v0.1.0",
+    };
+    expect(typeof check.current).toBe("string");
+    expect(typeof check.latest).toBe("string");
+    expect(typeof check.update_available).toBe("boolean");
+    expect(typeof check.release_url).toBe("string");
   });
 });
