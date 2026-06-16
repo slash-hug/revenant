@@ -46,9 +46,17 @@ fn export_html_rejects_wrong_extension() {
 /// A path containing `..` traversal must be rejected with INVALID_PATH.
 #[test]
 fn export_html_rejects_traversal_path() {
-    // Construct an absolute path that still contains `..` components.
-    // On POSIX we can do this without the path existing.
-    let out = PathBuf::from("/tmp/valid_dir/../escape/out.html");
+    // Construct an *absolute* path that still contains a `..` component, in a
+    // platform-portable way: a hardcoded "/tmp/..." string is not absolute on
+    // Windows (no drive letter), so it would trip the earlier `must be absolute`
+    // guard instead of the traversal guard. Derive the base from an absolute
+    // root and append `..` (PathBuf::join does not normalize, so the component
+    // survives for `has_parent_traversal` to detect).
+    let out = std::env::temp_dir()
+        .join("valid_dir")
+        .join("..")
+        .join("escape")
+        .join("out.html");
     let result = crate::export::export_html(&out, "<html/>");
     assert!(result.is_err());
     let err = result.unwrap_err();
