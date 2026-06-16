@@ -1124,7 +1124,7 @@ pub async fn open_diagram_window(
         format!("Diagram — {}", title)
     };
 
-    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("diagram-viewer.html".into()))
+    let window = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("diagram-viewer.html".into()))
         .title(&window_title)
         .inner_size(800.0, 600.0)
         .min_inner_size(400.0, 300.0)
@@ -1135,6 +1135,9 @@ pub async fn open_diagram_window(
             code: "WINDOW_ERROR".to_string(),
             message: format!("Failed to create diagram window: {}", e),
         })?;
+
+    // Focus the new window so it appears in front on Windows/macOS.
+    let _ = window.set_focus();
 
     Ok(())
 }

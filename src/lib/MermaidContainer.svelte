@@ -38,6 +38,18 @@
   let viewportEl: HTMLDivElement | undefined = $state(undefined);
   let canvasEl: HTMLDivElement | undefined = $state(undefined);
 
+  // Auto-fit diagram to viewport on mount (once elements are bound and SVG is rendered)
+  let hasFittedOnMount = false;
+  $effect(() => {
+    if (viewportEl && canvasEl && !hasFittedOnMount) {
+      // Wait a frame for the SVG to render and have dimensions
+      requestAnimationFrame(() => {
+        fit();
+        hasFittedOnMount = true;
+      });
+    }
+  });
+
   // ── Dragging state ──────────────────────────────────────────────────────
   let dragging = $state(false);
   let dragStartX = 0;
