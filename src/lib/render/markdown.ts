@@ -80,6 +80,9 @@ const PURIFY_CONFIG = {
     'a', 'img',
     'table', 'thead', 'tbody', 'tr', 'th', 'td',
     'div', 'span',
+    // Collapsible callouts use native <details>/<summary> (T1.2 / TRAP 1).
+    // Without these, every [!type]- callout is silently stripped to inner text.
+    'details', 'summary',
     // SVG subset for raw SVG embedded in document markdown (Mermaid output is
     // sanitized separately with MERMAID_PURIFY_CONFIG). `foreignObject` is
     // deliberately EXCLUDED here — it embeds HTML-namespace content inside SVG and
@@ -96,6 +99,12 @@ const PURIFY_CONFIG = {
     'rel',
     // Data attributes used for scroll-sync and source mapping (C7/C8)
     'data-block-id', 'data-source-line', 'data-block-type',
+    // data-callout carries the raw callout type (e.g. "warning") for CSS
+    // family selection and potential JS hooks (T1.2 / T1.3).
+    'data-callout',
+    // open is a boolean attribute on <details> for collapsible callouts.
+    // DOMPurify strips unknown boolean attributes by default (TRAP 1 / B-ux risk).
+    'open',
     // SVG attributes
     'viewBox', 'width', 'height', 'fill', 'stroke', 'stroke-width',
     'x', 'y', 'x1', 'y1', 'x2', 'y2', 'rx', 'ry', 'r', 'cx', 'cy',
@@ -145,6 +154,28 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 // ---------------------------------------------------------------------------
 
 export const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
+
+// ---------------------------------------------------------------------------
+// Shared slug helper (T1.1)
+//
+// Extracted from the inline block previously in heading_open so both
+// heading_open and the wikilink inline rule use the same algorithm — prevents
+// [[#My Heading]] href drift from the heading id (TRAP 2).
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert heading text to a URL-safe slug for anchor ids / wikilink hrefs.
+ * Known v1 limits: Unicode/CJK/accented chars are stripped (not transliterated),
+ * and duplicate headings produce the same slug (first wins) — both accepted as
+ * documented limitations (B-8).
+ */
+export function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-');
+}
 
 export interface FrontmatterResult {
   content: string;
@@ -271,18 +302,269 @@ md.renderer.rules.heading_open = function (tokens, idx, options, env, self) {
   const blockId = nextBlockId();
   const sourceLine = token.map ? token.map[0] + 1 : 0;
 
-  // Derive a slug from the heading text for scroll-sync.
+  // Derive a slug from the heading text for scroll-sync (T1.1 — uses shared slugify).
   const headingText = nextToken?.children
     ?.map((t) => t.content)
     .join('') ?? '';
-  const slug = headingText
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, '')
-    .trim()
-    .replace(/\s+/g, '-');
+  const slug = slugify(headingText);
 
   return `<${token.tag} id="${slug}" data-block-id="${blockId}" data-source-line="${sourceLine}">`;
 };
+
+// ---------------------------------------------------------------------------
+// Callout core rule (T1.3)
+//
+// Walks the core token stream after block parsing. For every blockquote_open
+// whose immediately following inline token's first line matches the callout
+// marker syntax `/^\[!([\w-]+)\]([+-]?)\s*(.*)/`, we:
+//   1. Rewrite blockquote_open → callout_open   (in place, no array splicing)
+//   2. Rewrite blockquote_close → callout_close (matched by nesting depth)
+//   3. Strip the [!type] marker from the first line of the body inline token
+//
+// The existing `blockquote_open` renderer rule never fires for these tokens
+// because the renderer dispatches on token.type (TRAP 10 / B-2).
+//
+// Family mapping (B-1 — reuses --warn* tokens, no new --warning* triplet):
+//   info    → accent
+//   tip     → accent
+//   success → success
+//   check   → success
+//   done    → success
+//   warning → warn
+//   caution → warn
+//   attention → warn
+//   danger  → danger
+//   error   → danger
+//   failure → danger
+//   bug     → danger
+//   example → neutral
+//   quote   → neutral
+//   note    → accent    (Obsidian default)
+//   abstract → accent
+//   summary → accent
+//   *       → neutral   (unknown types)
+// ---------------------------------------------------------------------------
+
+const CALLOUT_FAMILY: Record<string, string> = {
+  note: 'accent', abstract: 'accent', summary: 'accent', tldr: 'accent',
+  info: 'accent', tip: 'accent', hint: 'accent',
+  success: 'success', check: 'success', done: 'success',
+  warning: 'warn', caution: 'warn', attention: 'warn',
+  danger: 'danger', error: 'danger', failure: 'danger', fail: 'danger', bug: 'danger',
+  example: 'neutral', quote: 'neutral', cite: 'neutral',
+};
+
+// Simple SVG icons per family (inline, no external deps).
+const CALLOUT_ICONS: Record<string, string> = {
+  accent:  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12" y2="16"/></svg>',
+  success: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>',
+  warn:    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17"/></svg>',
+  danger:  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12" y2="16"/></svg>',
+  neutral: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>',
+};
+
+// Regex to detect the callout marker at the start of a blockquote inline.
+const CALLOUT_RE = /^\[!([\w-]+)\]([+-]?)\s*(.*)/s;
+
+md.core.ruler.push('callout', function calloutRule(state) {
+  const tokens = state.tokens;
+  let i = 0;
+  while (i < tokens.length) {
+    const tok = tokens[i];
+    if (tok.type !== 'blockquote_open') { i++; continue; }
+
+    // Find the first inline token inside this blockquote.
+    // It will be at i+1 (bullet_list nesting doesn't appear here — blockquote
+    // content is wrapped: blockquote_open, paragraph_open, inline, paragraph_close, …)
+    // Search forward until we find an inline token or a closing token.
+    let inlineIdx = -1;
+    for (let j = i + 1; j < tokens.length; j++) {
+      const t = tokens[j];
+      if (t.type === 'blockquote_close') break;
+      if (t.type === 'inline') { inlineIdx = j; break; }
+    }
+    if (inlineIdx < 0) { i++; continue; }
+
+    const inlineTok = tokens[inlineIdx];
+    const firstLine = inlineTok.content.split('\n')[0];
+    const m = CALLOUT_RE.exec(firstLine);
+    if (!m) { i++; continue; }
+
+    // We have a callout. Extract components.
+    const rawType = m[1].toLowerCase();
+    const collapsible = m[2] as '' | '+' | '-'; // '+' open, '-' closed, '' static
+    const titleText = m[3].trim() || (rawType.charAt(0).toUpperCase() + rawType.slice(1));
+    const family = CALLOUT_FAMILY[rawType] ?? 'neutral';
+
+    // Block metadata (same as blockquote_open renderer would have produced).
+    const blockId = nextBlockId();
+    const sourceLine = tok.map ? tok.map[0] + 1 : 0;
+
+    // Rewrite blockquote_open → callout_open IN PLACE (no array splice — TRAP 10).
+    tok.type = 'callout_open';
+    tok.tag = collapsible ? 'details' : 'div';
+    // Stash render data on token.meta (safe: not used by standard renderer).
+    tok.meta = { rawType, family, collapsible, titleText, blockId, sourceLine };
+
+    // Strip the [!type]… marker line from the inline body.
+    // If the inline content has more lines, keep everything after the first '\n'.
+    const rest = inlineTok.content.indexOf('\n');
+    inlineTok.content = rest >= 0 ? inlineTok.content.slice(rest + 1) : '';
+    // Also patch children to remove the marker tokens (the first softbreak +
+    // preceding text token). We rebuild the children array minus the first text
+    // token (which contained "[!type] Title") and the following softbreak (if any).
+    if (inlineTok.children && inlineTok.children.length > 0) {
+      // The first child is the raw "[!type] Title..." text_token.
+      // Remove it and any immediately following softbreak.
+      let cutTo = 1;
+      if (inlineTok.children[1]?.type === 'softbreak') cutTo = 2;
+      inlineTok.children = inlineTok.children.slice(cutTo);
+    }
+
+    // Find matching blockquote_close at the same nesting depth.
+    let depth = 1;
+    for (let j = i + 1; j < tokens.length; j++) {
+      if (tokens[j].type === 'blockquote_open') depth++;
+      if (tokens[j].type === 'blockquote_close') {
+        depth--;
+        if (depth === 0) {
+          tokens[j].type = 'callout_close';
+          tokens[j].tag = collapsible ? 'details' : 'div';
+          tokens[j].meta = { collapsible };
+          break;
+        }
+      }
+    }
+
+    i++; // move past the (now rewritten) callout_open
+  }
+});
+
+// Renderer for callout_open: emits the outer container + title bar + body opener.
+md.renderer.rules.callout_open = function (tokens, idx) {
+  const token = tokens[idx];
+  const { rawType, family, collapsible, titleText, blockId, sourceLine } = token.meta as {
+    rawType: string; family: string; collapsible: '' | '+' | '-';
+    titleText: string; blockId: string; sourceLine: number;
+  };
+  const icon = CALLOUT_ICONS[family] ?? CALLOUT_ICONS['neutral'];
+  const dataAttrs = `data-callout="${escapeHtml(rawType)}" data-block-id="${escapeHtml(blockId)}" data-source-line="${sourceLine}" data-block-type="callout"`;
+
+  if (collapsible) {
+    const openAttr = collapsible === '+' ? ' open' : '';
+    return (
+      `<details class="callout callout-${family}" ${dataAttrs}${openAttr}>\n` +
+      `<summary class="callout-title">${icon}${escapeHtml(titleText)}</summary>\n` +
+      `<div class="callout-body">`
+    );
+  }
+  return (
+    `<div class="callout callout-${family}" ${dataAttrs}>\n` +
+    `<div class="callout-title">${icon}${escapeHtml(titleText)}</div>\n` +
+    `<div class="callout-body">`
+  );
+};
+
+// Renderer for callout_close: closes body div + outer container.
+md.renderer.rules.callout_close = function (tokens, idx) {
+  const token = tokens[idx];
+  const { collapsible } = token.meta as { collapsible: '' | '+' | '-' };
+  if (collapsible) {
+    return `</div></details>\n`;
+  }
+  return `</div></div>\n`;
+};
+
+// ---------------------------------------------------------------------------
+// Wikilink inline rule (T1.4)
+//
+// Registered after the 'link' rule so standard [...](url) links are parsed first.
+// Handles:
+//   [[#Heading]]         → <a href="#slug" class="wikilink wikilink-anchor">Heading</a>
+//   [[#Heading|Alias]]   → <a href="#slug" class="wikilink wikilink-anchor">Alias</a>
+//   [[Page]]             → <span class="wikilink wikilink-unresolved" title="Page">Page</span>
+//   [[Page|Alias]]       → <span … title="Page">Alias</span>
+//   [[Page#Heading]]     → same inert span (cross-file anchor — not resolved)
+//   ![[Page]]            → inert span (TRAP 9 — transclusion; never raw text)
+//
+// Respects markdown-it escaping: \[[ leaves [[ as literal text because the
+// escape rule runs before 'link' and before this rule.
+//
+// Known v1 limits (B-8): Unicode heading text is slugged with character
+// stripping (same as heading_open), and duplicate headings produce the same slug.
+// ---------------------------------------------------------------------------
+
+md.inline.ruler.after('link', 'wikilink', function wikilinkRule(state, silent) {
+  const src = state.src;
+  const pos = state.pos;
+  const max = state.posMax;
+
+  // Consume optional leading '!' for embed syntax (![[…]]).
+  let offset = 0;
+  const isEmbed = src.charCodeAt(pos) === 0x21 /* ! */;
+  if (isEmbed) offset = 1;
+
+  // Must start with '[['.
+  if (src.charCodeAt(pos + offset) !== 0x5B /* [ */ ||
+      src.charCodeAt(pos + offset + 1) !== 0x5B /* [ */) {
+    return false;
+  }
+
+  // Find the closing ']]'.
+  const openBracket = pos + offset + 2;
+  let closeIdx = -1;
+  for (let i = openBracket; i < max - 1; i++) {
+    if (src.charCodeAt(i) === 0x5D /* ] */ && src.charCodeAt(i + 1) === 0x5D /* ] */) {
+      closeIdx = i;
+      break;
+    }
+  }
+  if (closeIdx < 0) return false;
+
+  const inner = src.slice(openBracket, closeIdx);
+  if (!inner) return false;
+
+  if (!silent) {
+    // Parse "target#heading|alias" inside [[ … ]]
+    let target = inner;
+    let heading = '';
+    let alias = '';
+
+    // Split on '|' for alias first.
+    const pipeIdx = inner.indexOf('|');
+    if (pipeIdx >= 0) {
+      alias = inner.slice(pipeIdx + 1).trim();
+      target = inner.slice(0, pipeIdx).trim();
+    }
+
+    // Split target on '#' for heading anchor.
+    const hashIdx = target.indexOf('#');
+    if (hashIdx >= 0) {
+      heading = target.slice(hashIdx + 1).trim();
+      target = target.slice(0, hashIdx).trim();
+    }
+
+    const isInDocAnchor = !isEmbed && target === '' && heading !== '';
+
+    const tokenContent = alias || heading || target || inner;
+
+    if (isInDocAnchor) {
+      // [[#Heading]] or [[#Heading|Alias]] → real anchor using shared slugify.
+      const href = '#' + slugify(heading);
+      const tok = state.push('html_inline', '', 0);
+      tok.content = `<a href="${escapeHtml(href)}" class="wikilink wikilink-anchor">${escapeHtml(tokenContent)}</a>`;
+    } else {
+      // Cross-file / embed / path wikilinks → inert unresolved span (TRAP 9).
+      const titleTarget = target || heading || inner;
+      const tok = state.push('html_inline', '', 0);
+      tok.content = `<span class="wikilink wikilink-unresolved" title="${escapeHtml(titleTarget)}">${escapeHtml(tokenContent)}</span>`;
+    }
+  }
+
+  // Advance parser past '![[…]]' or '[[…]]'.
+  state.pos = closeIdx + 2;
+  return true;
+});
 
 // ---------------------------------------------------------------------------
 // Public API
