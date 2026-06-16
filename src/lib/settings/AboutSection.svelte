@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * AboutSection.svelte — About settings section (WS-C / C2).
+   * AboutSection.svelte — About settings section.
    *
    * Shows the current app version (loaded on mount via `get_app_version`) and
    * provides a "Check for updates" button that probes the GitHub Releases API
@@ -28,6 +28,8 @@
   import type { UpdateCheck } from '../types/ipc';
   import { aboutChipState } from './aboutChipState';
   import type { AboutStatus } from './aboutChipState';
+  import SettingGroup from './SettingGroup.svelte';
+  import SettingRow from './SettingRow.svelte';
 
   // UpdateCheckResult is re-exported from ipc.ts as UpdateCheck — use the
   // canonical alias so this component stays in sync with the IPC contract.
@@ -87,84 +89,76 @@
 </script>
 
 <section class="about-section" aria-label="About">
-  <!-- ── Version ───────────────────────────────────────────────────────────── -->
-  <div class="field-row">
-    <span class="field-label">Version</span>
-    <span class="version-value" aria-live="polite">
-      {#if version === null}
-        <span class="text-faint">Loading…</span>
-      {:else}
-        {version}
-      {/if}
-    </span>
-  </div>
-
-  <!-- ── Updates ───────────────────────────────────────────────────────────── -->
-  <div class="field-row update-row">
-    <span class="field-label">Updates</span>
-    <div class="update-body">
-      <button
-        type="button"
-        class="btn-sm"
-        disabled={status === 'checking'}
-        aria-busy={status === 'checking'}
-        on:click={handleCheckForUpdates}
-      >
-        {#if status === 'checking'}
-          <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
-            <circle
-              cx="12"
-              cy="12"
-              r="9"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.6"
-              stroke-linecap="round"
-              stroke-dasharray="42 60"
-            />
-          </svg>
-          Checking…
+  <SettingGroup label="Application">
+    <SettingRow
+      label="Version"
+      helper="The currently installed version of Revenant."
+    >
+      <span class="version-value" aria-live="polite">
+        {#if version === null}
+          <span class="text-faint">Loading…</span>
         {:else}
-          Check for updates
+          {version}
         {/if}
-      </button>
+      </span>
+    </SettingRow>
 
-      {#if chipOutput.chipClass}
-        <span class={chipOutput.chipClass} role="status">{chipOutput.chipText}</span>
-      {/if}
-
-      {#if chipOutput.showDownload}
+    <SettingRow
+      label="Updates"
+      helper="Check GitHub for a newer version of Revenant."
+    >
+      <div class="update-body">
         <button
           type="button"
           class="btn-sm"
-          disabled={downloadBusy}
-          aria-busy={downloadBusy}
-          on:click={handleDownload}
+          disabled={status === 'checking'}
+          aria-busy={status === 'checking'}
+          on:click={handleCheckForUpdates}
         >
-          Download
+          {#if status === 'checking'}
+            <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
+              <circle
+                cx="12"
+                cy="12"
+                r="9"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.6"
+                stroke-linecap="round"
+                stroke-dasharray="42 60"
+              />
+            </svg>
+            Checking…
+          {:else}
+            Check for updates
+          {/if}
         </button>
-      {/if}
-    </div>
-  </div>
+
+        {#if chipOutput.chipClass}
+          <span class={chipOutput.chipClass} role="status">{chipOutput.chipText}</span>
+        {/if}
+
+        {#if chipOutput.showDownload}
+          <button
+            type="button"
+            class="btn-sm"
+            disabled={downloadBusy}
+            aria-busy={downloadBusy}
+            on:click={handleDownload}
+          >
+            Download
+          </button>
+        {/if}
+      </div>
+    </SettingRow>
+  </SettingGroup>
 </section>
 
 <style>
   .about-section {
     display: flex;
     flex-direction: column;
-    gap: 16px;
-  }
-
-  .field-row {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .field-label {
-    font-size: var(--fs-sm);
-    font-weight: var(--fw-medium);
-    color: var(--text);
+    gap: 20px;
   }
 
   .text-faint {
@@ -221,6 +215,4 @@
   @media (prefers-reduced-motion: reduce) {
     .btn-sm .spinner { animation-duration: 1.8s; }
   }
-
-  /* Chip variants are defined in global.css — no local overrides needed. */
 </style>
