@@ -792,7 +792,7 @@
             <!-- svelte-ignore a11y-no-static-element-interactions -->
             <span
               class="st-zoom"
-              on:dblclick={() => resetZoom()}
+              ondblclick={() => resetZoom()}
               title="Preview zoom — double-click to reset"
             >
               <svg class="st-zoom-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -805,7 +805,7 @@
                 max={ZOOM_MAX}
                 step={ZOOM_STEP}
                 value={$previewZoom}
-                on:input={(e) => setZoom(parseInt(e.currentTarget.value, 10))}
+                oninput={(e) => setZoom(parseInt(e.currentTarget.value, 10))}
                 aria-label="Preview zoom level"
               />
               <span class="st-zoom-pct">{$previewZoom}%</span>
