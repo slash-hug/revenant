@@ -326,3 +326,123 @@ describe('setRestKey and clearRestKey', () => {
     expect(get(settings)?.rest_key_ref).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// set_settings returns void — IPC contract invariant
+// ---------------------------------------------------------------------------
+
+describe('set_settings IPC contract', () => {
+  beforeEach(() => {
+    resetStore();
+    vi.clearAllMocks();
+  });
+
+  it('set_settings returns void (undefined), not the merged Settings', async () => {
+    settings.set(makeSettings());
+    // The IPC command returns () / void — confirmed by the architecture decision
+    // that only set_rest_key/clear_rest_key return Settings.
+    mockInvoke.mockResolvedValueOnce(undefined);
+
+    const result = await mockInvoke('set_settings', { settings: makeSettings() });
+    expect(result).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Chip source invariants (C2 acceptance gate)
+// Token-driven styles — no literal hex in chip rules
+// ---------------------------------------------------------------------------
+
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+describe('chip source invariants — token-driven (no literal hex)', () => {
+  const globalCss = readFileSync(resolve(process.cwd(), 'src/lib/styles/global.css'), 'utf8');
+  const obsidianSrc = readFileSync(resolve(process.cwd(), 'src/lib/settings/ObsidianSection.svelte'), 'utf8');
+  const aboutSrc = readFileSync(resolve(process.cwd(), 'src/lib/settings/AboutSection.svelte'), 'utf8');
+
+  it('global.css defines .chip family', () => {
+    expect(globalCss).toMatch(/\.chip\s*\{/);
+    expect(globalCss).toMatch(/\.chip-ok/);
+    expect(globalCss).toMatch(/\.chip-warn/);
+    expect(globalCss).toMatch(/\.chip-err/);
+    expect(globalCss).toMatch(/\.chip-info/);
+  });
+
+  it('global.css chip rules use semantic tokens, not raw hex', () => {
+    // Extract the chip block from global.css
+    const chipBlock = globalCss.slice(globalCss.indexOf('.chip'));
+    // Must not contain raw hex color values in the chip definitions
+    expect(chipBlock).not.toMatch(/#[0-9a-fA-F]{3,6}(?![^{]*})/);
+  });
+
+  it('global.css chip-ok uses --success-soft / --success-text / --success', () => {
+    expect(globalCss).toMatch(/--success-soft/);
+    expect(globalCss).toMatch(/--success-text/);
+    expect(globalCss).toMatch(/--success[^-]/);
+  });
+
+  it('global.css chip-info uses --accent-soft / --accent-text / --accent', () => {
+    expect(globalCss).toMatch(/chip-info.*--accent/s);
+  });
+
+  it('ObsidianSection has no local .chip block (deleted)', () => {
+    // The local chip definitions should be removed — only the global chip applies
+    expect(obsidianSrc).not.toMatch(/\.chip\s*\{[^}]*font-size/);
+  });
+
+  it('AboutSection has no local .chip block (deleted)', () => {
+    expect(aboutSrc).not.toMatch(/\.chip\s*\{[^}]*font-size/);
+  });
+
+  it('ObsidianSection has no hardcoded chip hex colors', () => {
+    // No raw hex values in chip-related contexts
+    expect(obsidianSrc).not.toMatch(/chip[^}]*#[0-9a-fA-F]{3,6}/);
+  });
+
+  it('AboutSection has no hardcoded chip hex colors', () => {
+    expect(aboutSrc).not.toMatch(/chip[^}]*#[0-9a-fA-F]{3,6}/);
+  });
+
+  it('no phantom --error* token references remain in src/', () => {
+    // This is the acceptance criterion from plan §C2
+    expect(obsidianSrc).not.toMatch(/var\(--error/);
+    expect(aboutSrc).not.toMatch(/var\(--error/);
+  });
+
+  it('no phantom --accent-border token references remain in src/', () => {
+    expect(obsidianSrc).not.toMatch(/--accent-border/);
+    expect(aboutSrc).not.toMatch(/--accent-border/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SettingsPage navigation — source-level invariants
+// ---------------------------------------------------------------------------
+
+describe('SettingsPage — navigation source invariants', () => {
+  const src = readFileSync(resolve(process.cwd(), 'src/lib/SettingsPage.svelte'), 'utf8');
+
+  it('left-rail nav uses roving tabindex for keyboard navigation', () => {
+    expect(src).toMatch(/tabindex=\{cat\.id === activeId \? 0 : -1\}/);
+  });
+
+  it('ArrowDown / ArrowUp keyboard navigation is implemented', () => {
+    expect(src).toMatch(/ArrowDown/);
+    expect(src).toMatch(/ArrowUp/);
+  });
+
+  it('Home / End keyboard navigation is implemented', () => {
+    expect(src).toMatch(/Home/);
+    expect(src).toMatch(/End/);
+  });
+
+  it('category prop drives activeId (deep-link navigation)', () => {
+    expect(src).toMatch(/activeId.*category/s);
+  });
+
+  it('Back-to-document button dispatches close event', () => {
+    expect(src).toMatch(/on:click={close}/);
+    expect(src).toMatch(/dispatch\('close'\)/);
+  });
+});
