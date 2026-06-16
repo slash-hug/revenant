@@ -31,7 +31,6 @@
   import ThemeToggle from './lib/ThemeToggle.svelte';
   import Suminagashi from './lib/Suminagashi.svelte';
   import CommandPalette from './lib/CommandPalette.svelte';
-  // @ts-expect-error pending WS-C C1 — SettingsPage.svelte not yet created
   import SettingsPage from './lib/SettingsPage.svelte';
 
   import { tabsStore, activeTab, tabList } from './lib/stores/tabs';
