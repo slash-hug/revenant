@@ -212,12 +212,12 @@
   line-height: var(--lh-normal);
 }
 
-/* info family — accent (steel blue) */
-.preview-content .callout-info {
+/* accent family — steel blue (info/tip/note/abstract/summary/tldr/hint map here) */
+.preview-content .callout-accent {
   border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
   background: var(--accent-soft);
 }
-.preview-content .callout-info .callout-title {
+.preview-content .callout-accent .callout-title {
   color: var(--accent-text);
 }
 
@@ -230,12 +230,12 @@
   color: var(--success-text);
 }
 
-/* warning family — amber (B-1: reuse --warn* triplet; never bare var(--warn) for body text) */
-.preview-content .callout-warning {
+/* warn family — amber (warning/caution/attention map here; B-1: reuse --warn* triplet) */
+.preview-content .callout-warn {
   border-color: color-mix(in srgb, var(--warn) 40%, var(--border));
   background: var(--warn-soft);
 }
-.preview-content .callout-warning .callout-title {
+.preview-content .callout-warn .callout-title {
   color: var(--warn-text);
 }
 
@@ -282,15 +282,6 @@
  */
 .preview-content details.callout[open] .callout-body {
   margin-top: 8px;
-}
-
-/*
- * Wrap any open/close animation in prefers-reduced-motion (B-7).
- * No transition is defined by default; this block is here for future
- * enhancement so reduced-motion compliance is already scaffolded.
- */
-@media (prefers-reduced-motion: no-preference) {
-  /* reserved for future animate-open enhancement */
 }
 
 /* ---- wikilinks (T2.3) ---- */

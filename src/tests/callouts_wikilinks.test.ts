@@ -221,6 +221,56 @@ describe('callout core rule — nested callouts (B-5)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// CSS family class guard (drift prevention)
+//
+// The CSS in markdown.css defines exactly five family modifier classes:
+//   callout-accent, callout-success, callout-warn, callout-danger, callout-neutral
+//
+// This test asserts that every callout type emits one of those five classes so
+// that a rename on either side (renderer or CSS) fails CI immediately instead of
+// shipping with unstyled callouts.
+// ---------------------------------------------------------------------------
+
+describe('callout core rule — emitted class is one of the five CSS family classes', () => {
+  const VALID_FAMILY_CLASSES = [
+    'callout-accent',
+    'callout-success',
+    'callout-warn',
+    'callout-danger',
+    'callout-neutral',
+  ] as const;
+
+  // Spot-check each renderer family mapping with a representative type.
+  const representatives: Array<[string, string]> = [
+    ['info',    'callout-accent'],
+    ['tip',     'callout-accent'],
+    ['note',    'callout-accent'],
+    ['success', 'callout-success'],
+    ['warning', 'callout-warn'],
+    ['danger',  'callout-danger'],
+    ['example', 'callout-neutral'],
+    ['xyzzy',   'callout-neutral'], // unknown type
+  ];
+
+  for (const [type, expectedClass] of representatives) {
+    it(`[!${type}] emits the CSS-defined class "${expectedClass}"`, () => {
+      const html = renderMarkdown(`> [!${type}]\n> Body.`);
+      const doc = parse(html);
+      const el = doc.querySelector('.callout');
+      expect(el).not.toBeNull();
+
+      // Verify the emitted family class is one of the five valid CSS families.
+      const classList = Array.from(el!.classList);
+      const familyClass = classList.find((c) => c !== 'callout' && c.startsWith('callout-'));
+      expect(VALID_FAMILY_CLASSES).toContain(familyClass as typeof VALID_FAMILY_CLASSES[number]);
+
+      // Verify it is the specific expected family class.
+      expect(familyClass).toBe(expectedClass);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Wikilink rendering
 // ---------------------------------------------------------------------------
 
