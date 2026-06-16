@@ -753,7 +753,7 @@ const hljsCache = new Map<string, string>();
 const HLJS_CACHE_MAX = 256;
 
 export async function renderCodeBlock(code: string, lang: string): Promise<string> {
-  const key = `${lang} ${code}`;
+  const key = `${lang} ${code}`;
   const cached = hljsCache.get(key);
   if (cached !== undefined) return cached;
   try {
