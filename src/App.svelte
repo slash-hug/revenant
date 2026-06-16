@@ -37,6 +37,7 @@
   import type { Tab } from './lib/stores/tabs';
   import { annotationsStore } from './lib/stores/annotations';
   import { settings, loadSettings } from './lib/stores/settings';
+  import { initPreviewZoom } from './lib/stores/previewZoom';
   import { annotationFocus, clearFocus, focusAnnotation } from './lib/stores/annotationFocus';
   import Toast from './lib/Toast.svelte';
   import { deleteAnnotationWithUndo, cycleAnnotationId } from './lib/annotationActions';
@@ -429,7 +430,7 @@
     // D5: eager-load settings at app start so the store is populated before
     // any tab or export action runs.  One short IPC round-trip; avoids
     // first-open flicker and the null-state skeleton in the settings panel.
-    void loadSettings();
+    void loadSettings().then(() => initPreviewZoom());
 
     const unlisteners: Array<Promise<() => void>> = [];
 
