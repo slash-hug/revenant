@@ -284,6 +284,50 @@ dependency (`secrets.rs`); it is not a Tauri plugin and needs no configuration e
 nothing in `tauri.conf.json`. When adding a new Cargo dependency, explicitly verify
 whether it is a Tauri plugin before touching `tauri.conf.json`.
 
+## set_settings is preserve-ref single-writer — never write rest_key_ref through the general path (2026-06-16)
+
+**Context:** The `set_settings` IPC command was changed to call
+`set_settings_preserving_ref` (WS-D) instead of the verbatim `set_settings`
+pass-through. This enforces a single-writer discipline: only the key handlers
+(`set_rest_key` / `clear_rest_key`) may write `rest_key_ref`; the general settings
+path preserves whatever is on disk.
+
+**Rule:** Never route a write that should change `rest_key_ref` through the general
+`set_settings` IPC command. It will silently preserve the on-disk value. Use
+`set_rest_key` / `clear_rest_key` to update the keychain reference. If a new code
+path needs to clear or update `rest_key_ref` directly, it must call the verbatim
+`crate::settings::set_settings` module fn (not the IPC command) or go through
+`set_rest_key` / `clear_rest_key`.
+
+## Keychain rollback double-failure: return original error, no retry (2026-06-16)
+
+**Context:** `set_rest_key` first writes the key to the OS keychain, then writes
+the updated settings to disk. If the settings write fails, the keychain entry is
+deleted (rollback). If the rollback deletion also fails, both the keychain and
+settings are in an inconsistent state — the keychain holds a key with no
+corresponding `rest_key_ref` in settings (the "orphan" edge case).
+
+**Rule:** On double-failure (settings write fails AND rollback delete fails), swallow
+the rollback error via `let _ = delete_rest_key(...)` and return the ORIGINAL
+settings-write error. Do NOT add a retry loop — the user can re-enter the key to
+recover. Document the orphan edge case in a code comment so future readers
+understand why the delete error is silently swallowed.
+
+## Windows Credential Manager write→delete race requires real-hardware verification (2026-06-16)
+
+**Context:** The keychain rollback in `set_rest_key` (delete the credential if the
+settings write fails) involves a back-to-back write→delete in the same
+`spawn_blocking` call. On macOS this is reliable. On Windows, Credential Manager
+may race on back-to-back write→delete in rapid succession. The mock keychain used
+in unit tests does not persist across `Entry::new()` calls, so the rollback path
+cannot be fully tested without the real OS keychain.
+
+**Rule:** Write the rollback test against the mock where possible (assert
+`delete_rest_key` is invoked on the failure path via a forced settings-write error).
+Mark the real-keychain Windows path as `#[ignore]` with a comment requiring manual
+verification on real hardware before shipping. See `src-tauri/src/tests/settings_tests.rs`
+D3 for the integration test pattern.
+
 ## A workflow shipped APPROVED with a NUL byte corrupting a source file (2026-06-16)
 
 **What happened:** The #38 (callouts/wikilinks) feature-implement workflow returned
