@@ -283,3 +283,21 @@ dependency (`secrets.rs`); it is not a Tauri plugin and needs no configuration e
 `plugins.<name>` block. Cargo crates accessed via `use keyring::...` directly need
 nothing in `tauri.conf.json`. When adding a new Cargo dependency, explicitly verify
 whether it is a Tauri plugin before touching `tauri.conf.json`.
+
+## A workflow shipped APPROVED with a NUL byte corrupting a source file (2026-06-16)
+
+**What happened:** The #38 (callouts/wikilinks) feature-implement workflow returned
+`APPROVED` after 3 review rounds with green gates, but had silently corrupted an
+*unrelated* line in `src/lib/render/markdown.ts` — the hljs cache key `${lang} ${code}`
+(a space) became `${lang}\x00${code}` (a raw NUL byte). esbuild/tsc tolerated the NUL,
+so `tsc`, `svelte-check`, `npm test`, and the review agents all passed it. But the NUL
+made the whole file register as **binary**: `file` reported "data", and `grep`/editors
+bailed on it, which is how it was caught during pre-merge verification (greps for
+`callout`/`wikilink` returned nothing on a file that clearly contained them).
+
+**Rule:** "Green gates + APPROVED" does not prove a workflow-touched file is clean text.
+Compilers tolerate sub-textual corruption (NUL bytes, BOMs, control chars) that breaks
+tooling and editors. Before merging a workflow's output, run a byte/encoding sanity check
+on the files it changed — e.g. `file <changed files>` (flag anything reporting "data"
+instead of text) and/or a NUL scan (`grep -lP '\x00'` / `git diff --check`). Cheap, and
+it catches a class of corruption that the normal gates structurally cannot.
