@@ -410,15 +410,27 @@ md.core.ruler.push('callout', function calloutRule(state) {
     // If the inline content has more lines, keep everything after the first '\n'.
     const rest = inlineTok.content.indexOf('\n');
     inlineTok.content = rest >= 0 ? inlineTok.content.slice(rest + 1) : '';
-    // Also patch children to remove the marker tokens (the first softbreak +
-    // preceding text token). We rebuild the children array minus the first text
-    // token (which contained "[!type] Title") and the following softbreak (if any).
+    // Patch children to remove ALL marker-line tokens (everything up to and
+    // including the first softbreak that separates the title from the body).
+    // The previous approach assumed the marker lived in a single text child
+    // (children[0]), which is only true for plain-text titles.  When the title
+    // contains inline formatting — e.g. `> [!info] **Bold Title**` — markdown-it
+    // tokenises the title as several children (strong_open / text / strong_close
+    // …) that all precede the first softbreak.  Removing only children[0] left
+    // those formatting tokens in place, causing them to appear as duplicate body
+    // content.  The correct strategy is: find the index of the first softbreak
+    // and discard every child up to and including it.  If there is no softbreak
+    // (title-only callout, no body lines), discard all children.
     if (inlineTok.children && inlineTok.children.length > 0) {
-      // The first child is the raw "[!type] Title..." text_token.
-      // Remove it and any immediately following softbreak.
-      let cutTo = 1;
-      if (inlineTok.children[1]?.type === 'softbreak') cutTo = 2;
-      inlineTok.children = inlineTok.children.slice(cutTo);
+      const softbreakIdx = inlineTok.children.findIndex((c) => c.type === 'softbreak');
+      if (softbreakIdx >= 0) {
+        // Keep only the tokens that follow the softbreak (the body).
+        inlineTok.children = inlineTok.children.slice(softbreakIdx + 1);
+      } else {
+        // No softbreak means the entire inline is the marker line (title only,
+        // no body content).  Discard everything.
+        inlineTok.children = [];
+      }
     }
 
     // Find matching blockquote_close at the same nesting depth.

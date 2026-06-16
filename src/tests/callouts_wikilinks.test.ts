@@ -88,6 +88,46 @@ describe('callout core rule — title rendering', () => {
     const title = doc.querySelector('.callout-title');
     expect(title?.textContent?.trim()).toBe('Do not do this');
   });
+
+  it('inline-formatted title: title bar shows plain text, body does NOT duplicate title content', () => {
+    // Regression for the "formatted title duplication" bug:
+    // `> [!info] **Bold Title**` — the title bar should show the plain-text
+    // extraction from `inlineTok.content`, and the callout body must NOT
+    // contain any fragment of the title (no duplicate <strong> node, no stray
+    // markdown delimiters).
+    const html = renderMarkdown('> [!info] **Bold Title**\n> Actual body.');
+    const doc = parse(html);
+
+    // Title bar must include the raw text extracted from the marker line.
+    const titleEl = doc.querySelector('.callout-title');
+    expect(titleEl).not.toBeNull();
+    // titleText is extracted from inlineTok.content (plain text), so it will
+    // be the literal string "**Bold Title**" (markdown-it does not parse the
+    // regex-captured title text — only the token children are inline-rendered).
+    // The important constraint is that it is NOT empty and is present in the
+    // title bar element.
+    expect(titleEl?.textContent).toContain('Bold Title');
+
+    // Body must contain "Actual body." and must NOT contain any duplicate of
+    // the title tokens (no <strong> leaking from the title line).
+    const body = doc.querySelector('.callout-body');
+    expect(body).not.toBeNull();
+    expect(body?.textContent).toContain('Actual body.');
+    // No <strong> element should exist inside the body (the only bold in the
+    // source is in the title, not the body).
+    expect(body?.querySelector('strong')).toBeNull();
+  });
+
+  it('inline-formatted title without body: no stray tokens emitted', () => {
+    // Title-only callout (no body lines) with formatted title must not emit
+    // any body content at all.
+    const html = renderMarkdown('> [!warning] **Heads up**');
+    const doc = parse(html);
+    const body = doc.querySelector('.callout-body');
+    // Body element exists but should be empty (no stray children from the title).
+    expect(body?.querySelector('strong')).toBeNull();
+    expect(body?.textContent?.trim()).toBe('');
+  });
 });
 
 describe('callout core rule — collapsible variants', () => {
