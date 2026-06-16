@@ -1080,6 +1080,62 @@ pub fn open_release_page(app: AppHandle, url: String) -> IpcResult<()> {
         .map_err(|e| updates_err(crate::updates::UpdatesError::InvalidUrl(e.to_string())))
 }
 
+/// Open a rendered Mermaid diagram in a new OS window for focused viewing.
+///
+/// Creates a new WebviewWindow showing `diagram-viewer.html` with the SVG
+/// injected via an initialization script. Supports multiple concurrent popouts
+/// (window labels are `diagram-0`, `diagram-1`, etc.).
+///
+/// `svg` is the sanitized SVG markup. `title` is a human-readable label
+/// derived from the nearest heading in the document (or "Untitled").
+#[tauri::command]
+pub async fn open_diagram_window(
+    app: AppHandle,
+    svg: String,
+    title: String,
+) -> IpcResult<()> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let label = format!("diagram-{}", id);
+
+    // Escape the SVG and title for safe injection into a JS string literal.
+    let svg_escaped = svg
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('\n', "\\n")
+        .replace('\r', "");
+    let title_escaped = title
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'");
+
+    let init_script = format!(
+        "window.__DIAGRAM_SVG__ = '{}'; window.__DIAGRAM_TITLE__ = '{}';",
+        svg_escaped, title_escaped
+    );
+
+    let window_title = if title.is_empty() {
+        "Diagram".to_string()
+    } else {
+        format!("Diagram — {}", title)
+    };
+
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("diagram-viewer.html".into()))
+        .title(&window_title)
+        .inner_size(800.0, 600.0)
+        .min_inner_size(400.0, 300.0)
+        .resizable(true)
+        .initialization_script(&init_script)
+        .build()
+        .map_err(|e| IpcError {
+            code: "WINDOW_ERROR".to_string(),
+            message: format!("Failed to create diagram window: {}", e),
+        })?;
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
