@@ -817,12 +817,19 @@ pub async fn get_settings() -> IpcResult<Settings> {
 }
 
 /// Persist user settings (rest_key is NOT accepted here — use keychain via secrets module).
+///
+/// A5: The call-site uses `set_settings_preserving_ref` (WS-D D1) instead of the
+/// verbatim `set_settings` pass-through. This is the ONLY writer that must
+/// preserve the on-disk `rest_key_ref` — the key handlers (`set_rest_key` /
+/// `clear_rest_key`) still call the verbatim writer to CHANGE `rest_key_ref`.
+/// Single-writer discipline: only the key handlers write `rest_key_ref`; the
+/// general settings path never can (it is preserved by this fn).
 #[tauri::command]
 pub async fn set_settings(settings: Settings) -> IpcResult<()> {
     tauri::async_runtime::spawn_blocking(move || -> IpcResult<()> {
         let path = settings_file_path();
         let store_settings = settings_from_ipc(settings);
-        crate::settings::set_settings(&path, store_settings).map_err(settings_err)
+        crate::settings::set_settings_preserving_ref(&path, store_settings).map_err(settings_err)
     })
     .await
     .map_err(task_err)?
@@ -847,6 +854,16 @@ pub use crate::obsidian::ConnStatus;
 /// included in the returned `Settings` struct and is never written to disk.
 /// The `rest_key_ref` field in `Settings` holds only the opaque entry name
 /// used to retrieve the key later via `secrets::get_rest_key`.
+///
+/// A5 rollback: if the settings write fails after the keychain write succeeds,
+/// the keychain entry is deleted to keep the two stores consistent. If the
+/// rollback deletion also fails, the error is swallowed (the original
+/// settings-write error is returned). This is the documented orphan edge case:
+/// on a double-failure the keychain holds a key with no corresponding
+/// `rest_key_ref` in settings. No retry is attempted (lessons.md A6). The
+/// Windows Credential Manager write→delete race requires real-hardware
+/// verification (see lessons.md A6 / `#[ignore]` integration test in
+/// settings_tests.rs D3).
 #[tauri::command]
 pub async fn set_rest_key(key: String) -> IpcResult<Settings> {
     tauri::async_runtime::spawn_blocking(move || -> IpcResult<Settings> {
@@ -857,7 +874,22 @@ pub async fn set_rest_key(key: String) -> IpcResult<Settings> {
         let mut settings = crate::settings::get_settings(&path).map_err(settings_err)?;
         settings.rest_key_ref = Some("obsidian-rest".to_string());
         // Persist the updated settings (only rest_key_ref changes; key is NOT written).
-        crate::settings::set_settings(&path, settings.clone()).map_err(settings_err)?;
+        // A5: on settings-write failure, roll back the keychain write so the two stores
+        // stay consistent. Rollback errors are swallowed; we return the original error.
+        crate::settings::set_settings(&path, settings.clone()).map_err(|e| {
+            // Attempt rollback — swallow any rollback error (double-failure orphan
+            // edge case documented in lessons.md; no retry).
+            //
+            // Note on the replace-key case: if the user was replacing an existing
+            // key (`rest_key_ref` was already `Some` on disk), `delete_rest_key`
+            // removes the entry entirely rather than restoring the previous key.
+            // The on-disk `rest_key_ref` is therefore left pointing at a now-absent
+            // keychain entry until the user re-enters a key.  This is intentional:
+            // the stores remain consistent (both indicate no valid key) and is
+            // strictly safer than persisting a half-written state.
+            let _ = crate::secrets::delete_rest_key("obsidian-rest");
+            settings_err(e)
+        })?;
         Ok(settings_to_ipc(settings))
     })
     .await

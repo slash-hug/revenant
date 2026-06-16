@@ -31,7 +31,7 @@
   import ThemeToggle from './lib/ThemeToggle.svelte';
   import Suminagashi from './lib/Suminagashi.svelte';
   import CommandPalette from './lib/CommandPalette.svelte';
-  import SettingsPanel from './lib/SettingsPanel.svelte';
+  import SettingsPage from './lib/SettingsPage.svelte';
 
   import { tabsStore, activeTab, tabList } from './lib/stores/tabs';
   import type { Tab } from './lib/stores/tabs';
@@ -91,7 +91,11 @@
   }
   let paletteOpen = $state(false); // ⌘K command palette (#9)
   let shortcutsOpen = $state(false); // keyboard-shortcuts help overlay (#25)
-  let settingsOpen = $state(false); // ⌘, settings panel
+  // Settings view-state: null = settings closed; string = active category.
+  // Replaces the old boolean settingsOpen (A1).
+  let settingsView: 'general' | 'integrations' | 'about' | null = $state(null);
+  // Focus target captured on settings entry so we can restore it on exit (A3).
+  let focusRestoreEl: HTMLElement | null = null;
   let editorRef = $state<{ save: () => Promise<'saved' | 'conflict' | 'error' | 'noop'> } | null>(null);
   let closing = $state<Tab | null>(null); // tab pending an unsaved-changes guard (#22)
   let conflict = $state<{ open: boolean; path: string }>({ open: false, path: '' });
@@ -126,6 +130,28 @@
   /** Abbreviate a home-dir prefix to ~ for the status bar (mac/linux/windows). */
   function homeAbbrev(path: string): string {
     return path.replace(/^([A-Za-z]:)?[\\/](Users|home)[\\/][^\\/]+/, '~');
+  }
+
+  // -------------------------------------------------------------------------
+  // Settings helpers (A3)
+  // -------------------------------------------------------------------------
+  /** Open settings at the given category, capturing current focus for later restore. */
+  function openSettings(category: 'general' | 'integrations' | 'about' = 'general') {
+    focusRestoreEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    settingsView = category;
+  }
+
+  /** Exit settings and restore focus to the element active before settings was opened. */
+  function exitSettings() {
+    settingsView = null;
+    if (focusRestoreEl) {
+      focusRestoreEl.focus();
+      focusRestoreEl = null;
+    } else if ($tabList.length === 0) {
+      // On the welcome screen: focus the "Open file…" button.
+      const btn = document.querySelector<HTMLButtonElement>('.drop .btn-primary');
+      btn?.focus();
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -343,7 +369,7 @@
       const currentSettings = $settings;
       if (!currentSettings?.vaults.length) {
         showToast('No Obsidian vault configured yet. Open Settings to add one.');
-        settingsOpen = true;
+        openSettings('integrations');
         return;
       }
       const res = await exportObsidian({
@@ -408,8 +434,11 @@
     const unlisteners: Array<Promise<() => void>> = [];
 
     // `revenant <file.md>` — cold start (delayed emit) and single-instance.
+    // A3: if settings is open when a file open is requested (e.g. dropped on the
+    // Dock icon), auto-exit settings so the newly-opened document is visible.
     unlisteners.push(
       listen<string>('open_file_request', (e) => {
+        if (settingsView !== null) settingsView = null;
         if (e.payload) void openDoc(e.payload);
       }),
     );
@@ -475,11 +504,22 @@
       id: 'open', title: 'Open file…', section: 'File', hint: `${mod}O`,
       keywords: 'open document markdown', run: () => void handleOpenFile(),
     });
-    // Settings command — available even from the welcome screen (first-run setup).
+    // Settings deep-link commands — available even from the welcome screen (first-run setup).
+    // A4: three per-category commands replace the old single "Settings…" entry.
     cmds.push({
-      id: 'settings', title: 'Settings…', section: 'File', hint: `${mod},`,
-      keywords: 'preferences obsidian vault key configuration appearance theme',
-      run: () => (settingsOpen = true),
+      id: 'settings-general', title: 'Settings: General', section: 'File', hint: `${mod},`,
+      keywords: 'preferences configuration appearance theme',
+      run: () => openSettings('general'),
+    });
+    cmds.push({
+      id: 'settings-integrations', title: 'Settings: Integrations', section: 'File',
+      keywords: 'obsidian vault key rest api integration',
+      run: () => openSettings('integrations'),
+    });
+    cmds.push({
+      id: 'settings-about', title: 'Settings: About', section: 'File',
+      keywords: 'about version updates release',
+      run: () => openSettings('about'),
     });
     cmds.push({
       id: 'shortcuts', title: 'Keyboard shortcuts', section: 'Help',
@@ -540,6 +580,17 @@
   const paletteCommands = $derived.by(buildCommands);
 
   function handleGlobalKeydown(e: KeyboardEvent) {
+    // A3: Esc exits settings, but only when no overlay (palette/shortcuts) is
+    // open on top of settings.  CommandPalette and KeyboardShortcutsModal handle
+    // their own Esc internally but do NOT stopPropagation, so one keydown would
+    // reach this handler on the same event.  The !paletteOpen && !shortcutsOpen
+    // guard ensures settings is closed only by a "bare" Esc that isn't already
+    // consumed by an overlay.
+    if (settingsView !== null && !paletteOpen && !shortcutsOpen && e.key === 'Escape') {
+      e.preventDefault();
+      exitSettings();
+      return;
+    }
     if (!(e.metaKey || e.ctrlKey)) return;
     // Palette + open + settings work even from the welcome screen, so they run
     // before the "no document open" guard below.
@@ -547,9 +598,9 @@
       const k = e.key.toLowerCase();
       if (k === 'k') { e.preventDefault(); paletteOpen = !paletteOpen; return; }
       if (k === 'o') { e.preventDefault(); void handleOpenFile(); return; }
-      // ⌘, / Ctrl+, — open Settings panel (D7). Must run before the no-tabs
-      // guard so settings are reachable before any file is open (first-run).
-      if (e.key === ',') { e.preventDefault(); settingsOpen = true; return; }
+      // ⌘, / Ctrl+, — open Settings (A3). Must run before the no-tabs guard
+      // so settings are reachable before any file is open (first-run).
+      if (e.key === ',') { e.preventDefault(); openSettings('general'); return; }
     }
     if ($tabList.length === 0) return;
     // ⌘⌥ combos — keyboard navigation of annotations (#16). ⌘⌥M (add comment on
@@ -573,7 +624,16 @@
 </script>
 
 <main class="app-root">
-  {#if $tabList.length === 0}
+  {#if settingsView !== null}
+    <!-- A2: Settings is the outermost render branch — overlays both welcome and
+         workspace while tab/document state stays alive in the stores. The
+         fade/slide transition respects --dur-* / --ease-* (auto-zero when
+         prefers-reduced-motion is set, per tokens.css line 202). -->
+    <SettingsPage
+      category={settingsView}
+      on:close={exitSettings}
+    />
+  {:else if $tabList.length === 0}
     <!-- Welcome / empty state (C11) -->
     <div class="welcome" role="region" aria-label="Welcome">
       <div class="welcome-top">
@@ -584,7 +644,7 @@
           type="button"
           title="Settings"
           aria-label="Open settings"
-          onclick={() => (settingsOpen = true)}
+          onclick={() => openSettings('general')}
         >
           <!-- Gear icon — matches the toolbar Settings button. -->
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
@@ -655,7 +715,7 @@
         on:toggleDrawer={() => (drawerOpen = !drawerOpen)}
         on:openPalette={() => (paletteOpen = true)}
         on:openShortcuts={() => (shortcutsOpen = true)}
-        on:openSettings={() => (settingsOpen = true)}
+        on:openSettings={() => openSettings('general')}
       />
 
       <TabManager on:close={(e) => requestCloseTab(e.detail.id)} />
@@ -780,8 +840,7 @@
   <!-- Keyboard-shortcut reference (#25) — opened from the palette or toolbar "?". -->
   <KeyboardShortcutsModal open={shortcutsOpen} on:close={() => (shortcutsOpen = false)} />
 
-  <!-- Settings panel — opened via gear, ⌘, or palette "Settings…" command. -->
-  <SettingsPanel open={settingsOpen} on:close={() => (settingsOpen = false)} />
+  <!-- SettingsPage is rendered in the outermost {#if settingsView !== null} branch above (A2). -->
 
   <!-- Transient status toast (undoable delete, etc.) -->
   <Toast />

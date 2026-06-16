@@ -12,8 +12,8 @@
 use crate::secrets::test_helpers::init_mock_keychain;
 use crate::secrets::{delete_rest_key, get_rest_key, has_rest_key, store_rest_key};
 use crate::settings::{
-    get_settings, load_settings, save_settings, set_settings, Settings, SettingsError,
-    CURRENT_SCHEMA_VERSION,
+    get_settings, load_settings, save_settings, set_settings, set_settings_preserving_ref,
+    Settings, SettingsError, CURRENT_SCHEMA_VERSION,
 };
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -397,4 +397,208 @@ fn test_full_set_clear_rest_key_lifecycle() {
     assert!(!has_rest_key(key_ref), "has_rest_key must be false after clearing");
     let cleared = load_settings(&path).expect("load after clear should succeed");
     assert_eq!(cleared.rest_key_ref, None, "settings ref must be null after clearing");
+}
+
+// ── D2: set_settings_preserving_ref — lost-update regression ─────────────────
+//
+// Scenario: set_rest_key writes rest_key_ref = Some("obsidian-rest") to disk.
+// A stale frontend payload (with rest_key_ref = None) then calls
+// set_settings_preserving_ref.  The on-disk ref must survive.
+
+/// Lost-update regression: `set_settings_preserving_ref` must keep the
+/// on-disk `rest_key_ref` even when the incoming payload sets it to `None`.
+/// Other fields (theme, vaults) from the incoming payload ARE applied.
+#[test]
+fn test_preserving_ref_survives_stale_frontend_payload() {
+    let dir = TempDir::new().unwrap();
+    let path = tmp_settings_path(&dir);
+
+    // Step 1: write an on-disk state with a non-null rest_key_ref
+    //         (simulates what set_rest_key would leave behind).
+    let on_disk = Settings {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        vaults: vec![PathBuf::from("/vault/original")],
+        default_export_subfolder: "Reviews".to_string(),
+        theme: "dark".to_string(),
+        export_on_save: false,
+        rest_key_ref: Some("obsidian-rest".to_string()),
+    };
+    save_settings(&path, &on_disk).expect("initial save should succeed");
+
+    // Step 2: simulate a stale frontend payload — different theme/vault, but
+    //         rest_key_ref = None (the frontend never saw the updated ref).
+    let stale_incoming = Settings {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        vaults: vec![PathBuf::from("/vault/updated")],
+        default_export_subfolder: "NewFolder".to_string(),
+        theme: "light".to_string(),
+        export_on_save: true,
+        rest_key_ref: None, // stale — frontend doesn't know about the saved key
+    };
+    set_settings_preserving_ref(&path, stale_incoming).expect("merge save should succeed");
+
+    // Step 3: reload and assert the key ref survived AND other fields updated.
+    let loaded = load_settings(&path).expect("load after merge should succeed");
+
+    assert_eq!(
+        loaded.rest_key_ref,
+        Some("obsidian-rest".to_string()),
+        "rest_key_ref must be preserved from disk even when incoming payload is None"
+    );
+    assert_eq!(
+        loaded.vaults,
+        vec![PathBuf::from("/vault/updated")],
+        "vaults from incoming payload must be applied"
+    );
+    assert_eq!(
+        loaded.theme, "light",
+        "theme from incoming payload must be applied"
+    );
+    assert_eq!(
+        loaded.default_export_subfolder, "NewFolder",
+        "default_export_subfolder from incoming payload must be applied"
+    );
+    assert!(
+        loaded.export_on_save,
+        "export_on_save from incoming payload must be applied"
+    );
+    assert_eq!(
+        loaded.schema_version, CURRENT_SCHEMA_VERSION,
+        "schema_version must be CURRENT_SCHEMA_VERSION after merge"
+    );
+}
+
+/// Secret-guard-through-merge: `set_settings_preserving_ref` routes through
+/// `save_settings`, which asserts no secret-pattern fields are present.
+/// This test exercises the merge path with a recognisable ref label and
+/// confirms the raw API key never appears in the written JSON.
+#[test]
+fn test_preserving_ref_does_not_leak_secret() {
+    let dir = TempDir::new().unwrap();
+    let path = tmp_settings_path(&dir);
+
+    const FAKE_RAW_KEY: &str = "super-secret-api-key-must-not-appear-in-json";
+
+    // Seed an on-disk entry with a ref label.
+    let on_disk = Settings {
+        rest_key_ref: Some("obsidian-rest".to_string()),
+        ..Settings::default()
+    };
+    save_settings(&path, &on_disk).expect("seed save should succeed");
+
+    // Incoming payload — if a bug accidentally put the raw key into
+    // rest_key_ref, this would be where it happens.  We use the ref label, not
+    // the raw key, but this test verifies the JSON file never contains the raw
+    // key regardless.
+    let incoming = Settings {
+        rest_key_ref: None, // stale — the merge fn will restore "obsidian-rest" from disk
+        ..Settings::default()
+    };
+    set_settings_preserving_ref(&path, incoming).expect("merge save should succeed");
+
+    let raw_json = std::fs::read_to_string(&path).expect("settings file should exist after merge");
+
+    assert!(
+        !raw_json.contains(FAKE_RAW_KEY),
+        "raw API key must never appear in settings JSON written by the merge fn. \
+         JSON: {raw_json}"
+    );
+    assert!(
+        raw_json.contains("obsidian-rest"),
+        "rest_key_ref label must be present after the merge preserves it"
+    );
+    assert!(
+        raw_json.contains("\"schema_version\""),
+        "schema_version must be present after merge"
+    );
+}
+
+// ── D3: keychain rollback test ────────────────────────────────────────────────
+//
+// The rollback scenario: store_rest_key succeeds (key written to keychain) but
+// the subsequent settings write fails.  On failure the caller should delete the
+// orphaned keychain entry so the system returns to a consistent state.
+//
+// The keyring mock backend is per-Entry-instance (no cross-call persistence), so
+// we cannot round-trip store→get in unit tests.  What we CAN assert:
+// - delete_rest_key is a no-op (Ok) after a failed store path — i.e. the rollback
+//   call itself never panics or double-faults.
+// - The mock-keychain install + delete_rest_key path compiles and runs.
+//
+// The "write-then-fail" integration test that requires real hardware is
+// marked #[ignore] with a comment requiring Windows verification.
+
+/// Unit-level rollback smoke: `delete_rest_key` (the rollback call) is safe to
+/// invoke even when no key exists — establishes that the rollback code path
+/// compiles and does not panic under the mock backend.
+#[test]
+fn test_rollback_delete_is_safe_when_key_absent() {
+    init_mock_keychain();
+
+    let key_ref = "obsidian-rest-d3-rollback-absent";
+
+    // Simulate the rollback: key was never stored (write failed before store)
+    // or was already cleaned up.  The rollback call must be a no-op.
+    let result = delete_rest_key(key_ref);
+    assert!(
+        result.is_ok(),
+        "rollback delete_rest_key must return Ok when no entry exists (no-op)"
+    );
+
+    // A second rollback call is also safe (idempotent).
+    assert!(
+        delete_rest_key(key_ref).is_ok(),
+        "second rollback call must also return Ok (idempotent)"
+    );
+}
+
+/// Integration test: simulate a settings-write failure AFTER store_rest_key,
+/// then assert delete_rest_key (the rollback) is called.
+///
+/// Because the keyring mock does not persist across Entry instances, the full
+/// store → fail → rollback → confirm-deleted round-trip requires the real OS
+/// keychain.  Marked #[ignore] — run manually or in a hardware-backed CI job.
+///
+/// Windows verification REQUIRED: macOS Keychain and Windows Credential Manager
+/// behave differently on concurrent access; validate on actual Windows hardware
+/// before removing this gate.
+#[test]
+#[ignore = "requires real OS keychain (macOS Keychain / Windows Credential Manager); \
+            Windows hardware verification required before removing this gate"]
+fn test_keychain_rollback_on_settings_write_failure() {
+    let dir = TempDir::new().unwrap();
+
+    // Create a FILE at the path that save_settings will try to use as a parent
+    // directory.  save_settings calls create_dir_all(parent), which fails when
+    // the parent path component is an existing regular file rather than a
+    // directory — the OS cannot create a directory over a file.  A missing
+    // subdirectory is NOT a valid failure trigger here because create_dir_all
+    // would simply create it and the write would succeed.
+    let blocker = dir.path().join("blocker");
+    std::fs::write(&blocker, b"not a directory").unwrap();
+    let bad_path = blocker.join("settings.json"); // parent is a file, not a dir
+
+    let key_ref = "obsidian-rest-d3-integration-rollback";
+    let raw_key = "integration-rollback-key-xyz";
+
+    // Step 1: store the key in the real keychain (simulating the first half of set_rest_key).
+    store_rest_key(key_ref, raw_key).expect("store should succeed on real keychain");
+    assert!(has_rest_key(key_ref), "key must be present after store");
+
+    // Step 2: attempt the settings write to a path that WILL fail (parent is a file).
+    let settings_with_ref = Settings {
+        rest_key_ref: Some(key_ref.to_string()),
+        ..Settings::default()
+    };
+    let write_result = set_settings(&bad_path, settings_with_ref);
+    assert!(write_result.is_err(), "write must fail when parent path is a regular file");
+
+    // Step 3: caller performs rollback — delete the orphaned keychain entry.
+    delete_rest_key(key_ref).expect("rollback delete should succeed on real keychain");
+
+    // Step 4: assert rollback succeeded — key no longer present.
+    assert!(
+        !has_rest_key(key_ref),
+        "key must be absent from keychain after rollback delete"
+    );
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * ObsidianSection.svelte — Obsidian settings section (C-3).
+   * ObsidianSection.svelte — Obsidian settings section.
    *
    * Vault picker, export subfolder, REST API key management, and connection test.
    *
@@ -15,6 +15,8 @@
    *   Raw key is used only transiently for the probe — never persisted by this call.
    * - Chip states: pending spinner, ✓ Connected, ⚠ Unauthorised, ✗ Unreachable.
    * - All errors surfaced as toasts; never silently swallowed.
+   * - Loading guard: vault picker / subfolder / REST-key controls gated on
+   *   `settings != null`; shows aria-live="polite" placeholder while loading.
    *
    * Uses Svelte 4 options-API to match the component library.
    */
@@ -22,6 +24,8 @@
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import { settings, patchSettings, restKeyConfigured } from '../stores/settings';
   import { toast } from '../stores/toast';
+  import SettingGroup from './SettingGroup.svelte';
+  import SettingRow from './SettingRow.svelte';
 
   // IPC wrappers — these will be provided by WS-A's ipc.ts additions.
   // We import them by name; if WS-A hasn't landed yet the TS compiler will
@@ -150,147 +154,157 @@
 </script>
 
 <section class="obs-section" aria-label="Obsidian settings">
-  <!-- ── Vault ─────────────────────────────────────────────────────────────── -->
-  <div class="field-row">
-    <label class="field-label" for="obs-vault">Vault folder</label>
-    <div class="field-body vault-body">
-      {#if $settings?.vaults?.[0]}
-        <span class="vault-path" title={$settings.vaults[0]}>{$settings.vaults[0]}</span>
-        <div class="vault-actions">
-          <button type="button" class="link-btn" on:click={handleChooseVault}>Change…</button>
-          <button type="button" class="link-btn danger-link" on:click={handleClearVault}>Clear</button>
+  {#if $settings === null}
+    <!-- Loading guard: controls are not safe to render until settings loads -->
+    <p class="loading-placeholder" aria-live="polite">Loading…</p>
+  {:else}
+    <!-- ── Vault ─────────────────────────────────────────────────────────── -->
+    <SettingGroup label="Vault">
+      <SettingRow
+        label="Vault folder"
+        helper="The root folder of your Obsidian vault."
+      >
+        <div class="vault-body">
+          {#if $settings?.vaults?.[0]}
+            <span class="vault-path" title={$settings.vaults[0]}>{$settings.vaults[0]}</span>
+            <div class="vault-actions">
+              <button type="button" class="link-btn" on:click={handleChooseVault}>Change…</button>
+              <button type="button" class="link-btn danger-link" on:click={handleClearVault}>Clear</button>
+            </div>
+          {:else}
+            <span class="vault-empty text-faint">No vault configured</span>
+            <button type="button" class="btn-sm" on:click={handleChooseVault}>Choose…</button>
+          {/if}
         </div>
-      {:else}
-        <span class="vault-empty text-faint">No vault configured</span>
-        <button type="button" class="btn-sm" on:click={handleChooseVault}>Choose…</button>
-      {/if}
-    </div>
-  </div>
+      </SettingRow>
 
-  <!-- ── Subfolder ─────────────────────────────────────────────────────────── -->
-  <div class="field-row">
-    <label class="field-label" for="obs-subfolder">Export subfolder</label>
-    <input
-      id="obs-subfolder"
-      type="text"
-      class="text-input"
-      placeholder="e.g. reviews"
-      bind:value={subfolderDraft}
-      on:blur={handleSubfolderBlur}
-    />
-  </div>
+      <SettingRow
+        label="Export subfolder"
+        helper="Reviews are written to this subfolder inside your vault."
+      >
+        <input
+          id="obs-subfolder"
+          type="text"
+          class="text-input"
+          placeholder="e.g. reviews"
+          aria-label="Export subfolder"
+          bind:value={subfolderDraft}
+          on:blur={handleSubfolderBlur}
+        />
+      </SettingRow>
+    </SettingGroup>
 
-  <!-- ── REST API key ───────────────────────────────────────────────────────── -->
-  <div class="field-row key-row">
-    <span class="field-label">REST API key</span>
-    <div class="key-body">
-      {#if $restKeyConfigured && !hasTypedKey}
-        <!-- Masked state: key is saved in keychain -->
-        <div class="key-masked-row">
-          <span class="key-masked" aria-label="REST API key is saved">•••• saved</span>
-          <div class="key-actions">
-            <button
-              type="button"
-              class="btn-sm"
-              disabled={keyBusy}
-              on:click={handleReplaceKey}
-            >Replace</button>
-            {#if removePending}
-              <span class="remove-confirm">
-                Remove key?
-                <button type="button" class="btn-sm danger-btn" disabled={keyBusy} on:click={handleRemoveConfirm}>Remove</button>
-                <button type="button" class="link-btn" on:click={handleRemoveCancel}>Cancel</button>
-              </span>
-            {:else}
+    <!-- ── Connection ───────────────────────────────────────────────────── -->
+    <SettingGroup label="Connection">
+      <SettingRow
+        label="REST API key"
+        helper="Required to export directly to your vault via the Obsidian Local REST API plugin."
+      >
+        <div class="key-body">
+          {#if $restKeyConfigured && !hasTypedKey}
+            <!-- Masked state: key is saved in keychain -->
+            <div class="key-masked-row">
+              <span class="key-masked" aria-label="REST API key is saved">•••• saved</span>
+              <div class="key-actions">
+                <button
+                  type="button"
+                  class="btn-sm"
+                  disabled={keyBusy}
+                  on:click={handleReplaceKey}
+                >Replace</button>
+                {#if removePending}
+                  <span class="remove-confirm">
+                    Remove key?
+                    <button type="button" class="btn-sm danger-btn" disabled={keyBusy} on:click={handleRemoveConfirm}>Remove</button>
+                    <button type="button" class="link-btn" on:click={handleRemoveCancel}>Cancel</button>
+                  </span>
+                {:else}
+                  <button
+                    type="button"
+                    class="link-btn danger-link"
+                    disabled={keyBusy}
+                    on:click={handleRemoveClick}
+                  >Remove</button>
+                {/if}
+              </div>
+            </div>
+          {:else}
+            <!-- Entry state: no saved key or user clicked Replace -->
+            <div class="key-entry-row">
+              <input
+                type="password"
+                class="text-input key-input"
+                placeholder="Paste REST API key…"
+                bind:value={keyDraft}
+                autocomplete="new-password"
+                aria-label="Obsidian REST API key"
+              />
               <button
                 type="button"
-                class="link-btn danger-link"
-                disabled={keyBusy}
-                on:click={handleRemoveClick}
-              >Remove</button>
-            {/if}
-          </div>
+                class="btn-sm"
+                disabled={keyBusy || !keyDraft.trim()}
+                on:click={handleSaveKey}
+              >Save</button>
+            </div>
+          {/if}
         </div>
-      {:else}
-        <!-- Entry state: no saved key or user clicked Replace -->
-        <div class="key-entry-row">
-          <input
-            type="password"
-            class="text-input key-input"
-            placeholder="Paste REST API key…"
-            bind:value={keyDraft}
-            autocomplete="new-password"
-            aria-label="Obsidian REST API key"
-          />
+      </SettingRow>
+
+      <SettingRow
+        label="Test connection"
+        helper="Verify that Revenant can reach the Obsidian REST API with the current key."
+      >
+        <div class="test-row">
           <button
             type="button"
             class="btn-sm"
-            disabled={keyBusy || !keyDraft.trim()}
-            on:click={handleSaveKey}
-          >Save</button>
-        </div>
-      {/if}
+            disabled={!canTest || chipState === 'testing'}
+            aria-busy={chipState === 'testing'}
+            on:click={handleTestConnection}
+          >
+            {#if chipState === 'testing'}
+              <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="42 60" />
+              </svg>
+              Testing…
+            {:else}
+              Test connection
+            {/if}
+          </button>
 
-      <!-- Test connection row -->
-      <div class="test-row">
-        <button
-          type="button"
-          class="btn-sm"
-          disabled={!canTest || chipState === 'testing'}
-          aria-busy={chipState === 'testing'}
-          on:click={handleTestConnection}
-        >
-          {#if chipState === 'testing'}
-            <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="42 60" />
-            </svg>
-            Testing…
-          {:else}
-            Test connection
+          {#if chipState === 'ok'}
+            <span class="chip chip-ok" role="status">✓ Connected</span>
+          {:else if chipState === 'unauthorized'}
+            <span class="chip chip-warn" role="status">⚠ Unauthorised</span>
+          {:else if chipState === 'unreachable'}
+            <span class="chip chip-err" role="status">✗ Unreachable</span>
           {/if}
-        </button>
-
-        {#if chipState === 'ok'}
-          <span class="chip chip-ok" role="status">✓ Connected</span>
-        {:else if chipState === 'unauthorized'}
-          <span class="chip chip-warn" role="status">⚠ Unauthorised</span>
-        {:else if chipState === 'unreachable'}
-          <span class="chip chip-err" role="status">✗ Unreachable</span>
-        {/if}
-      </div>
-    </div>
-  </div>
+        </div>
+      </SettingRow>
+    </SettingGroup>
+  {/if}
 </section>
 
 <style>
   .obs-section {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 20px;
   }
 
-  .field-row {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .field-label {
+  /* Loading placeholder */
+  .loading-placeholder {
+    margin: 0;
     font-size: var(--fs-sm);
-    font-weight: var(--fw-medium);
-    color: var(--text);
-  }
-
-  .field-body {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    color: var(--text-faint);
   }
 
   /* Vault */
   .vault-body {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     flex-wrap: wrap;
-    gap: 6px 10px;
   }
   .vault-path {
     font-family: var(--font-mono);
@@ -328,7 +342,6 @@
   }
 
   /* REST key */
-  .key-row { flex-direction: column; gap: 6px; }
   .key-body { display: flex; flex-direction: column; gap: 8px; }
   .key-masked-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .key-masked {
@@ -355,47 +368,6 @@
     display: flex;
     align-items: center;
     gap: 10px;
-  }
-
-  /* Chip */
-  .chip {
-    font-size: var(--fs-xs);
-    font-weight: var(--fw-medium);
-    padding: 3px 9px;
-    border-radius: 999px;
-    border: 1px solid transparent;
-  }
-  .chip-ok {
-    color: #166534;
-    background: #dcfce7;
-    border-color: #bbf7d0;
-  }
-  .chip-warn {
-    color: #92400e;
-    background: #fef3c7;
-    border-color: #fde68a;
-  }
-  .chip-err {
-    color: #991b1b;
-    background: #fee2e2;
-    border-color: #fecaca;
-  }
-
-  /* Dark-mode chip variants */
-  :global([data-theme="dark"]) .chip-ok {
-    color: #86efac;
-    background: #14532d;
-    border-color: #166534;
-  }
-  :global([data-theme="dark"]) .chip-warn {
-    color: #fde68a;
-    background: #451a03;
-    border-color: #78350f;
-  }
-  :global([data-theme="dark"]) .chip-err {
-    color: #fca5a5;
-    background: #450a0a;
-    border-color: #7f1d1d;
   }
 
   /* Small button */
@@ -425,8 +397,8 @@
   @media (prefers-reduced-motion: reduce) { .btn-sm .spinner { animation-duration: 1.8s; } }
 
   /* Danger variants */
-  .danger-btn { color: var(--error, #dc2626); border-color: var(--error-border, #fca5a5); }
-  .danger-btn:hover:not(:disabled) { background: var(--error-soft, #fee2e2); }
+  .danger-btn { color: var(--danger); border-color: var(--danger); }
+  .danger-btn:hover:not(:disabled) { background: var(--danger-soft); }
 
   /* Link-style button */
   .link-btn {
@@ -443,5 +415,5 @@
   }
   .link-btn:hover { opacity: 0.8; }
   .link-btn:disabled { opacity: 0.5; cursor: default; }
-  .danger-link { color: var(--error, #dc2626); }
+  .danger-link { color: var(--danger); }
 </style>

@@ -174,3 +174,38 @@ pub fn get_settings(path: &PathBuf) -> Result<Settings, SettingsError> {
 pub fn set_settings(path: &PathBuf, settings: Settings) -> Result<(), SettingsError> {
     save_settings(path, &settings)
 }
+
+/// Persist updated settings while preserving the on-disk `rest_key_ref`.
+///
+/// Problem: when the frontend calls `setSettings` (via `patchSettings`) it sends
+/// back the full `Settings` struct it last read from the store.  If `set_rest_key`
+/// or `clear_rest_key` ran concurrently and updated `rest_key_ref` on disk, the
+/// frontend's stale copy would overwrite it — a classic lost-update.
+///
+/// This function prevents that race by:
+/// 1. Loading the **current** on-disk settings.
+/// 2. Building a merged struct from `incoming` but keeping `rest_key_ref` from disk.
+/// 3. Ensuring `schema_version = CURRENT_SCHEMA_VERSION`.
+/// 4. Writing through `save_settings` (preserves the secret-leak assert).
+///
+/// Do NOT modify `set_settings` — its verbatim pass-through behavior is depended on
+/// by `set_rest_key` / `clear_rest_key` which already own the `rest_key_ref` value
+/// they are writing.
+pub fn set_settings_preserving_ref(
+    path: &PathBuf,
+    incoming: Settings,
+) -> Result<(), SettingsError> {
+    let on_disk = get_settings(path)?;
+    let merged = Settings {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        // Preserve the on-disk keychain reference — never let a stale frontend
+        // copy clobber a rest_key_ref that was just written by set_rest_key.
+        rest_key_ref: on_disk.rest_key_ref,
+        // Take all other fields from the incoming (user-edited) payload.
+        vaults: incoming.vaults,
+        default_export_subfolder: incoming.default_export_subfolder,
+        theme: incoming.theme,
+        export_on_save: incoming.export_on_save,
+    };
+    save_settings(path, &merged)
+}
