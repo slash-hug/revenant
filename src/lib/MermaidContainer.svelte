@@ -127,7 +127,8 @@
         ?.closest('.prose')
         ?.querySelector('h1, h2, h3')
         ?.textContent ?? '';
-      await openDiagramWindow(svg, nearestHeading || 'Untitled');
+      const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+      await openDiagramWindow(svg, nearestHeading || 'Untitled', theme);
     } catch (err) {
       console.warn('Failed to open diagram window:', err);
     }
@@ -227,8 +228,8 @@
     border-color: var(--border, rgba(255,255,255,0.1));
   }
   .mermaid-container.expanded {
-    width: calc(100% + 64px);
-    margin-left: -32px;
+    width: calc(100% + 2 * var(--prose-padding, 32px));
+    margin-left: calc(-1 * var(--prose-padding, 32px));
   }
 
   .mc-viewport {

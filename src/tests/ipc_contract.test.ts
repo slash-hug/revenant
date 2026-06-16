@@ -305,10 +305,11 @@ describe("IPC contract", () => {
 
   it("openDiagramWindow calls invoke with correct command name", async () => {
     mockInvoke.mockResolvedValueOnce(undefined);
-    await openDiagramWindow('<svg>test</svg>', 'My Diagram');
+    await openDiagramWindow('<svg>test</svg>', 'My Diagram', 'dark');
     expect(mockInvoke).toHaveBeenCalledWith("open_diagram_window", {
       svg: '<svg>test</svg>',
       title: 'My Diagram',
+      theme: 'dark',
     });
   });
 });

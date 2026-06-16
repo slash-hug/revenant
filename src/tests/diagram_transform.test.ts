@@ -81,6 +81,10 @@ describe('diagramTransform', () => {
       const result = fitToView(200, 800, 400, 300);
       expect(result.scale).toBeCloseTo(0.375);
     });
+    it('scales square SVG to fit smaller viewport dimension', () => {
+      const result = fitToView(500, 500, 400, 300);
+      expect(result.scale).toBeCloseTo(0.6); // 300/500
+    });
     it('never over-enlarges (caps at 1.0)', () => {
       const result = fitToView(100, 50, 800, 600);
       expect(result.scale).toBe(1.0);

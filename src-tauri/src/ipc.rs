@@ -1088,11 +1088,14 @@ pub fn open_release_page(app: AppHandle, url: String) -> IpcResult<()> {
 ///
 /// `svg` is the sanitized SVG markup. `title` is a human-readable label
 /// derived from the nearest heading in the document (or "Untitled").
+/// `theme` is the current app theme (`"dark"` or `"light"`) so the popout
+/// window can match the main window's appearance.
 #[tauri::command]
 pub async fn open_diagram_window(
     app: AppHandle,
     svg: String,
     title: String,
+    theme: String,
 ) -> IpcResult<()> {
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -1111,8 +1114,8 @@ pub async fn open_diagram_window(
         .replace('\'', "\\'");
 
     let init_script = format!(
-        "window.__DIAGRAM_SVG__ = '{}'; window.__DIAGRAM_TITLE__ = '{}';",
-        svg_escaped, title_escaped
+        "window.__DIAGRAM_SVG__ = '{}'; window.__DIAGRAM_TITLE__ = '{}'; document.documentElement.setAttribute('data-theme', '{}');",
+        svg_escaped, title_escaped, if theme == "light" { "light" } else { "dark" }
     );
 
     let window_title = if title.is_empty() {
