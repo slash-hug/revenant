@@ -93,7 +93,13 @@
   function mountMermaidContainers() {
     if (!previewEl) return;
 
-    // Destroy previous containers
+    // Destroy previous containers and clear mount markers so re-query works
+    // after theme re-render (the attribute survives innerHTML replacement).
+    if (previewEl) {
+      for (const el of previewEl.querySelectorAll<HTMLElement>('[data-mc-mounted]')) {
+        el.removeAttribute('data-mc-mounted');
+      }
+    }
     for (const instance of mountedContainers) {
       unmount(instance);
     }
