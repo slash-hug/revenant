@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * AppearanceSection.svelte — Appearance settings section (C-4).
+   * AppearanceSection.svelte — Appearance settings section.
    *
    * Embeds <ThemeToggle> which is self-managed via the `theme.ts` store
    * (localStorage → `<html data-theme>`). This component MUST NOT call
@@ -11,32 +11,15 @@
    */
 
   import ThemeToggle from '../ThemeToggle.svelte';
+  import SettingGroup from './SettingGroup.svelte';
+  import SettingRow from './SettingRow.svelte';
 </script>
 
-<section class="appearance-section" aria-label="Appearance settings">
-  <div class="field-row">
-    <span class="field-label">Theme</span>
+<SettingGroup label="Appearance">
+  <SettingRow
+    label="Theme"
+    helper="Choose between light (Paper) and dark (Graphite) mode."
+  >
     <ThemeToggle />
-  </div>
-</section>
-
-<style>
-  .appearance-section {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .field-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .field-label {
-    font-size: var(--fs-sm);
-    font-weight: var(--fw-medium);
-    color: var(--text);
-    min-width: 60px;
-  }
-</style>
+  </SettingRow>
+</SettingGroup>
