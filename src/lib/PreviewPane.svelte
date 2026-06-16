@@ -46,6 +46,12 @@
   import { annotationsStore } from './stores/annotations';
   import { resolveBlock } from './annotationResolve';
   import { nearestLineIndex } from './scrollSync';
+  import {
+    previewZoom,
+    adjustZoom,
+    resetZoom,
+    ZOOM_STEP,
+  } from './stores/previewZoom';
 
   export let content: string = '';
   export let scrollLine: number = 1;
@@ -125,6 +131,9 @@
   $: fmMeta = frontmatterHeader
     ? Object.entries(frontmatterHeader).filter(([k]) => k !== 'title')
     : [];
+
+  /** CSS scale factor derived from the zoom percentage store. */
+  $: zoomScale = $previewZoom / 100;
 
   function initials(name: string): string {
     return name.trim().split(/\s+/).map((w) => w[0] ?? '').slice(0, 2).join('').toUpperCase();
@@ -579,11 +588,36 @@
     if ((e.target as Element | null)?.closest?.('.add-comment-affordance')) return;
     showAddComment = false;
   }
+
+  /** Ctrl+scroll wheel → zoom in/out by ZOOM_STEP per notch. */
+  function handleZoomWheel(e: WheelEvent) {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    adjustZoom(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP);
+  }
+
+  /** Ctrl+Plus / Ctrl+Minus / Ctrl+0 → zoom controls. */
+  function handleZoomKeydown(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    if (e.key === '=' || e.key === '+') {
+      e.preventDefault();
+      adjustZoom(ZOOM_STEP);
+    } else if (e.key === '-') {
+      e.preventDefault();
+      adjustZoom(-ZOOM_STEP);
+    } else if (e.key === '0') {
+      e.preventDefault();
+      resetZoom();
+    }
+  }
+
   onMount(() => {
     window.addEventListener('keydown', handleAddCommentKeydown);
+    window.addEventListener('keydown', handleZoomKeydown);
     window.addEventListener('mousedown', handleAffordanceDismiss);
     return () => {
       window.removeEventListener('keydown', handleAddCommentKeydown);
+      window.removeEventListener('keydown', handleZoomKeydown);
       window.removeEventListener('mousedown', handleAffordanceDismiss);
     };
   });
@@ -599,7 +633,8 @@
     </div>
   {/if}
 
-  <div class="pv-scroll" bind:this={pvScrollEl}>
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="pv-scroll" bind:this={pvScrollEl} on:wheel={handleZoomWheel}>
     <!-- AnnotationSeals overlay — first child of .pv-scroll (D3).
          Absolutely positioned relative to .pv-scroll (position: relative added below). -->
     <AnnotationSeals
@@ -607,7 +642,10 @@
       scrollContainer={pvScrollEl}
       {previewEl}
     />
-    <article class="prose">
+    <article
+      class="prose"
+      style="transform: scale({zoomScale}); transform-origin: top left; width: calc(100% / {zoomScale});"
+    >
       {#if frontmatterHeader}
         <header class="pv-header" aria-label="Document metadata">
           {#if fmTitle}<h1 class="pv-title">{fmTitle}</h1>{/if}
