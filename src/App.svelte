@@ -580,11 +580,13 @@
   const paletteCommands = $derived.by(buildCommands);
 
   function handleGlobalKeydown(e: KeyboardEvent) {
-    // A3: Esc exits settings before the metaKey||ctrlKey bail so bare Esc is caught.
-    // Guard ordering: this fires only when settings is open; palette/modal Esc
-    // is handled by those components directly (they unmount or close themselves
-    // before this handler sees a second Esc from the same keydown).
-    if (settingsView !== null && e.key === 'Escape') {
+    // A3: Esc exits settings, but only when no overlay (palette/shortcuts) is
+    // open on top of settings.  CommandPalette and KeyboardShortcutsModal handle
+    // their own Esc internally but do NOT stopPropagation, so one keydown would
+    // reach this handler on the same event.  The !paletteOpen && !shortcutsOpen
+    // guard ensures settings is closed only by a "bare" Esc that isn't already
+    // consumed by an overlay.
+    if (settingsView !== null && !paletteOpen && !shortcutsOpen && e.key === 'Escape') {
       e.preventDefault();
       exitSettings();
       return;
@@ -627,7 +629,6 @@
          workspace while tab/document state stays alive in the stores. The
          fade/slide transition respects --dur-* / --ease-* (auto-zero when
          prefers-reduced-motion is set, per tokens.css line 202). -->
-    <!-- @ts-expect-error pending WS-C C1 -->
     <SettingsPage
       category={settingsView}
       on:close={exitSettings}

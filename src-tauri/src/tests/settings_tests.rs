@@ -568,8 +568,15 @@ fn test_rollback_delete_is_safe_when_key_absent() {
 fn test_keychain_rollback_on_settings_write_failure() {
     let dir = TempDir::new().unwrap();
 
-    // Use a path inside a sub-directory that does NOT exist so the write fails.
-    let bad_path = dir.path().join("nonexistent_subdir").join("settings.json");
+    // Create a FILE at the path that save_settings will try to use as a parent
+    // directory.  save_settings calls create_dir_all(parent), which fails when
+    // the parent path component is an existing regular file rather than a
+    // directory — the OS cannot create a directory over a file.  A missing
+    // subdirectory is NOT a valid failure trigger here because create_dir_all
+    // would simply create it and the write would succeed.
+    let blocker = dir.path().join("blocker");
+    std::fs::write(&blocker, b"not a directory").unwrap();
+    let bad_path = blocker.join("settings.json"); // parent is a file, not a dir
 
     let key_ref = "obsidian-rest-d3-integration-rollback";
     let raw_key = "integration-rollback-key-xyz";
@@ -578,13 +585,13 @@ fn test_keychain_rollback_on_settings_write_failure() {
     store_rest_key(key_ref, raw_key).expect("store should succeed on real keychain");
     assert!(has_rest_key(key_ref), "key must be present after store");
 
-    // Step 2: attempt the settings write to a path that WILL fail.
+    // Step 2: attempt the settings write to a path that WILL fail (parent is a file).
     let settings_with_ref = Settings {
         rest_key_ref: Some(key_ref.to_string()),
         ..Settings::default()
     };
     let write_result = set_settings(&bad_path, settings_with_ref);
-    assert!(write_result.is_err(), "write to nonexistent dir must fail");
+    assert!(write_result.is_err(), "write must fail when parent path is a regular file");
 
     // Step 3: caller performs rollback — delete the orphaned keychain entry.
     delete_rest_key(key_ref).expect("rollback delete should succeed on real keychain");

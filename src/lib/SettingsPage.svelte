@@ -19,7 +19,7 @@
    *   - close — App.svelte sets settingsView = null on receipt
    */
 
-  import { createEventDispatcher, tick } from 'svelte';
+  import { createEventDispatcher, onMount, tick } from 'svelte';
   import ObsidianSection from './settings/ObsidianSection.svelte';
   import AppearanceSection from './settings/AppearanceSection.svelte';
   import AboutSection from './settings/AboutSection.svelte';
@@ -43,8 +43,32 @@
   // Sync with deep-link changes from App.svelte (palette navigation).
   $: if (category) activeId = category;
 
+  /** Move focus to the active nav tab (or the detail panel as fallback).
+   * Called on mount (entry focus) and on category change so keyboard/screen-reader
+   * users always land somewhere meaningful — compensates for losing the native
+   * showModal() auto-focus that SettingsPanel's native dialog used to provide. */
+  function focusActive() {
+    void tick().then(() => {
+      const tab = document.querySelector<HTMLElement>(`.sp-nav [data-cat="${activeId}"]`);
+      if (tab) {
+        tab.focus();
+      } else {
+        // Fallback: focus the scrollable detail panel (tabindex="0").
+        document.querySelector<HTMLElement>('.sp-detail')?.focus();
+      }
+    });
+  }
+
+  // Entry focus: move focus into the settings surface when it first mounts so
+  // keyboard and screen-reader users are not stranded on the (now unmounted)
+  // trigger element (gear button / ⌘, / palette command).
+  onMount(focusActive);
+
   function select(id: string) {
     activeId = id;
+    // Keep focus on the newly-activated nav tab after a category change so
+    // roving-tabindex navigation remains coherent.
+    focusActive();
   }
 
   // APG vertical tablist keyboard model: Enter/Space activates; ↑/↓ move +
