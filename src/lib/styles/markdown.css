@@ -177,3 +177,150 @@
   color: var(--text);
 }
 .preview-content .mermaid-error strong { color: var(--danger-text); }
+
+/* ---- callout cards (T2.1) ---- */
+
+/*
+ * Base callout card — shared structure regardless of family.
+ * The outer element is either a <div> (static) or <details> (collapsible).
+ * Both share these base rules; family subclasses override border-color,
+ * background, and title/icon color.
+ */
+.preview-content .callout {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  padding: 14px 16px;
+  margin: 0 0 18px;
+  font-size: var(--fs-base);
+  font-family: var(--font-ui);
+}
+
+.preview-content .callout-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-base);
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.preview-content .callout-body {
+  color: var(--text);
+  font-size: var(--fs-base);
+  line-height: var(--lh-normal);
+}
+
+/* info family — accent (steel blue) */
+.preview-content .callout-info {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: var(--accent-soft);
+}
+.preview-content .callout-info .callout-title {
+  color: var(--accent-text);
+}
+
+/* success family — muted green */
+.preview-content .callout-success {
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+  background: var(--success-soft);
+}
+.preview-content .callout-success .callout-title {
+  color: var(--success-text);
+}
+
+/* warning family — amber (B-1: reuse --warn* triplet; never bare var(--warn) for body text) */
+.preview-content .callout-warning {
+  border-color: color-mix(in srgb, var(--warn) 40%, var(--border));
+  background: var(--warn-soft);
+}
+.preview-content .callout-warning .callout-title {
+  color: var(--warn-text);
+}
+
+/* danger family — muted red */
+.preview-content .callout-danger {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  background: var(--danger-soft);
+}
+.preview-content .callout-danger .callout-title {
+  color: var(--danger-text);
+}
+
+/* neutral family — surface-2 / muted */
+.preview-content .callout-neutral {
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+.preview-content .callout-neutral .callout-title {
+  color: var(--text-muted);
+}
+
+/* ---- collapsible <details> affordance (T2.2) ---- */
+
+/*
+ * summary.callout-title is used when the callout is collapsible ([!type]+/-).
+ * Minimal native-marker approach (B-7): cursor + list-style suppression.
+ * Suppress the webkit details marker to avoid duplication with the family icon.
+ */
+.preview-content summary.callout-title {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  margin-bottom: 0;
+}
+
+/* Remove the native disclosure triangle in webkit/blink */
+.preview-content summary.callout-title::-webkit-details-marker {
+  display: none;
+}
+
+/*
+ * Reveal body margin when details is open. The .callout-body sits directly
+ * inside <details> after <summary>, so top margin provides breathing room.
+ */
+.preview-content details.callout[open] .callout-body {
+  margin-top: 8px;
+}
+
+/*
+ * Wrap any open/close animation in prefers-reduced-motion (B-7).
+ * No transition is defined by default; this block is here for future
+ * enhancement so reduced-motion compliance is already scaffolded.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  /* reserved for future animate-open enhancement */
+}
+
+/* ---- wikilinks (T2.3) ---- */
+
+/*
+ * .wikilink-anchor — in-doc [[#Heading]] links.
+ * Mirrors the existing .preview-content a style at line 65:
+ * underline on hover, accent text color.
+ */
+.preview-content .wikilink-anchor {
+  color: var(--accent-text);
+  text-decoration: none;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  cursor: pointer;
+}
+.preview-content .wikilink-anchor:hover {
+  text-decoration: underline;
+}
+
+/*
+ * .wikilink-unresolved — cross-file [[Page]] / ![[Page]] inert spans.
+ * Muted color, dashed underline, non-link cursor.
+ * The inline rule emits title="Page" for the v1 hover affordance (T1.4).
+ */
+.preview-content .wikilink-unresolved {
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  cursor: default;
+}
