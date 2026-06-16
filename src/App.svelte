@@ -37,7 +37,7 @@
   import type { Tab } from './lib/stores/tabs';
   import { annotationsStore } from './lib/stores/annotations';
   import { settings, loadSettings } from './lib/stores/settings';
-  import { initPreviewZoom } from './lib/stores/previewZoom';
+  import { initPreviewZoom, previewZoom, setZoom, resetZoom, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP } from './lib/stores/previewZoom';
   import { annotationFocus, clearFocus, focusAnnotation } from './lib/stores/annotationFocus';
   import Toast from './lib/Toast.svelte';
   import { deleteAnnotationWithUndo, cycleAnnotationId } from './lib/annotationActions';
@@ -788,6 +788,29 @@
           <span>{$activeTab.content.split('\n').length} lines</span>
           <span>{$annotationsStore.annotations.length} comments</span>
           <span class="spacer"></span>
+          {#if viewMode === 'preview' || viewMode === 'split'}
+            <!-- svelte-ignore a11y-no-static-element-interactions -->
+            <span
+              class="st-zoom"
+              on:dblclick={() => resetZoom()}
+              title="Preview zoom — double-click to reset"
+            >
+              <svg class="st-zoom-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="7" cy="7" r="4.5" /><path d="M10.2 10.2 13.5 13.5" />
+              </svg>
+              <input
+                type="range"
+                class="st-zoom-slider"
+                min={ZOOM_MIN}
+                max={ZOOM_MAX}
+                step={ZOOM_STEP}
+                value={$previewZoom}
+                on:input={(e) => setZoom(parseInt(e.currentTarget.value, 10))}
+                aria-label="Preview zoom level"
+              />
+              <span class="st-zoom-pct">{$previewZoom}%</span>
+            </span>
+          {/if}
           <span>Markdown</span>
           <span>UTF-8</span>
         </div>
@@ -1052,6 +1075,31 @@
   .ws-status .st-save.dirty .st-dot {
     background: transparent;
     border: 1px solid var(--text-muted);
+  }
+
+  /* Status-bar zoom slider (visible in preview/split modes) */
+  .ws-status .st-zoom {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: default;
+  }
+  .ws-status .st-zoom-icon {
+    width: 12px;
+    height: 12px;
+    flex: none;
+    opacity: .7;
+  }
+  .ws-status .st-zoom-slider {
+    width: 80px;
+    height: 3px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .ws-status .st-zoom-pct {
+    min-width: 3.2ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
   }
 
   /* ============ Toast ============ */
