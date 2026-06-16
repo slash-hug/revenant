@@ -20,7 +20,6 @@
 .prose {
   padding: 32px 44px 64px;
   font-family: var(--font-prose);
-  max-width: 760px;
   color: var(--text);
   position: relative;
   z-index: 1;
