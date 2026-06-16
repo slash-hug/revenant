@@ -22,7 +22,7 @@
    *  - blockMap   : Map<string, number>  — block-id → source-line mapping (C8).
    *  - addAnnotation : { anchor: AnchorV1 }  — preview-side "Add comment" (C8).
    */
-  import { onMount, onDestroy, afterUpdate, createEventDispatcher, tick } from 'svelte';
+  import { onMount, onDestroy, afterUpdate, createEventDispatcher, tick, mount, unmount } from 'svelte';
   import './styles/markdown.css';
   import {
     renderMarkdown,
@@ -52,6 +52,7 @@
     resetZoom,
     ZOOM_STEP,
   } from './stores/previewZoom';
+  import MermaidContainer from './MermaidContainer.svelte';
 
   export let content: string = '';
   export let scrollLine: number = 1;
@@ -81,6 +82,45 @@
   let html = '';
   let syncDegraded = false;
   let isHydrating = false;
+
+  // Mounted MermaidContainer instances — tracked for cleanup on re-render.
+  let mountedContainers: ReturnType<typeof mount>[] = [];
+
+  /**
+   * Post-hydration step: wrap each rendered Mermaid div in a MermaidContainer.
+   * Called after hydrateDynamicBlocks() completes successfully.
+   */
+  function mountMermaidContainers() {
+    if (!previewEl) return;
+
+    // Destroy previous containers
+    for (const instance of mountedContainers) {
+      unmount(instance);
+    }
+    mountedContainers = [];
+
+    const divs = previewEl.querySelectorAll<HTMLElement>(
+      '[data-block-type="mermaid"]:not([data-mermaid-pending]):not([data-mc-mounted])',
+    );
+
+    for (const div of divs) {
+      const svgContent = div.innerHTML;
+      const source = decodeURIComponent(div.getAttribute('data-mermaid-src') ?? '');
+      const blockId = div.dataset.blockId ?? '';
+
+      if (!svgContent.includes('<svg')) continue;
+
+      // Clear the div and mount MermaidContainer into it
+      div.innerHTML = '';
+      div.setAttribute('data-mc-mounted', '');
+
+      const instance = mount(MermaidContainer, {
+        target: div,
+        props: { svg: svgContent, source, blockId },
+      });
+      mountedContainers.push(instance);
+    }
+  }
 
   // ── ResizeObserver for seal recompute (TRAP 2) ──────────────────────────────
   let resizeObserver: ResizeObserver | null = null;
@@ -230,6 +270,8 @@
       );
     } finally {
       isHydrating = false;
+      // Mount interactive containers on the hydrated Mermaid blocks
+      mountMermaidContainers();
       // Recompute seals + refresh highlights at the tail of hydration (TRAP 2:
       // Mermaid/hljs hydration is async; compute offsetTop only after SVGs inject).
       triggerSealRecompute();
@@ -368,6 +410,8 @@
         } catch { /* keep the current render on failure */ }
       }),
     );
+    // Re-mount containers after theme re-render
+    mountMermaidContainers();
   }
 
   // Re-theme diagrams on a light/dark switch — covers the manual toggle AND an OS
@@ -401,6 +445,10 @@
     unsubFocus();
     clearHighlights();
     clearFocus();
+    for (const instance of mountedContainers) {
+      unmount(instance);
+    }
+    mountedContainers = [];
   });
 
   /**
