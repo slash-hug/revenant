@@ -187,6 +187,7 @@
           type="text"
           class="text-input"
           placeholder="e.g. reviews"
+          aria-label="Export subfolder"
           bind:value={subfolderDraft}
           on:blur={handleSubfolderBlur}
         />

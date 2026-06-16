@@ -879,6 +879,14 @@ pub async fn set_rest_key(key: String) -> IpcResult<Settings> {
         crate::settings::set_settings(&path, settings.clone()).map_err(|e| {
             // Attempt rollback — swallow any rollback error (double-failure orphan
             // edge case documented in lessons.md; no retry).
+            //
+            // Note on the replace-key case: if the user was replacing an existing
+            // key (`rest_key_ref` was already `Some` on disk), `delete_rest_key`
+            // removes the entry entirely rather than restoring the previous key.
+            // The on-disk `rest_key_ref` is therefore left pointing at a now-absent
+            // keychain entry until the user re-enters a key.  This is intentional:
+            // the stores remain consistent (both indicate no valid key) and is
+            // strictly safer than persisting a half-written state.
             let _ = crate::secrets::delete_rest_key("obsidian-rest");
             settings_err(e)
         })?;

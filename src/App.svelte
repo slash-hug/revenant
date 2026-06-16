@@ -632,7 +632,6 @@
     <SettingsPage
       category={settingsView}
       on:close={exitSettings}
-      on:navigate={(e: CustomEvent<{ category: 'general' | 'integrations' | 'about' }>) => { settingsView = e.detail.category; }}
     />
   {:else if $tabList.length === 0}
     <!-- Welcome / empty state (C11) -->
