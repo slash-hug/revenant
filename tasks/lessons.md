@@ -345,3 +345,22 @@ tooling and editors. Before merging a workflow's output, run a byte/encoding san
 on the files it changed — e.g. `file <changed files>` (flag anything reporting "data"
 instead of text) and/or a NUL scan (`grep -lP '\x00'` / `git diff --check`). Cheap, and
 it catches a class of corruption that the normal gates structurally cannot.
+
+## Hardcoded POSIX paths in Rust tests fail the Windows CI leg silently (2026-06-16)
+
+**What happened:** `export_html_rejects_traversal_path` constructed
+`PathBuf::from("/tmp/valid_dir/../escape/out.html")` to test the traversal guard.
+On macOS this is absolute, so `export_html` reached the `has_parent_traversal`
+guard and the `contains("traversal")` assertion held. On Windows the same string
+is **not absolute** (no drive letter), so the *earlier* `must be absolute` guard
+rejected it first — the error message said "absolute", not "traversal", and the
+test failed only on the `windows-latest` CI leg. Because local dev + the macOS CI
+job were green, the failure sat on `main` across multiple commits unnoticed.
+
+**Rule:** When a test needs an absolute path, derive it from `std::env::temp_dir()`
+(or `TempDir`), never a hardcoded `/tmp/...` literal — temp_dir is absolute on every
+platform. When a test asserts on a *specific* guard's error text, make sure the input
+actually reaches that guard on all platforms (here: absolute AND containing `..`).
+`PathBuf::join("..")` does not normalize, so the `..` component survives for the guard
+to detect. The macOS-only dev loop will not catch Windows path-semantics bugs — watch
+the `windows-latest` CI job, not just local `cargo test`.
