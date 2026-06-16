@@ -58,7 +58,8 @@ export function pan(t: DiagramTransform, dx: number, dy: number): DiagramTransfo
 
 /**
  * Calculate a transform that fits the SVG (svgW×svgH) into the viewport
- * (vpW×vpH), centered. Never over-enlarges — caps scale at 1.0.
+ * (vpW×vpH), centered. Allows upscaling small diagrams up to 2× for
+ * readability (SVGs are vectors — no pixelation concern).
  */
 export function fitToView(
   svgW: number,
@@ -67,7 +68,7 @@ export function fitToView(
   vpH: number,
 ): DiagramTransform {
   if (svgW <= 0 || svgH <= 0) return { ...IDENTITY };
-  const scale = Math.min(1.0, vpW / svgW, vpH / svgH);
+  const scale = Math.min(2.0, vpW / svgW, vpH / svgH);
   const scaledW = svgW * scale;
   const scaledH = svgH * scale;
   return {

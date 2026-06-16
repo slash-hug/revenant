@@ -37,6 +37,7 @@
 
   let viewportEl: HTMLDivElement | undefined = $state(undefined);
   let canvasEl: HTMLDivElement | undefined = $state(undefined);
+  let viewportHeight: string = $state('300px');
 
   // Auto-fit diagram to viewport on mount (once elements are bound and SVG is rendered)
   let hasFittedOnMount = false;
@@ -44,11 +45,29 @@
     if (viewportEl && canvasEl && !hasFittedOnMount) {
       // Wait a frame for the SVG to render and have dimensions
       requestAnimationFrame(() => {
+        computeViewportHeight();
         fit();
         hasFittedOnMount = true;
       });
     }
   });
+
+  /** Set viewport height based on SVG aspect ratio at available width, capped at 70vh. */
+  function computeViewportHeight() {
+    if (!viewportEl || !canvasEl) return;
+    const svgEl = canvasEl.querySelector('svg');
+    if (!svgEl) return;
+    const svgW = svgEl.width?.baseVal?.value || svgEl.getBoundingClientRect().width || 400;
+    const svgH = svgEl.height?.baseVal?.value || svgEl.getBoundingClientRect().height || 300;
+    const vpW = viewportEl.getBoundingClientRect().width;
+    // Scale to fit width, then compute resulting height
+    const fitScale = Math.min(2.0, vpW / svgW);
+    const idealH = svgH * fitScale;
+    // Clamp between 150px and 70vh
+    const maxH = window.innerHeight * 0.7;
+    const h = Math.max(150, Math.min(idealH + 32, maxH));
+    viewportHeight = `${h}px`;
+  }
 
   // ── Dragging state ──────────────────────────────────────────────────────
   let dragging = $state(false);
@@ -163,7 +182,7 @@
     onpointerup={onPointerUp}
     onpointercancel={onPointerUp}
     onwheel={onWheel}
-    style="cursor: {dragging ? 'grabbing' : 'grab'};"
+    style="cursor: {dragging ? 'grabbing' : 'grab'}; height: {viewportHeight};"
   >
     <div
       class="mc-canvas"
@@ -175,7 +194,7 @@
   </div>
 
   <!-- Top-right toolbar -->
-  <div class="mc-toolbar mc-toolbar-top" class:visible={hovering}>
+  <div class="mc-toolbar mc-toolbar-top" class:visible={hovering || true}>
     <button class="mc-btn" title={expanded ? 'Collapse' : 'Expand full-width'} onclick={toggleExpand}>
       {#if expanded}
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 1L1 1 1 5M11 1l4 0 0 4M5 15l-4 0 0-4M11 15l4 0 0-4"/></svg>
@@ -196,7 +215,7 @@
   </div>
 
   <!-- Bottom-right toolbar: pan + zoom -->
-  <div class="mc-toolbar mc-toolbar-bottom" class:visible={hovering}>
+  <div class="mc-toolbar mc-toolbar-bottom" class:visible={hovering || true}>
     <div class="mc-nav-grid">
       <button class="mc-btn mc-nav-up" title="Pan up" onclick={panUp}>
         <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3l5 6H3z"/></svg>
@@ -223,7 +242,7 @@
   </div>
 
   <!-- Bottom-left hint -->
-  <div class="mc-hint" class:visible={hovering}>
+  <div class="mc-hint" class:visible={hovering || true}>
     Scroll to pan · Ctrl+scroll to zoom
   </div>
 </div>
@@ -246,7 +265,6 @@
 
   .mc-viewport {
     overflow: hidden;
-    min-height: 100px;
     border-radius: var(--r-md, 8px);
   }
   .mc-canvas {
