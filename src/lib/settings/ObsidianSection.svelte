@@ -357,47 +357,6 @@
     gap: 10px;
   }
 
-  /* Chip */
-  .chip {
-    font-size: var(--fs-xs);
-    font-weight: var(--fw-medium);
-    padding: 3px 9px;
-    border-radius: 999px;
-    border: 1px solid transparent;
-  }
-  .chip-ok {
-    color: #166534;
-    background: #dcfce7;
-    border-color: #bbf7d0;
-  }
-  .chip-warn {
-    color: #92400e;
-    background: #fef3c7;
-    border-color: #fde68a;
-  }
-  .chip-err {
-    color: #991b1b;
-    background: #fee2e2;
-    border-color: #fecaca;
-  }
-
-  /* Dark-mode chip variants */
-  :global([data-theme="dark"]) .chip-ok {
-    color: #86efac;
-    background: #14532d;
-    border-color: #166534;
-  }
-  :global([data-theme="dark"]) .chip-warn {
-    color: #fde68a;
-    background: #451a03;
-    border-color: #78350f;
-  }
-  :global([data-theme="dark"]) .chip-err {
-    color: #fca5a5;
-    background: #450a0a;
-    border-color: #7f1d1d;
-  }
-
   /* Small button */
   .btn-sm {
     font: inherit;
@@ -425,8 +384,8 @@
   @media (prefers-reduced-motion: reduce) { .btn-sm .spinner { animation-duration: 1.8s; } }
 
   /* Danger variants */
-  .danger-btn { color: var(--error, #dc2626); border-color: var(--error-border, #fca5a5); }
-  .danger-btn:hover:not(:disabled) { background: var(--error-soft, #fee2e2); }
+  .danger-btn { color: var(--danger); border-color: var(--danger); }
+  .danger-btn:hover:not(:disabled) { background: var(--danger-soft); }
 
   /* Link-style button */
   .link-btn {
@@ -443,5 +402,5 @@
   }
   .link-btn:hover { opacity: 0.8; }
   .link-btn:disabled { opacity: 0.5; cursor: default; }
-  .danger-link { color: var(--error, #dc2626); }
+  .danger-link { color: var(--danger); }
 </style>

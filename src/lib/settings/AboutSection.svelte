@@ -222,46 +222,5 @@
     .btn-sm .spinner { animation-duration: 1.8s; }
   }
 
-  /* Chip base */
-  .chip {
-    font-size: var(--fs-xs);
-    font-weight: var(--fw-medium);
-    padding: 3px 9px;
-    border-radius: 999px;
-    border: 1px solid transparent;
-  }
-
-  /* Chip variants */
-  .chip-ok {
-    color: #166534;
-    background: #dcfce7;
-    border-color: #bbf7d0;
-  }
-  .chip-info {
-    color: #1e3a5f;
-    background: var(--accent-soft, #dbeafe);
-    border-color: var(--accent-border, #bfdbfe);
-  }
-  .chip-err {
-    color: #991b1b;
-    background: #fee2e2;
-    border-color: #fecaca;
-  }
-
-  /* Dark-mode chip variants */
-  :global([data-theme="dark"]) .chip-ok {
-    color: #86efac;
-    background: #14532d;
-    border-color: #166534;
-  }
-  :global([data-theme="dark"]) .chip-info {
-    color: var(--accent-text, #93c5fd);
-    background: #1e3a5f;
-    border-color: #1d4ed8;
-  }
-  :global([data-theme="dark"]) .chip-err {
-    color: #fca5a5;
-    background: #450a0a;
-    border-color: #7f1d1d;
-  }
+  /* Chip variants are defined in global.css — no local overrides needed. */
 </style>
