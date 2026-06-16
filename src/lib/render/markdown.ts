@@ -84,10 +84,10 @@ const PURIFY_CONFIG = {
     // Without these, every [!type]- callout is silently stripped to inner text.
     'details', 'summary',
     // SVG subset for raw SVG embedded in document markdown (Mermaid output is
-    // sanitized separately with MERMAID_PURIFY_CONFIG). `foreignObject` is
+    // sanitized separately via sanitizeMermaidSvg). `foreignObject` is
     // deliberately EXCLUDED here — it embeds HTML-namespace content inside SVG and
     // is a classic sanitizer-bypass surface with no use in plain document SVG
-    // (security #12). Mermaid's own config re-adds it for its HTML labels.
+    // (security #12). Mermaid's two-pass sanitizer re-adds it for its HTML labels.
     'svg', 'g', 'path', 'text', 'rect', 'circle', 'line', 'polygon',
     'polyline', 'ellipse', 'use', 'defs', 'marker', 'clipPath',
     'tspan',
@@ -126,17 +126,79 @@ const PURIFY_CONFIG = {
 
 // Mermaid renders its node/label theming as a `<style>` block inside the SVG
 // (class-based, e.g. `.node rect { fill: … }`) plus `<foreignObject>` HTML labels.
-// A hand-rolled SVG allowlist is too incomplete — it strips the styling and
-// labels, leaving black nodes. Use DOMPurify's built-in svg + html profiles (the
-// documented way to sanitize Mermaid output), explicitly adding `<style>` and
-// `<foreignObject>` (excluded from the default profiles) so diagrams render fully.
+//
+// DOMPurify 3.x strips HTML children from <foreignObject> as a security hardening
+// (it's a known sanitizer-bypass surface). No combination of USE_PROFILES, ADD_TAGS,
+// or hooks restores them. This leaves diagram nodes with empty labels — boxes with
+// no text.
+//
+// Fix: two-pass sanitization. Pass 1 sanitizes the SVG structure (foreignObject
+// shells survive; their children are stripped — expected). Pass 2 separately
+// sanitizes the original foreignObject HTML content with an HTML-only allowlist,
+// then re-injects it. Both passes go through DOMPurify, preserving defense-in-depth.
+//
 // Applied ONLY to Mermaid's own output (securityLevel:'strict' is also on);
-// general markdown keeps the stricter PURIFY_CONFIG so a doc can't inject CSS/HTML.
-const MERMAID_PURIFY_CONFIG = {
+// general markdown keeps the stricter PURIFY_CONFIG.
+
+/** DOMPurify config for the SVG pass (pass 1). */
+const MERMAID_SVG_PURIFY_CONFIG = {
   USE_PROFILES: { svg: true, svgFilters: true, html: true },
   ADD_TAGS: ['style', 'foreignObject'],
   ADD_ATTR: ['dominant-baseline', 'data-block-id', 'data-source-line', 'data-block-type'],
 } as const;
+
+/** DOMPurify config for foreignObject inner HTML (pass 2). */
+const MERMAID_FO_HTML_PURIFY_CONFIG = {
+  ALLOWED_TAGS: ['div', 'span', 'p', 'br', 'strong', 'em', 'b', 'i', 'a', 'code'],
+  ALLOWED_ATTR: ['class', 'style', 'xmlns', 'href'],
+} as const;
+
+/**
+ * Sanitize Mermaid SVG output with a two-pass approach that preserves
+ * foreignObject HTML labels (which DOMPurify 3.x would otherwise strip).
+ *
+ * 1. Extract innerHTML of every `<foreignObject>` from the raw SVG.
+ * 2. Run DOMPurify on the full SVG (foreignObject children are stripped — OK).
+ * 3. Re-parse the sanitized SVG, find the now-empty foreignObjects.
+ * 4. Sanitize each extracted HTML fragment with an HTML-only config.
+ * 5. Re-inject the sanitized HTML and serialize back to a string.
+ */
+function sanitizeMermaidSvg(svg: string): string {
+  const parser = new DOMParser();
+
+  // Extract foreignObject inner content from the raw SVG before sanitization.
+  const rawDoc = parser.parseFromString(svg, 'text/html');
+  const rawFos = rawDoc.querySelectorAll('foreignObject');
+  const foContents: string[] = [];
+  rawFos.forEach((fo) => {
+    foContents.push(fo.innerHTML);
+  });
+
+  // Pass 1: sanitize the full SVG structure.
+  const sanitized = DOMPurify.sanitize(
+    svg,
+    MERMAID_SVG_PURIFY_CONFIG as unknown as DOMPurifyConfig,
+  ) as unknown as string;
+
+  // If there were no foreignObjects, skip the re-injection step.
+  if (foContents.length === 0) return sanitized;
+
+  // Re-parse sanitized output and re-inject separately-sanitized HTML.
+  const cleanDoc = parser.parseFromString(sanitized, 'text/html');
+  const cleanFos = cleanDoc.querySelectorAll('foreignObject');
+  cleanFos.forEach((fo, i) => {
+    if (i < foContents.length) {
+      const cleanHtml = DOMPurify.sanitize(
+        foContents[i],
+        MERMAID_FO_HTML_PURIFY_CONFIG as unknown as DOMPurifyConfig,
+      ) as unknown as string;
+      fo.innerHTML = cleanHtml;
+    }
+  });
+
+  const svgEl = cleanDoc.querySelector('svg');
+  return svgEl ? svgEl.outerHTML : sanitized;
+}
 
 // ---------------------------------------------------------------------------
 // DOMPurify hook: enforce rel="noopener noreferrer" on all anchors that carry
@@ -706,8 +768,8 @@ function currentMermaidTheme(): 'default' | 'dark' {
  * the new theme to take effect on subsequently-rendered diagrams).
  *
  * securityLevel: 'strict' — Mermaid will not execute any scripts embedded in
- * diagram definitions. Combined with DOMPurify sanitization of the SVG output
- * (MERMAID_PURIFY_CONFIG), this is the correct defense-in-depth posture.
+ * diagram definitions. Combined with two-pass DOMPurify sanitization of the SVG
+ * output (sanitizeMermaidSvg), this is the correct defense-in-depth posture.
  */
 async function loadMermaid() {
   if (!_mermaidPromise) {
@@ -791,9 +853,9 @@ export async function renderMermaid(code: string, blockId: string): Promise<stri
     if (hit && hit.code === code && hit.theme === theme) return hit.svg;
     const id = `mermaid-${blockId}`;
     const { svg } = await mermaid.render(id, code);
-    // Sanitize with the Mermaid-scoped config so the embedded <style> theming
-    // survives (C15 — Mermaid SVG is still sanitized; strict mode is on).
-    const sanitized = DOMPurify.sanitize(svg, MERMAID_PURIFY_CONFIG as unknown as DOMPurifyConfig) as unknown as string;
+    // Two-pass sanitization: SVG structure + foreignObject HTML labels.
+    // See sanitizeMermaidSvg JSDoc for the full rationale.
+    const sanitized = sanitizeMermaidSvg(svg);
     mermaidCache.set(blockId, { code, theme, svg: sanitized });
     return sanitized;
   } catch (err) {
@@ -858,10 +920,7 @@ export async function renderMermaidForExport(
     // Use an export-specific element id so it does not collide with live-preview ids.
     const id = `mermaid-export-${blockId}`;
     const { svg } = await mermaid.render(id, code);
-    const sanitized = DOMPurify.sanitize(
-      svg,
-      MERMAID_PURIFY_CONFIG as unknown as DOMPurifyConfig,
-    ) as unknown as string;
+    const sanitized = sanitizeMermaidSvg(svg);
     // Intentionally NOT stored in mermaidCache — export renders must not
     // overwrite live-preview cached SVGs.
     return sanitized;
