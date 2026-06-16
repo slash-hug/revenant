@@ -75,6 +75,8 @@ export interface Settings {
    * The actual key is NEVER stored here — only this reference.
    */
   rest_key_ref: string | null;
+  /** Preview zoom percentage (50–200). Default 100. */
+  preview_zoom: number;
 }
 
 /** Response from open_file and save_file. */

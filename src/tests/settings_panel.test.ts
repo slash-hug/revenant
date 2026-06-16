@@ -39,6 +39,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     theme: 'dark',
     export_on_save: false,
     rest_key_ref: null,
+    preview_zoom: 100,
     ...overrides,
   };
 }

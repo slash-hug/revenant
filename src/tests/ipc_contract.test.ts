@@ -121,6 +121,7 @@ describe("IPC contract", () => {
       theme: "dark",
       export_on_save: false,
       rest_key_ref: null, // reference only — no raw key
+      preview_zoom: 100,
     };
     expect(settings.schema_version).toBe(1);
     // Ensure no 'rest_key' property exists on the type (only rest_key_ref)
@@ -192,6 +193,7 @@ describe("IPC contract", () => {
       theme: "system",
       export_on_save: false,
       rest_key_ref: "obsidian-rest",
+      preview_zoom: 100,
     };
     mockInvoke.mockResolvedValueOnce(updatedSettings);
     const result = await setRestKey("my-secret-key");
@@ -209,6 +211,7 @@ describe("IPC contract", () => {
       theme: "system",
       export_on_save: false,
       rest_key_ref: null,
+      preview_zoom: 100,
     };
     mockInvoke.mockResolvedValueOnce(updatedSettings);
     const result = await clearRestKey();
