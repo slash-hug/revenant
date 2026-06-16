@@ -13,6 +13,11 @@ use std::path::PathBuf;
 /// Current settings schema version.
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
+/// Default preview zoom percentage.
+fn default_preview_zoom() -> u32 {
+    100
+}
+
 /// Application-level settings (persisted to disk as JSON).
 ///
 /// The REST key is intentionally absent from this struct — it lives
@@ -39,6 +44,10 @@ pub struct Settings {
     /// `None` means the user has not configured the REST integration.
     /// The actual key is NEVER stored here (C14 / A6).
     pub rest_key_ref: Option<String>,
+
+    /// Preview zoom level as a percentage (50–200). Default 100.
+    #[serde(default = "default_preview_zoom")]
+    pub preview_zoom: u32,
 }
 
 impl Default for Settings {
@@ -50,6 +59,7 @@ impl Default for Settings {
             theme: "system".to_string(),
             export_on_save: false,
             rest_key_ref: None,
+            preview_zoom: 100,
         }
     }
 }
@@ -206,6 +216,7 @@ pub fn set_settings_preserving_ref(
         default_export_subfolder: incoming.default_export_subfolder,
         theme: incoming.theme,
         export_on_save: incoming.export_on_save,
+        preview_zoom: incoming.preview_zoom,
     };
     save_settings(path, &merged)
 }

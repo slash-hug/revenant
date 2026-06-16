@@ -84,6 +84,8 @@ pub struct Settings {
     /// Opaque reference to the keychain entry holding the Obsidian REST key.
     /// The actual key is NEVER stored in this struct — only this reference.
     pub rest_key_ref: Option<String>,
+    /// Preview zoom percentage (50–200).
+    pub preview_zoom: u32,
 }
 
 /// Response from open_file / save_file.
@@ -271,6 +273,7 @@ fn settings_from_ipc(s: Settings) -> crate::settings::Settings {
         theme: s.theme,
         export_on_save: s.export_on_save,
         rest_key_ref: s.rest_key_ref,
+        preview_zoom: s.preview_zoom,
     }
 }
 
@@ -285,6 +288,7 @@ fn settings_to_ipc(s: crate::settings::Settings) -> Settings {
         theme: s.theme,
         export_on_save: s.export_on_save,
         rest_key_ref: s.rest_key_ref,
+        preview_zoom: s.preview_zoom,
     }
 }
 

@@ -36,6 +36,7 @@ fn test_settings_round_trip() {
         theme: "dark".to_string(),
         export_on_save: true,
         rest_key_ref: Some("obsidian-rest".to_string()),
+        preview_zoom: 125,
     };
 
     save_settings(&path, &original).expect("save should succeed");
@@ -70,6 +71,7 @@ fn test_no_secret_in_serialized_json() {
         export_on_save: false,
         // rest_key_ref holds the LABEL, not the secret.
         rest_key_ref: Some("obsidian-rest".to_string()),
+        preview_zoom: 100,
     };
 
     save_settings(&path, &settings).expect("save should succeed");
@@ -422,6 +424,7 @@ fn test_preserving_ref_survives_stale_frontend_payload() {
         theme: "dark".to_string(),
         export_on_save: false,
         rest_key_ref: Some("obsidian-rest".to_string()),
+        preview_zoom: 90,
     };
     save_settings(&path, &on_disk).expect("initial save should succeed");
 
@@ -434,6 +437,7 @@ fn test_preserving_ref_survives_stale_frontend_payload() {
         theme: "light".to_string(),
         export_on_save: true,
         rest_key_ref: None, // stale — frontend doesn't know about the saved key
+        preview_zoom: 150,
     };
     set_settings_preserving_ref(&path, stale_incoming).expect("merge save should succeed");
 
@@ -461,6 +465,10 @@ fn test_preserving_ref_survives_stale_frontend_payload() {
     assert!(
         loaded.export_on_save,
         "export_on_save from incoming payload must be applied"
+    );
+    assert_eq!(
+        loaded.preview_zoom, 150,
+        "preview_zoom from incoming payload must be applied"
     );
     assert_eq!(
         loaded.schema_version, CURRENT_SCHEMA_VERSION,
