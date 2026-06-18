@@ -60,30 +60,32 @@
 ></div>
 
 <style>
-  /* A 1px hairline divider (no layout gap). The grab zone is a wider invisible
-     ::before that overflows the 1px box without taking any layout space, so the
-     col-resize cursor appears across ~9px while the visible line stays thin. */
+  /* Grab zone is the element itself (7px) — wide enough for comfortable mouse
+     targeting without overflowing into adjacent panes and blocking their
+     scrollbars (fixes #scrollbar-overlap).  The visible divider is a centered
+     1px ::after so the visual weight stays minimal. */
   .resize-handle {
     flex: none;
-    width: 1px;
+    width: 7px;
     align-self: stretch;
     position: relative;
     cursor: col-resize;
-    background: var(--border);
+    background: transparent;
     touch-action: none;
-    transition: background var(--dur-fast);
   }
-  .resize-handle::before {
+  .resize-handle::after {
     content: '';
     position: absolute;
     top: 0;
     bottom: 0;
-    /* ≥24px pointer target (WCAG 2.5.8) without widening the 1px visual line. */
-    left: -12px;
-    right: -12px;
+    left: 3px;          /* (7 − 1) / 2 = 3 → centers the 1px line */
+    width: 1px;
+    background: var(--border);
+    transition: background var(--dur-fast);
+    pointer-events: none;
   }
-  .resize-handle:hover,
-  .resize-handle.dragging,
-  .resize-handle:focus-visible { background: var(--seal-ink); }
+  .resize-handle:hover::after,
+  .resize-handle.dragging::after,
+  .resize-handle:focus-visible::after { background: var(--seal-ink); }
   .resize-handle:focus-visible { outline: none; }
 </style>
