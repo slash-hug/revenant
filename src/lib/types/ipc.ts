@@ -391,6 +391,21 @@ export function testObsidianConnection(key?: string): Promise<ConnStatus> {
 }
 
 // ---------------------------------------------------------------------------
+// Diagram popout window
+// ---------------------------------------------------------------------------
+
+/**
+ * Open a rendered Mermaid diagram in a new OS window for focused viewing.
+ *
+ * `svg` is the sanitized SVG markup. `title` is a human-readable label
+ * (e.g. from the nearest heading). `theme` is the current app theme
+ * (`"dark"` or `"light"`). Multiple popouts can be open simultaneously.
+ */
+export function openDiagramWindow(svg: string, title: string, theme: string): Promise<void> {
+  return invoke<void>("open_diagram_window", { svg, title, theme });
+}
+
+// ---------------------------------------------------------------------------
 // Version / update-check commands — A3
 // ---------------------------------------------------------------------------
 

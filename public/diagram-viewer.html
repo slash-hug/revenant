@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Diagram Viewer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #1a1a2e;
+      --surface: rgba(30, 30, 46, 0.9);
+      --border: rgba(255, 255, 255, 0.12);
+      --text: #cdd6f4;
+      --text-muted: #888;
+      --text-faint: rgba(255, 255, 255, 0.35);
+    }
+
+    html[data-theme="light"] {
+      --bg: #f5f5f5;
+      --surface: rgba(255, 255, 255, 0.9);
+      --border: rgba(0, 0, 0, 0.12);
+      --text: #1e1e2e;
+      --text-muted: #666;
+      --text-faint: rgba(0, 0, 0, 0.35);
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      overflow: hidden;
+      height: 100vh;
+      user-select: none;
+    }
+
+    #viewport {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      cursor: grab;
+    }
+    #viewport.dragging { cursor: grabbing; }
+
+    #canvas {
+      will-change: transform;
+      transform-origin: 0 0;
+    }
+
+    /* Controls */
+    .toolbar {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      display: grid;
+      grid-template-columns: 32px 32px 32px;
+      grid-template-rows: 32px 32px 32px;
+      gap: 3px;
+      grid-template-areas:
+        ".    up   zin"
+        "left fit  right"
+        ".    down zout";
+    }
+
+    .btn {
+      width: 32px;
+      height: 32px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(8px);
+      transition: color 0.15s, background 0.15s;
+    }
+    .btn:hover { color: var(--text); }
+
+    .nav-up    { grid-area: up; }
+    .nav-zin   { grid-area: zin; }
+    .nav-left  { grid-area: left; }
+    .nav-fit   { grid-area: fit; }
+    .nav-right { grid-area: right; }
+    .nav-down  { grid-area: down; }
+    .nav-zout  { grid-area: zout; }
+
+    .hint {
+      position: fixed;
+      bottom: 16px;
+      left: 16px;
+      font-size: 11px;
+      color: var(--text-faint);
+    }
+
+    .title-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      -webkit-app-region: drag;
+    }
+  </style>
+</head>
+<body>
+  <div class="title-bar" id="titleBar"></div>
+
+  <div id="viewport">
+    <div id="canvas"></div>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn nav-up" title="Pan up">
+      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3l5 6H3z"/></svg>
+    </button>
+    <button class="btn nav-zin" title="Zoom in">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/><path d="M5 7h4M7 5v4"/></svg>
+    </button>
+    <button class="btn nav-left" title="Pan left">
+      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M3 8l6-5v10z"/></svg>
+    </button>
+    <button class="btn nav-fit" title="Fit to view">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2l4 4M14 2l-4 4M2 14l4-4M14 14l-4-4"/><rect x="5" y="5" width="6" height="6" rx="1"/></svg>
+    </button>
+    <button class="btn nav-right" title="Pan right">
+      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M13 8l-6-5v10z"/></svg>
+    </button>
+    <button class="btn nav-down" title="Pan down">
+      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 13l5-6H3z"/></svg>
+    </button>
+    <button class="btn nav-zout" title="Zoom out">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/><path d="M5 7h4"/></svg>
+    </button>
+  </div>
+
+  <div class="hint">Scroll to pan · Ctrl+scroll to zoom · Arrow keys to pan · Esc to close</div>
+
+  <script src="/diagram-viewer.js" defer></script>
+</body>
+</html>

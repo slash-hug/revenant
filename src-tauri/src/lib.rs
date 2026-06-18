@@ -174,6 +174,8 @@ pub fn run() {
             ipc::get_app_version,
             ipc::check_for_updates,
             ipc::open_release_page,
+            // Diagram popout window
+            ipc::open_diagram_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
