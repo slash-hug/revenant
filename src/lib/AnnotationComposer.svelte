@@ -29,6 +29,13 @@
   let dialog: HTMLDialogElement;
   let left = x;
   let top = y;
+  // Element focused before the composer opened. A native <dialog> restores focus
+  // on close(), but only reliably when it is still mounted — here the parent
+  // usually *unmounts* the component (cancel/submit removes it from the DOM)
+  // rather than calling close(), and native focus-return is flaky on WebKit in
+  // that path. So we capture the prior focus and restore it explicitly on
+  // teardown as a belt-and-suspenders (WCAG 2.4.3, #30).
+  let previouslyFocused: HTMLElement | null = null;
 
   function clampToViewport() {
     if (!dialog) return;
@@ -69,6 +76,8 @@
   }
 
   onMount(async () => {
+    // Capture the pre-open focus before showModal() moves focus into the dialog.
+    previouslyFocused = document.activeElement as HTMLElement | null;
     // Open as a modal — provides built-in focus trap, aria-modal, and Esc handling.
     dialog?.showModal();
     // Clamp inner panel position to viewport, then focus the textarea.
@@ -82,6 +91,10 @@
     // Close the native dialog if it is still open (e.g. parent removes component
     // programmatically rather than through a cancel/submit event).
     if (dialog?.open) dialog.close();
+    // Explicitly return focus to whatever held it before the composer opened, so
+    // keyboard users aren't dropped at the top of the document if the WebKit
+    // native focus-return doesn't fire on unmount (WCAG 2.4.3, #30).
+    previouslyFocused?.focus?.();
   });
 </script>
 
