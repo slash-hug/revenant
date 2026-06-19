@@ -29,7 +29,7 @@ pub mod updates;
 #[cfg(target_os = "macos")]
 pub mod snapshot;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -78,6 +78,53 @@ impl FileWatchers {
     }
 }
 
+/// The set of documents the user currently has open, keyed by canonical path.
+///
+/// Populated by `open_file` whenever a document is opened — **independently of
+/// whether its OS watcher started** (watcher startup can fail on Windows+AV or
+/// when the OS runs out of watch descriptors). Cleared by `unwatch_file` on tab
+/// close. This is the authorization source for commands that read or write a
+/// frontend-supplied document path (`export_obsidian`, `load_annotations`,
+/// `save_annotations`): a file the user never opened is not in this set, so a
+/// compromised frontend cannot trick those commands into reading an arbitrary
+/// file (e.g. `~/.ssh/id_rsa`) and leaking it into a vault export or sidecar
+/// (#85). Distinct from `FileWatchers`, whose membership depends on the watch
+/// succeeding — which is exactly why we do not reuse it for authorization.
+#[derive(Default)]
+pub struct OpenDocuments {
+    pub inner: Mutex<HashSet<PathBuf>>,
+}
+
+impl OpenDocuments {
+    /// Mark `canonical` (a canonical path) as open. Idempotent.
+    pub fn insert(&self, canonical: PathBuf) {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(canonical);
+    }
+
+    /// Mark a path as closed (tab closed). The frontend passes the canonical path
+    /// it got from `open_file`; canonicalize anyway (idempotent) and fall back to
+    /// the raw path if the file is now gone. No-op if not present.
+    pub fn remove(&self, path: &str) {
+        let key = std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&key);
+    }
+
+    /// Snapshot the open set so callers can drop the lock before async/blocking
+    /// work (a `MutexGuard` must not be held across an `.await` / `spawn_blocking`).
+    pub fn snapshot(&self) -> HashSet<PathBuf> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
 /// Resolve a CLI path argument to an absolute path.
 ///
 /// If `path` is already absolute, return it as-is. Otherwise, join it onto
@@ -114,6 +161,7 @@ fn resolve_cli_path(path: &str, cwd: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .manage(FileWatchers::default())
+        .manage(OpenDocuments::default())
         // No tauri-plugin-fs: all file I/O is routed through our own #[command]s
         // (path-confined in paths.rs). Registering the fs plugin would expose its
         // commands to the webview the moment any `fs:` capability were added,
