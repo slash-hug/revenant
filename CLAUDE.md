@@ -13,10 +13,15 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo test <module> --manifest-path src-tauri/Cargo.toml  # e.g. reanchor, file_io
 
 # Frontend
-npm install          # first time / after package.json changes
+npm install          # first time / after package.json changes (also wires the pre-push hook)
 npm run build        # produces dist/
 npm test             # Vitest (jsdom)
-npx tsc --noEmit     # TypeScript type check
+npm run check        # svelte-check — THE frontend type gate (tsc --noEmit does NOT check .svelte files)
+npm run verify       # full frontend gate in one shot: check + test + build
+
+# A pre-push hook (.githooks/pre-push, auto-installed by `npm install` via the "prepare"
+# script) runs check + vitest before every push. `npx tsc --noEmit` alone is insufficient —
+# it skips .svelte files entirely. See tasks/lessons.md (2026-06-19).
 
 # Tauri
 cargo tauri dev      # hot-reload dev server
