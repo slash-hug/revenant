@@ -135,7 +135,12 @@ pub(crate) fn check_for_updates_from(
     })?;
 
     Ok(crate::ipc::UpdateCheck {
-        update_available: latest > current,
+        // Require the latest release to be a *stable* semver (empty pre-release
+        // field). GitHub's `/releases/latest` already excludes prereleases, but
+        // that guarantee lives in the endpoint, not here — without this guard a
+        // stable build (e.g. 1.0.0) would flag `1.1.0-rc.1` as an available
+        // update if the release source ever changed. (#44)
+        update_available: latest > current && latest.pre.is_empty(),
         latest: latest_str.to_string(),
         current: current_version.to_string(),
         release_url: release_url.to_string(),

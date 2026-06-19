@@ -88,6 +88,59 @@ fn test_semver_older_remote_no_update() {
     );
 }
 
+/// A newer *prerelease* must NOT be recommended to a stable build: the semver
+/// comparison `1.1.0-rc.1 > 1.0.0` is true, so `update_available` would flip on
+/// without the `latest.pre.is_empty()` guard (#44). The latest/current fields
+/// are still reported (so the UI could note a prerelease exists), but the
+/// update is not offered.
+#[test]
+fn test_newer_prerelease_does_not_recommend_update() {
+    let mut server = Server::new();
+    let api_url = format!("{}/repos/test/test/releases/latest", server.url());
+
+    let _mock = server
+        .mock("GET", mockito::Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"tag_name":"v1.1.0-rc.1","html_url":"https://github.com/slash-hug/revenant/releases/tag/v1.1.0-rc.1"}"#)
+        .create();
+
+    let result = check_for_updates_from(&api_url, "1.0.0");
+    let info = result.expect("check should succeed");
+
+    assert!(
+        !info.update_available,
+        "newer prerelease 1.1.0-rc.1 must NOT set update_available for stable 1.0.0, got: {:?}",
+        info
+    );
+    assert_eq!(info.latest, "1.1.0-rc.1");
+    assert_eq!(info.current, "1.0.0");
+}
+
+/// Guard sanity: a newer *stable* release still recommends the update (the
+/// prerelease guard must not suppress legitimate stable updates).
+#[test]
+fn test_newer_stable_still_recommends_update() {
+    let mut server = Server::new();
+    let api_url = format!("{}/repos/test/test/releases/latest", server.url());
+
+    let _mock = server
+        .mock("GET", mockito::Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"tag_name":"v1.1.0","html_url":"https://github.com/slash-hug/revenant/releases/tag/v1.1.0"}"#)
+        .create();
+
+    let result = check_for_updates_from(&api_url, "1.0.0");
+    let info = result.expect("check should succeed");
+
+    assert!(
+        info.update_available,
+        "newer stable 1.1.0 must set update_available for 1.0.0, got: {:?}",
+        info
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 2. GitHub-response parse via mockito
 // ---------------------------------------------------------------------------
