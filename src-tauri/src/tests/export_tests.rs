@@ -64,6 +64,61 @@ fn export_html_rejects_traversal_path() {
     assert!(err.message.contains("traversal"));
 }
 
+/// export_html must write atomically (issue #40 P1): the write goes through a
+/// temp sibling + rename, so on success no `.tmp` staging file is left behind in
+/// the target directory. (A plain `fs::write` would leave nothing either, so the
+/// real signal is the temp-file naming convention from `atomic_write_bytes`:
+/// `.<name>.revenant.<pid>.<n>.tmp`. We assert none survives.)
+#[test]
+fn export_html_writes_atomically_no_temp_left() {
+    let dir = TempDir::new().unwrap();
+    let out = dir.path().join("export.html");
+    let html = "<html><body><h1>Atomic</h1></body></html>";
+
+    let result = crate::export::export_html(&out, html);
+    assert!(result.is_ok(), "expected Ok, got {result:?}");
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), html);
+
+    // No leftover staging file from atomic_write_bytes.
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains(".revenant.") && n.ends_with(".tmp"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "atomic write left staging temp file(s): {leftovers:?}"
+    );
+}
+
+/// Overwriting an existing export must not destroy the prior file's contents on
+/// a successful write — the new contents fully replace the old ones via an atomic
+/// rename (no truncate-in-place window). Verifies the rename path round-trips.
+#[test]
+fn export_html_overwrite_replaces_atomically() {
+    let dir = TempDir::new().unwrap();
+    let out = dir.path().join("export.html");
+
+    let first = "<html><body>FIRST EXPORT — much longer prior content</body></html>";
+    crate::export::export_html(&out, first).unwrap();
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), first);
+
+    let second = "<html>second</html>";
+    crate::export::export_html(&out, second).unwrap();
+    // The target now holds exactly the new content, intact (not truncated/merged).
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), second);
+
+    // Still no staging temp left behind.
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains(".revenant.") && n.ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "atomic overwrite left temp: {leftovers:?}");
+}
+
 /// Case-insensitive extension check: .HTML should be accepted.
 #[test]
 fn export_html_accepts_uppercase_extension() {

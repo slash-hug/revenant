@@ -93,7 +93,11 @@ pub fn export_html(out_path: &Path, html: &str) -> IpcResult<String> {
         })?;
     }
 
-    std::fs::write(out_path, html.as_bytes()).map_err(|e| IpcError {
+    // Write through the shared atomic helper (unique temp sibling → fsync →
+    // atomic rename) so a crash/kill mid-write can never truncate or empty a
+    // pre-existing export at this path (issue #40 P1). Plain fs::write truncates
+    // the target *before* writing the new bytes.
+    crate::file_io::atomic_write_bytes(out_path, html.as_bytes()).map_err(|e| IpcError {
         code: "IO_ERROR".into(),
         message: format!("could not write HTML to '{}': {e}", out_path.display()),
     })?;
@@ -198,7 +202,9 @@ async fn export_pdf_macos(out_path: std::path::PathBuf, html: String) -> IpcResu
         })?;
     }
 
-    std::fs::write(&out_path, &pdf_bytes).map_err(|e| IpcError {
+    // Atomic write (temp sibling → fsync → rename): a crash mid-write must not
+    // truncate a prior export at this path (issue #40 P1).
+    crate::file_io::atomic_write_bytes(&out_path, &pdf_bytes).map_err(|e| IpcError {
         code: "IO_ERROR".into(),
         message: format!("could not write PDF to '{}': {e}", out_path.display()),
     })?;
