@@ -115,7 +115,10 @@ pub fn export_html(out_path: &Path, html: &str) -> IpcResult<String> {
 /// waits for load completion, calls `createPDFWithConfiguration`, writes the
 /// resulting bytes to disk, then tears the webview down.
 ///
-/// On non-macOS: returns `PDF_EXPORT_UNSUPPORTED` immediately.
+/// On Windows: drives a hidden off-screen WebView2 to navigate the bundle and
+/// `ICoreWebView2_7::PrintToPdf` (see `export_pdf_windows`).
+///
+/// On other platforms: returns `PDF_EXPORT_UNSUPPORTED` immediately.
 pub async fn export_pdf(out_path: std::path::PathBuf, html: String) -> IpcResult<String> {
     validate_export_path(&out_path, &["pdf"])?;
 
@@ -124,12 +127,17 @@ pub async fn export_pdf(out_path: std::path::PathBuf, html: String) -> IpcResult
         export_pdf_macos(out_path, html).await
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        export_pdf_windows(out_path, html).await
+    }
+
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = (out_path, html);
         Err(IpcError {
             code: "PDF_EXPORT_UNSUPPORTED".into(),
-            message: "Native PDF export is only available on macOS in this version.".into(),
+            message: "Native PDF export is only available on macOS and Windows.".into(),
         })
     }
 }
@@ -436,6 +444,287 @@ unsafe fn gcd_dispatch_sync_main<F: FnOnce() + Send + 'static>(f: F) {
     }
 
     unsafe { DispatchQueue::main().exec_sync_f(ptr, trampoline) };
+}
+
+// ---------------------------------------------------------------------------
+// Windows PDF implementation
+// ---------------------------------------------------------------------------
+//
+// G1 SMOKE TEST GATE (Windows) — mandatory before relying on this path:
+//
+//   Build, open a real .md file, trigger "Export as PDF". Verify the file is
+//   non-blank, fonts render, Mermaid diagrams appear, inline images are present,
+//   and review comments (if any) appear in light mode even when the app is dark.
+//
+//   WebView2 needs a GUI message loop and the runtime installed, so unit tests
+//   cannot exercise this path. CI green proves it COMPILES on windows-latest, not
+//   that it produces a valid PDF — the smoke gate must be run by a human.
+//
+// Approach: an off-screen WebView2 (separate from the live app webview, mirroring
+// the macOS separate-WKWebView approach) navigates to the export bundle written to
+// a temp file (a temp file avoids the data:-URI / CSP top-level-navigation limit),
+// then ICoreWebView2_7::PrintToPdf writes the PDF. The whole COM lifecycle runs on
+// a dedicated STA thread that owns the host window and pumps its message loop
+// (webview2-com's wait_for_async_operation / wait_with_pump do the pumping).
+
+/// Windows PDF path: off-screen WebView2 → PrintToPdf → bytes → atomic file write.
+#[cfg(windows)]
+async fn export_pdf_windows(out_path: std::path::PathBuf, html: String) -> IpcResult<String> {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let (tx, rx) = mpsc::channel::<Result<Vec<u8>, String>>();
+
+    // WebView2 requires a single-threaded-apartment thread that owns the window
+    // and pumps messages. Run the entire COM lifecycle on a dedicated thread and
+    // channel the PDF bytes back (mirrors the macOS spawn_pdf_worker structure).
+    std::thread::spawn(move || {
+        let _ = tx.send(windows_pdf_to_bytes(html));
+    });
+
+    let pdf_bytes = tauri::async_runtime::spawn_blocking(move || {
+        rx.recv_timeout(Duration::from_secs(45))
+    })
+    .await
+    .map_err(|e| IpcError {
+        code: "PDF_EXPORT_FAILED".into(),
+        message: format!("PDF task join error: {e}"),
+    })?
+    .map_err(|_| IpcError {
+        code: "PDF_EXPORT_FAILED".into(),
+        message: "PDF export timed out after 45 seconds.".into(),
+    })?
+    .map_err(|m| IpcError {
+        code: "PDF_EXPORT_FAILED".into(),
+        message: m,
+    })?;
+
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| IpcError {
+            code: "IO_ERROR".into(),
+            message: format!("could not create export directory: {e}"),
+        })?;
+    }
+
+    // Atomic write (temp sibling → fsync → rename), matching the macOS path and the
+    // #40 crash-safety invariant.
+    crate::file_io::atomic_write_bytes(&out_path, &pdf_bytes).map_err(|e| IpcError {
+        code: "IO_ERROR".into(),
+        message: format!("could not write PDF to '{}': {e}", out_path.display()),
+    })?;
+
+    Ok(out_path.to_string_lossy().into_owned())
+}
+
+/// Stage the HTML bundle in a temp dir, render it to PDF via WebView2, read the
+/// bytes back, and clean up. All `windows::core::Error`s are flattened to String
+/// so they can cross the worker-thread channel.
+#[cfg(windows)]
+fn windows_pdf_to_bytes(html: String) -> Result<Vec<u8>, String> {
+    // Unique temp workspace: bundle.html (navigation target), wv2/ (WebView2 user
+    // data folder — must be writable, so never next to the exe), out.pdf (result).
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut workspace = std::env::temp_dir();
+    workspace.push(format!("revenant-pdf-{}-{}", std::process::id(), nanos));
+    std::fs::create_dir_all(&workspace)
+        .map_err(|e| format!("could not create PDF temp workspace: {e}"))?;
+
+    let bundle = workspace.join("bundle.html");
+    let user_data = workspace.join("wv2");
+    let pdf_tmp = workspace.join("out.pdf");
+
+    let result = (|| -> Result<Vec<u8>, String> {
+        std::fs::write(&bundle, html.as_bytes())
+            .map_err(|e| format!("could not write PDF bundle: {e}"))?;
+        let nav_url = url::Url::from_file_path(&bundle)
+            .map_err(|_| "could not build file URL for PDF bundle".to_string())?
+            .to_string();
+
+        // SAFETY: render_pdf_via_webview2 confines all COM/Win32 calls to this
+        // thread, initializes and tears down COM, and destroys the host window.
+        let ok = unsafe { render_pdf_via_webview2(&nav_url, &user_data, &pdf_tmp) }
+            .map_err(|e| format!("WebView2 PDF render failed: {e}"))?;
+        if !ok {
+            return Err("WebView2 reported the print-to-PDF operation as unsuccessful".into());
+        }
+        std::fs::read(&pdf_tmp).map_err(|e| format!("could not read rendered PDF: {e}"))
+    })();
+
+    // Best-effort cleanup — WebView2 may briefly hold the user-data folder.
+    let _ = std::fs::remove_dir_all(&workspace);
+    result
+}
+
+/// Drive an off-screen WebView2 through environment → controller → navigate →
+/// PrintToPdf, writing the PDF to `pdf_out`. Returns the `isSuccessful` flag.
+///
+/// # Safety
+/// Must be called on a dedicated thread (it initializes COM as STA and pumps the
+/// message loop). The host window and all COM objects live and die on this thread.
+#[cfg(windows)]
+unsafe fn render_pdf_via_webview2(
+    nav_url: &str,
+    user_data_dir: &std::path::Path,
+    pdf_out: &std::path::Path,
+) -> webview2_com::Result<bool> {
+    use std::sync::mpsc;
+    use windows::core::{Error as WinError, Interface, HSTRING, PCWSTR};
+    use windows::Win32::Foundation::{E_POINTER, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, CW_USEDEFAULT, WNDCLASSW,
+        WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW,
+    };
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2Controller, ICoreWebView2_7,
+    };
+    use webview2_com::{
+        CreateCoreWebView2ControllerCompletedHandler, CreateCoreWebView2EnvironmentCompletedHandler,
+        NavigationCompletedEventHandler, PrintToPdfCompletedHandler,
+    };
+
+    // ── COM init (STA) + teardown guard ────────────────────────────────────
+    CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
+    struct ComGuard;
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            unsafe { CoUninitialize() };
+        }
+    }
+    let _com = ComGuard;
+
+    // ── Hidden host window (the controller needs a parent HWND) ─────────────
+    unsafe extern "system" fn wndproc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+        DefWindowProcW(h, m, w, l)
+    }
+    let hmodule = GetModuleHandleW(None)?;
+    let hinstance = HINSTANCE(hmodule.0);
+    let class_name = HSTRING::from("RevenantPdfHost");
+    let wc = WNDCLASSW {
+        lpfnWndProc: Some(wndproc),
+        hInstance: hinstance,
+        lpszClassName: PCWSTR(class_name.as_ptr()),
+        ..Default::default()
+    };
+    // Idempotent across exports: a second RegisterClassW for the same name fails
+    // with CLASS_ALREADY_EXISTS, but the class is registered so CreateWindow works.
+    RegisterClassW(&wc);
+    let hwnd = CreateWindowExW(
+        WINDOW_EX_STYLE::default(),
+        PCWSTR(class_name.as_ptr()),
+        PCWSTR(class_name.as_ptr()),
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        1024,
+        768,
+        None,
+        None,
+        Some(hinstance),
+        None,
+    )?;
+    struct WindowGuard(HWND);
+    impl Drop for WindowGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = DestroyWindow(self.0);
+            }
+        }
+    }
+    let _win = WindowGuard(hwnd);
+
+    // ── Environment (async, message-pumped) ─────────────────────────────────
+    let environment = {
+        let (tx, rx) = mpsc::channel();
+        let user_data = HSTRING::from(user_data_dir.to_string_lossy().as_ref());
+        CreateCoreWebView2EnvironmentCompletedHandler::wait_for_async_operation(
+            Box::new(move |handler| {
+                CreateCoreWebView2EnvironmentWithOptions(
+                    PCWSTR::null(),
+                    PCWSTR(user_data.as_ptr()),
+                    None,
+                    &handler,
+                )
+                .map_err(webview2_com::Error::WindowsError)
+            }),
+            Box::new(move |error_code, environment| {
+                error_code?;
+                tx.send(environment.ok_or_else(|| WinError::from(E_POINTER)))
+                    .expect("send environment over channel");
+                Ok(())
+            }),
+        )?;
+        rx.recv().expect("receive environment")?
+    };
+
+    // ── Controller bound to the hidden window (async, message-pumped) ────────
+    let controller: ICoreWebView2Controller = {
+        let (tx, rx) = mpsc::channel();
+        let env = environment.clone();
+        CreateCoreWebView2ControllerCompletedHandler::wait_for_async_operation(
+            Box::new(move |handler| {
+                env.CreateCoreWebView2Controller(hwnd, &handler)
+                    .map_err(webview2_com::Error::WindowsError)
+            }),
+            Box::new(move |error_code, controller| {
+                error_code?;
+                tx.send(controller.ok_or_else(|| WinError::from(E_POINTER)))
+                    .expect("send controller over channel");
+                Ok(())
+            }),
+        )?;
+        rx.recv().expect("receive controller")?
+    };
+
+    controller.SetIsVisible(false)?;
+    controller.SetBounds(RECT { left: 0, top: 0, right: 1024, bottom: 768 })?;
+    let webview = controller.CoreWebView2()?;
+
+    // ── Navigate to the bundle and wait for load (message-pumped) ───────────
+    {
+        let (tx, rx) = mpsc::channel();
+        let handler = NavigationCompletedEventHandler::create(Box::new(move |_sender, _args| {
+            tx.send(()).expect("send navigation-completed over channel");
+            Ok(())
+        }));
+        let mut token: i64 = 0;
+        webview.add_NavigationCompleted(&handler, &mut token)?;
+        let url = HSTRING::from(nav_url);
+        webview.Navigate(PCWSTR(url.as_ptr()))?;
+        let nav = webview2_com::wait_with_pump(rx);
+        webview.remove_NavigationCompleted(token)?;
+        nav.map_err(|_| WinError::from(E_POINTER))?;
+    }
+
+    // ── PrintToPdf to the temp output (async, message-pumped) ───────────────
+    let print_ok = {
+        let webview7: ICoreWebView2_7 = webview.cast()?;
+        let pdf_path = HSTRING::from(pdf_out.to_string_lossy().as_ref());
+        let (tx, rx) = mpsc::channel();
+        PrintToPdfCompletedHandler::wait_for_async_operation(
+            Box::new(move |handler| {
+                // None print settings → WebView2 defaults (CSS @page in the bundle
+                // controls size/margins).
+                webview7
+                    .PrintToPdf(PCWSTR(pdf_path.as_ptr()), None, &handler)
+                    .map_err(webview2_com::Error::WindowsError)
+            }),
+            Box::new(move |error_code, is_successful| {
+                error_code?;
+                tx.send(is_successful)
+                    .expect("send print result over channel");
+                Ok(())
+            }),
+        )?;
+        rx.recv().expect("receive print result")
+    };
+
+    let _ = controller.Close();
+    Ok(print_ok)
 }
 
 // ---------------------------------------------------------------------------

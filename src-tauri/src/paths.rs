@@ -85,8 +85,17 @@ pub fn assert_confined(path: &Path, allowed_dirs: &[PathBuf]) -> Result<(), Path
 /// `starts_with` check, so `vault/../escape` would otherwise satisfy it (the
 /// vault's own components are a prefix) while escaping the vault on disk.
 pub fn has_parent_traversal(rel: &Path) -> bool {
-    rel.components()
-        .any(|c| matches!(c, std::path::Component::ParentDir))
+    use std::path::Component;
+    rel.components().any(|c| match c {
+        Component::ParentDir => true,
+        // On Windows, `fs::canonicalize` yields a verbatim (`\\?\`) path, and
+        // joining `..` onto a verbatim path does NOT parse it as `ParentDir` —
+        // it stays a literal `Normal("..")` component (verbatim paths bypass
+        // `..` normalization). Without this arm the traversal guard is silently
+        // bypassed on Windows for canonicalized base dirs (#86 Windows regression).
+        Component::Normal(os) => os == "..",
+        _ => false,
+    })
 }
 
 /// Check that `path` has a `.md` extension.
