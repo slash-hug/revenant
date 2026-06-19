@@ -13,26 +13,36 @@
   import { tick } from 'svelte';
   import { filterCommands, type Command } from './commandFilter';
 
-  export let open = false;
-  export let commands: Command[] = [];
+  interface Props {
+    open?: boolean;
+    commands?: Command[];
+  }
+  let { open = $bindable(false), commands = [] }: Props = $props();
 
   let dialogEl: HTMLDialogElement;
   let inputEl: HTMLInputElement;
   let listEl: HTMLElement;
-  let query = '';
-  let selected = 0;
+  let query = $state('');
+  let selected = $state(0);
 
-  $: results = filterCommands(commands, query);
+  const results = $derived(filterCommands(commands, query));
   // Section headers are only meaningful for the full, unsorted menu.
-  $: showSections = query.trim().length === 0;
-  // Keep the selection in range as the result set shrinks.
-  $: if (selected > results.length - 1) selected = Math.max(0, results.length - 1);
+  const showSections = $derived(query.trim().length === 0);
   // The combobox's virtual focus — points the input at the active option so
   // screen readers announce "<label>, N of M" without moving DOM focus.
-  $: activeOptionId = results[selected] ? `cmdk-opt-${results[selected].command.id}` : undefined;
+  const activeOptionId = $derived(
+    results[selected] ? `cmdk-opt-${results[selected].command.id}` : undefined,
+  );
+
+  // Keep the selection in range as the result set shrinks.
+  $effect(() => {
+    if (selected > results.length - 1) selected = Math.max(0, results.length - 1);
+  });
 
   // Drive the native dialog from the `open` prop.
-  $: if (dialogEl) syncDialog(open);
+  $effect(() => {
+    if (dialogEl) syncDialog(open);
+  });
 
   async function syncDialog(shouldOpen: boolean) {
     if (shouldOpen && !dialogEl.open) {
@@ -114,9 +124,9 @@
   bind:this={dialogEl}
   class="cmdk"
   aria-label="Command palette"
-  on:click={handleDialogClick}
-  on:close={() => (open = false)}
-  on:cancel={() => (open = false)}
+  onclick={handleDialogClick}
+  onclose={() => (open = false)}
+  oncancel={() => (open = false)}
 >
   <div class="cmdk-panel">
     <div class="cmdk-search">
@@ -137,7 +147,7 @@
         aria-expanded={results.length > 0}
         aria-activedescendant={activeOptionId}
         aria-autocomplete="list"
-        on:keydown={handleKeydown}
+        onkeydown={handleKeydown}
       />
       <kbd class="cmdk-esc">esc</kbd>
     </div>
@@ -161,8 +171,8 @@
             role="option"
             tabindex="-1"
             aria-selected={i === selected}
-            on:mousemove={() => (selected = i)}
-            on:click={() => runAt(i)}
+            onmousemove={() => (selected = i)}
+            onclick={() => runAt(i)}
           >
             <span class="row-title">
               {#each segments(r.command.title, r.indices) as seg}

@@ -320,16 +320,20 @@
     { tag: t.keyword, color: 'var(--syn-key)' },
   ]);
 
-  /** The active tab id we are editing. */
-  export let tabId: string;
-  /** The document content (set externally on tab switch). */
-  export let content: string = '';
+  interface Props {
+    /** The active tab id we are editing. */
+    tabId: string;
+    /** The document content (set externally on tab switch). */
+    content?: string;
+    /** The path for save — displayed in tooltips. */
+    filePath?: string;
+  }
+  let { tabId, content = '', filePath = '' }: Props = $props();
+
   // Mirror of the content currently in the editor's doc, so the external-change
   // sync below can compare against a tracked string instead of materializing the
   // whole CodeMirror rope via doc.toString() on every reactive run (perf #1b).
   let lastSyncedContent = content;
-  /** The path for save — displayed in tooltips. */
-  export let filePath: string = '';
 
   const dispatch = createEventDispatcher<{
     /** Fired on every debounced change; payload is the new content string. */
@@ -366,9 +370,9 @@
   // "Add comment" floating affordance state
   // -------------------------------------------------------------------------
   const addCommentShortcut = isMac() ? '⌘⌥M' : 'Ctrl+Alt+M';
-  let showAddComment = false;
-  let addCommentX = 0;
-  let addCommentY = 0;
+  let showAddComment = $state(false);
+  let addCommentX = $state(0);
+  let addCommentY = $state(0);
   let selViewX = 0; // selection coords in viewport space, for the composer popover
   let selViewY = 0;
   let pendingAnchor: AnchorV1 | null = null;
@@ -574,16 +578,18 @@
   // scheduleChange (which also advances lastSyncedContent), so those match and
   // don't trigger a replace. Comparing against lastSyncedContent avoids
   // re-stringifying the whole doc on every reactive run (perf #1b).
-  $: if (view && content !== lastSyncedContent) {
-    lastSyncedContent = content;
-    view.dispatch({
-      changes: {
-        from: 0,
-        to: view.state.doc.length,
-        insert: content,
-      },
-    });
-  }
+  $effect(() => {
+    if (view && content !== lastSyncedContent) {
+      lastSyncedContent = content;
+      view.dispatch({
+        changes: {
+          from: 0,
+          to: view.state.doc.length,
+          insert: content,
+        },
+      });
+    }
+  });
 
   // -------------------------------------------------------------------------
   // Change debounce
@@ -754,7 +760,7 @@
     class="add-comment-affordance"
     style="left: {addCommentX}px; top: {addCommentY + 4}px;"
   >
-    <button class="add-comment-btn" on:click={handleAddCommentClick}>
+    <button class="add-comment-btn" onclick={handleAddCommentClick}>
       + Add comment
       <span class="add-comment-kbd" aria-hidden="true">{addCommentShortcut}</span>
     </button>
