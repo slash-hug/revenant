@@ -74,13 +74,7 @@ pub fn probe_obsidian(api_key: &str, port: u16) -> ConnStatus {
                 ConnStatus::Unreachable
             }
         }
-        Err(e) => {
-            if e.is_connect() || e.is_timeout() || is_connection_refused(&e) {
-                ConnStatus::Unreachable
-            } else {
-                ConnStatus::Unreachable
-            }
-        }
+        Err(_) => ConnStatus::Unreachable,
     }
 }
 
