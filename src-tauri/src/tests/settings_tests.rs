@@ -213,6 +213,55 @@ fn test_settings_struct_has_no_raw_key_field() {
     }
 }
 
+// ── Issue #61: rest_key_ref opaque-reference guard ───────────────────────────
+//
+// `save_settings` asserts that, if `rest_key_ref` is present, it equals the
+// single legitimate opaque keychain reference ("obsidian-rest") — never a raw
+// secret leaked into the field. `None` must always pass.
+
+/// The opaque-ref guard accepts the legitimate ref and `None`, and rejects a
+/// raw-looking value smuggled into `rest_key_ref`.
+#[test]
+fn test_rest_key_ref_guard_accepts_opaque_ref_and_none() {
+    let dir = TempDir::new().unwrap();
+
+    // Legitimate opaque reference passes.
+    let with_ref = Settings {
+        rest_key_ref: Some("obsidian-rest".to_string()),
+        ..Settings::default()
+    };
+    save_settings(&dir.path().join("with_ref.json"), &with_ref)
+        .expect("opaque rest_key_ref must pass the guard");
+
+    // No reference at all passes.
+    let without_ref = Settings {
+        rest_key_ref: None,
+        ..Settings::default()
+    };
+    save_settings(&dir.path().join("without_ref.json"), &without_ref)
+        .expect("None rest_key_ref must pass the guard");
+
+    // A raw-looking value smuggled into rest_key_ref must trip the assert.
+    let leaked = Settings {
+        rest_key_ref: Some("sk-super-secret-raw-key-abc123".to_string()),
+        ..Settings::default()
+    };
+    let path = dir.path().join("leaked.json");
+    let leaked_path = path.clone();
+    let result = std::panic::catch_unwind(move || {
+        let _ = save_settings(&leaked_path, &leaked);
+    });
+    assert!(
+        result.is_err(),
+        "a raw-looking value in rest_key_ref must trip the secret-leak guard"
+    );
+    // The guard must fire BEFORE writing the file to disk.
+    assert!(
+        !path.exists(),
+        "the file must not be written when the guard trips"
+    );
+}
+
 // ── D-4: set / clear / has rest-key lifecycle ────────────────────────────────
 //
 // These tests exercise the composition of `secrets` + `settings` to verify the
