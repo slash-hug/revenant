@@ -30,6 +30,11 @@
       handleSwitch(id);
       return;
     }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      dispatch('close', { id });
+      return;
+    }
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
       e.preventDefault();
       const tabs = get(tabList);
@@ -77,6 +82,7 @@
       <span class="tab-label">{fileName(tab.path)}</span>
       <button
         class="tab-x"
+        tabindex={-1}
         on:click={(e) => handleClose(e, tab.id)}
         aria-label={`Close ${fileName(tab.path)}`}
         title="Close tab"
@@ -161,6 +167,12 @@
   }
   .tab-x svg { width: 13px; height: 13px; }
   .tab-x:hover { color: var(--text); background: var(--surface-2); }
+  /* :focus-visible (not :focus) so the ring only appears on keyboard focus,
+     not on mouse clicks. Uses --focus-ring so it follows the app theme. */
+  .tab-x:focus-visible {
+    outline: 2px solid var(--focus-ring, var(--accent));
+    outline-offset: -2px;
+  }
 
   .tabs-empty {
     display: flex;
