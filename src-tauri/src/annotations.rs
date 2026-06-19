@@ -288,16 +288,13 @@ pub fn save_annotations_to_path(
 ) -> Result<(), AnnotationError> {
     let json = serde_json::to_string_pretty(sidecar)?;
 
-    // Atomic write: serialize to a sibling temp file, then rename over the
-    // target. A crash mid-write leaves the previous sidecar intact instead of a
-    // half-written (corrupt) file — honoring the "never lose annotations"
-    // guarantee even on power loss.
-    let mut tmp = sidecar_path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp_path = PathBuf::from(tmp);
-
-    fs::write(&tmp_path, json)?;
-    fs::rename(&tmp_path, sidecar_path)?;
+    // Atomic write via the shared helper: stages to a unique sibling temp file,
+    // `sync_all()`s it to stable storage, then renames over the target. A crash
+    // mid-write leaves the previous sidecar intact instead of a half-written
+    // (corrupt) file — honoring the "never lose annotations" guarantee even on
+    // power loss. (Issue #55: unified with file_io::save_file's durability path,
+    // which previously this path lacked the fsync of.)
+    crate::file_io::atomic_write_bytes(sidecar_path, json.as_bytes())?;
     Ok(())
 }
 

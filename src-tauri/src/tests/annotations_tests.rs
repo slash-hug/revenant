@@ -68,6 +68,33 @@ mod integration {
         assert_eq!(final_sidecar.general_notes, "doc-level note");
     }
 
+    /// Issue #55: the annotations save path is atomic and durable — it writes
+    /// the exact bytes and leaves no staging temp file behind on success.
+    #[test]
+    fn save_round_trips_exact_content_and_leaves_no_temp() {
+        let dir = TempDir::new().unwrap();
+        let sidecar_path = dir.path().join("doc.md.annotations.json");
+
+        let sidecar = Sidecar {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            doc_content_hash: "deadbeef".to_string(),
+            general_notes: "round-trip note".to_string(),
+            annotations: vec![make_annotation("ann-rt")],
+        };
+        save_annotations_to_path(&sidecar_path, &sidecar).unwrap();
+
+        // Exact content: the file on disk equals the pretty-printed JSON.
+        let expected = serde_json::to_string_pretty(&sidecar).unwrap();
+        assert_eq!(fs::read_to_string(&sidecar_path).unwrap(), expected);
+
+        // No staging temp file (unique-named `.revenant.*.tmp`) lingers.
+        let leftover = fs::read_dir(dir.path()).unwrap().any(|e| {
+            let name = e.unwrap().file_name().to_string_lossy().into_owned();
+            name.contains(".revenant.") && name.ends_with(".tmp")
+        });
+        assert!(!leftover, "temp staging file was left behind");
+    }
+
     /// Verifies that a detached annotation survives a save/reload cycle.
     #[test]
     fn detached_annotation_survives_round_trip() {

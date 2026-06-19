@@ -21,6 +21,7 @@ use std::fs;
 use std::io;
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -142,27 +143,12 @@ pub fn save_file(
         });
     }
 
-    // Hashes match — write atomically: stage to a sibling temp file, flush it to
-    // disk, then rename over the target. A direct write-through-the-handle
+    // Hashes match — write atomically: stage to a unique sibling temp file, flush
+    // it to disk, then rename over the target. A direct write-through-the-handle
     // (seek/write/set_len) leaves the document half-new/half-old if the write
     // fails partway (e.g. disk full), corrupting it; an atomic rename never can —
     // a crash leaves either the whole old file or the whole new one.
     let new_hash = sha256_hex(content.as_bytes());
-
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?
-        .to_string_lossy();
-    let tmp_path = match path.parent() {
-        Some(dir) => dir.join(format!(".{file_name}.revenant.tmp")),
-        None => PathBuf::from(format!(".{file_name}.revenant.tmp")),
-    };
-
-    // Stage the new content and fsync before swapping it in.
-    if let Err(e) = stage_temp(&tmp_path, content.as_bytes()) {
-        let _ = fs::remove_file(&tmp_path); // best-effort cleanup
-        return Err(e.into());
-    }
 
     // Release the advisory lock / file handle *before* the rename: Windows
     // refuses to replace a file that still has an open handle, so the lock
@@ -174,16 +160,64 @@ pub fn save_file(
     drop(guard);
     drop(lock);
 
-    if let Err(e) = fs::rename(&tmp_path, path) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(e.into());
-    }
+    atomic_write_bytes(path, content.as_bytes())?;
 
     Ok(new_hash)
 }
 
+/// Atomically replace `target` with `bytes`.
+///
+/// Stages the bytes to a *unique* sibling temp file (process id + a
+/// per-process atomic counter, so concurrent or repeated writes never collide
+/// on a fixed name), `sync_all()`s it to stable storage, then renames it over
+/// `target`. A crash mid-write leaves either the whole old file or the whole
+/// new one — never a half-written, corrupt file. On any error the temp file is
+/// cleaned up best-effort.
+///
+/// Shared by `save_file` and `annotations::save_annotations_to_path` so both
+/// durability paths behave identically (issue #55).
+pub(crate) fn atomic_write_bytes(target: &Path, bytes: &[u8]) -> io::Result<()> {
+    let tmp_path = unique_temp_path(target)?;
+
+    // Stage the new content and fsync before swapping it in.
+    if let Err(e) = stage_temp(&tmp_path, bytes) {
+        let _ = fs::remove_file(&tmp_path); // best-effort cleanup
+        return Err(e);
+    }
+
+    if let Err(e) = fs::rename(&tmp_path, target) {
+        let _ = fs::remove_file(&tmp_path); // best-effort cleanup
+        return Err(e);
+    }
+
+    Ok(())
+}
+
+/// Build a collision-resistant temp path that sits next to `target` (same
+/// directory, so the final `rename` stays on one filesystem and is atomic).
+///
+/// The name embeds the process id plus a monotonically increasing per-process
+/// counter, so two writes — even to the same target, even concurrently within
+/// this process — never stage to the same temp file.
+fn unique_temp_path(target: &Path) -> io::Result<PathBuf> {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+
+    let file_name = target
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?
+        .to_string_lossy();
+    let tmp_name = format!(".{file_name}.revenant.{pid}.{n}.tmp");
+
+    Ok(match target.parent() {
+        Some(dir) => dir.join(tmp_name),
+        None => PathBuf::from(tmp_name),
+    })
+}
+
 /// Write `bytes` to `tmp` (creating/truncating it) and flush to stable storage.
-/// Used by `save_file` to stage content before an atomic rename.
+/// Used by `atomic_write_bytes` to stage content before an atomic rename.
 fn stage_temp(tmp: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut tmp_file = fs::OpenOptions::new()
         .write(true)
@@ -308,6 +342,15 @@ mod tests {
         path
     }
 
+    /// Returns true if any of our staging temp files (`.<name>.revenant.*.tmp`)
+    /// remain in `dir`. Used to assert atomic writes clean up after themselves.
+    fn any_temp_left(dir: &Path) -> bool {
+        fs::read_dir(dir).unwrap().any(|e| {
+            let name = e.unwrap().file_name().to_string_lossy().into_owned();
+            name.contains(".revenant.") && name.ends_with(".tmp")
+        })
+    }
+
     // ── open_file tests ───────────────────────────────────────────────────────
 
     #[test]
@@ -355,9 +398,12 @@ mod tests {
         assert_eq!(new_hash, sha256_hex(b"short"));
         assert_eq!(fs::read_to_string(&path).unwrap(), "short");
 
-        // The sibling staging file must not linger after a successful save.
-        let tmp = dir.path().join(".doc.md.revenant.tmp");
-        assert!(!tmp.exists(), "temp staging file was left behind");
+        // No sibling staging file (unique-named .revenant.*.tmp) must linger
+        // after a successful save.
+        assert!(
+            !any_temp_left(dir.path()),
+            "temp staging file was left behind"
+        );
 
         // A second save round-trips against the new hash.
         let h2 = save_file(&path, "second update", &new_hash).unwrap();
@@ -389,6 +435,37 @@ mod tests {
         fs::write(&path, "text").unwrap();
         let err = save_file(&path, "new", "anyhash").unwrap_err();
         assert!(matches!(err, FileIoError::NotMarkdown(_)));
+    }
+
+    // ── atomic_write_bytes ────────────────────────────────────────────────────
+
+    #[test]
+    fn atomic_write_bytes_round_trip_and_no_temp() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("data.bin");
+
+        // Write into a fresh path, then overwrite it; both must round-trip exactly.
+        atomic_write_bytes(&target, b"first contents").unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"first contents");
+
+        atomic_write_bytes(&target, b"second, shorter").unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"second, shorter");
+
+        // No staging temp file should be left behind after success.
+        assert!(!any_temp_left(dir.path()), "temp staging file lingered");
+    }
+
+    #[test]
+    fn unique_temp_path_never_collides() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("doc.md");
+
+        // Two successive temp paths for the same target must differ (the fixed
+        // `.tmp` collision bug from issue #55).
+        let a = unique_temp_path(&target).unwrap();
+        let b = unique_temp_path(&target).unwrap();
+        assert_ne!(a, b, "unique temp paths collided");
+        assert_eq!(a.parent(), Some(dir.path()));
     }
 
     // ── sha256_hex ────────────────────────────────────────────────────────────
