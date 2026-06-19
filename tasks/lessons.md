@@ -384,3 +384,26 @@ type the handle as `ReturnType<typeof setTimeout>` (the convention already used 
 any agent's frontend test gate) whenever a `.svelte` file changed. For timer handles,
 never infer the type from a `0` sentinel — write `ReturnType<typeof setTimeout>` so the
 return type of `setTimeout`/`setInterval` is accepted on every platform.
+
+## Restoring a file with `mv file.bak file` can serve a STALE cargo test binary (2026-06-19)
+
+**What happened:** While TDD-verifying the #44 fix, I removed the guard with `sed`,
+compiled+ran the test (RED, as expected), then restored the original with
+`mv updates.rs.bak updates.rs`. The full suite then reported the *new* test failing —
+`update_available: true` for a prerelease — even though the restored source clearly
+contained the guard. Cause: `mv` preserves the backup's **mtime**, which predated the
+RED-test compilation, so cargo's incremental build saw the source as "older than the
+artifact" and **did not recompile**. The test ran against the stale guard-less binary.
+`touch updates.rs && cargo test` rebuilt and went green; the pushed source was correct
+all along (CI does a clean build, so it was never at risk).
+
+**Why it matters:** the dangerous direction is the inverse — restoring a *broken* file
+with an old mtime leaves the *good* artifact in place and shows a **false GREEN**, hiding
+a real regression. mtime-based staleness can mask either result.
+
+**Rule:** Don't restore files with `mv *.bak` (or `cp -p`) during a RED/GREEN loop —
+mtime travels with the file and fools mtime-based build tools (cargo, make). Use
+`git checkout -- <file>` / `git stash pop` to revert (git writes a fresh mtime), or
+`touch` the file after restoring. When a test result is surprising right after a
+sed/mv edit dance, suspect a stale artifact first: `touch` the source (or `cargo clean
+-p <crate>`) and re-run before trusting the outcome.
