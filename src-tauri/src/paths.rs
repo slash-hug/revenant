@@ -50,7 +50,25 @@ pub fn sidecar_path(doc_path: &Path) -> PathBuf {
 /// rejected.  This is called by `file_io` before any read/write.
 ///
 /// `allowed_dirs` should contain **canonicalized** directory paths.
+///
+/// Safe-by-default against `..` traversal: any `path` containing a parent-dir
+/// (`..`) component is rejected up front. The directory match is a lexical
+/// `starts_with`, so without this guard a path like `<allowed>/../escape` would
+/// satisfy it (the allowed dir is a prefix) while escaping on disk. Folding the
+/// check in here closes that lexical gap for any caller reaching this function,
+/// instead of relying on each one to pre-check `has_parent_traversal` (#46).
+/// Callers passing canonicalized/normalized paths are unaffected (no `..`).
+///
+/// Scope — this is a *lexical* guard only. It does NOT defend against symlink
+/// escapes (callers must `canonicalize` first, which resolves symlinks) nor
+/// against code paths that touch the filesystem WITHOUT calling `assert_confined`
+/// at all (the `file_io` layer itself is unconfined — confinement is enforced by
+/// its `ipc` callers).
 pub fn assert_confined(path: &Path, allowed_dirs: &[PathBuf]) -> Result<(), PathError> {
+    // Reject parent-directory traversal before the lexical prefix check.
+    if has_parent_traversal(path) {
+        return Err(PathError::Confined(path.to_path_buf()));
+    }
     // Path must already be absolute/canonical for this check to be reliable.
     for dir in allowed_dirs {
         if path.starts_with(dir) {
@@ -215,15 +233,26 @@ mod tests {
     }
 
     #[test]
-    fn assert_confined_is_fooled_by_dotdot_so_callers_must_guard() {
-        // assert_confined is a lexical starts_with check: a `..` escape still
-        // shares the vault's leading components, so it passes here. This is
-        // exactly why export_obsidian pre-checks has_parent_traversal — this test
-        // documents the contract so the guard is never removed.
+    fn assert_confined_rejects_dotdot_even_when_prefix_matches() {
+        // A `..` escape lexically shares the vault's leading components, so the
+        // bare starts_with check would pass it. assert_confined now rejects any
+        // path containing `..` up front, so safety no longer depends on every
+        // caller pre-checking has_parent_traversal (#46).
         let vault = PathBuf::from("/home/user/vault");
         let escaping = vault.join("../secret/file.md");
-        assert!(assert_confined(&escaping, &[vault]).is_ok());
-        assert!(has_parent_traversal(Path::new("../secret/file.md")));
+        assert!(
+            assert_confined(&escaping, &[vault]).is_err(),
+            "a `..` traversal must be rejected even though it prefix-matches the vault"
+        );
+    }
+
+    #[test]
+    fn assert_confined_rejects_bare_dotdot_relative_path() {
+        // Even with no matching allowed dir, a `..` path is rejected as Confined
+        // (not silently falling through to the prefix loop).
+        let allowed = vec![PathBuf::from("/home/user/docs")];
+        assert!(assert_confined(Path::new("../escape.md"), &allowed).is_err());
+        assert!(assert_confined(Path::new("/home/user/docs/sub/../../etc/x.md"), &allowed).is_err());
     }
 
     #[test]
