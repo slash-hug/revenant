@@ -497,19 +497,20 @@ pub fn open_file(
 pub async fn save_file(
     app: AppHandle,
     watchers: State<'_, crate::FileWatchers>,
+    settings_path: State<'_, crate::SettingsPath>,
     request: SaveFileRequest,
 ) -> IpcResult<FileResult> {
     // Confinement check + the fd-locked write are blocking fs work — offload to a
     // blocking thread so a large-doc save doesn't stall the IPC command pool
     // (perf #28). `watch_file` (which needs the non-'static AppHandle/State) runs
     // back on the async side after the write returns.
+    let settings_path = settings_path.0.clone();
     let (canon, new_hash, path) = tauri::async_runtime::spawn_blocking(
         move || -> IpcResult<(std::path::PathBuf, String, String)> {
             let p = std::path::Path::new(&request.path);
 
             let canon = std::fs::canonicalize(p)
                 .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
-            let settings_path = settings_file_path();
             let settings = crate::settings::get_settings(&settings_path).map_err(|e| IpcError {
                 code: "SETTINGS_ERROR".into(),
                 message: format!("cannot load settings for confinement check: {e}"),
@@ -762,18 +763,22 @@ pub async fn generate_review(payload: ReviewPayload) -> IpcResult<ReviewResult> 
 #[tauri::command]
 pub async fn export_obsidian(
     open_docs: State<'_, crate::OpenDocuments>,
+    settings_path: State<'_, crate::SettingsPath>,
     request: ExportObsidianRequest,
 ) -> IpcResult<ExportObsidianResult> {
     // Confine the export SOURCE read to a currently-open document before the
     // blocking body reads it: without this, a frontend-supplied doc_path could
     // read any file on disk and push its contents into the vault export (#85).
     let canon_doc = confine_open_doc(&request.doc_path, &open_docs.snapshot())?;
-    tauri::async_runtime::spawn_blocking(move || export_obsidian_blocking(request, canon_doc))
-        .await
-        .map_err(|e| IpcError {
-            code: "INTERNAL".into(),
-            message: format!("export task failed: {e}"),
-        })?
+    let settings_path = settings_path.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        export_obsidian_blocking(request, canon_doc, &settings_path)
+    })
+    .await
+    .map_err(|e| IpcError {
+        code: "INTERNAL".into(),
+        message: format!("export task failed: {e}"),
+    })?
 }
 
 /// The blocking body of `export_obsidian` (runs on a blocking thread).
@@ -783,10 +788,10 @@ pub async fn export_obsidian(
 fn export_obsidian_blocking(
     request: ExportObsidianRequest,
     canon_doc: std::path::PathBuf,
+    settings_path: &std::path::PathBuf,
 ) -> IpcResult<ExportObsidianResult> {
     // Load current settings to get vault list and REST key ref.
-    let settings_path = settings_file_path();
-    let settings = crate::settings::get_settings(&settings_path).map_err(settings_err)?;
+    let settings = crate::settings::get_settings(settings_path).map_err(settings_err)?;
 
     // Validate that vault_path is in the configured vaults list. This fails
     // CLOSED (like save_file): if the requested vault cannot be canonicalized we
@@ -877,10 +882,12 @@ fn export_obsidian_blocking(
 
 /// Load persisted user settings.
 #[tauri::command]
-pub async fn get_settings() -> IpcResult<Settings> {
+pub async fn get_settings(
+    settings_path: State<'_, crate::SettingsPath>,
+) -> IpcResult<Settings> {
     // Settings file read — small, but still fs; offloaded for consistency (perf #28).
-    tauri::async_runtime::spawn_blocking(|| -> IpcResult<Settings> {
-        let path = settings_file_path();
+    let path = settings_path.0.clone();
+    tauri::async_runtime::spawn_blocking(move || -> IpcResult<Settings> {
         let settings = crate::settings::get_settings(&path).map_err(settings_err)?;
         Ok(settings_to_ipc(settings))
     })
@@ -897,9 +904,12 @@ pub async fn get_settings() -> IpcResult<Settings> {
 /// Single-writer discipline: only the key handlers write `rest_key_ref`; the
 /// general settings path never can (it is preserved by this fn).
 #[tauri::command]
-pub async fn set_settings(settings: Settings) -> IpcResult<()> {
+pub async fn set_settings(
+    settings_path: State<'_, crate::SettingsPath>,
+    settings: Settings,
+) -> IpcResult<()> {
+    let path = settings_path.0.clone();
     tauri::async_runtime::spawn_blocking(move || -> IpcResult<()> {
-        let path = settings_file_path();
         let store_settings = settings_from_ipc(settings);
         crate::settings::set_settings_preserving_ref(&path, store_settings).map_err(settings_err)
     })
@@ -953,10 +963,13 @@ fn validate_rest_key(key: &str) -> IpcResult<()> {
 }
 
 #[tauri::command]
-pub async fn set_rest_key(key: String) -> IpcResult<Settings> {
+pub async fn set_rest_key(
+    settings_path: State<'_, crate::SettingsPath>,
+    key: String,
+) -> IpcResult<Settings> {
     validate_rest_key(&key)?;
+    let path = settings_path.0.clone();
     tauri::async_runtime::spawn_blocking(move || -> IpcResult<Settings> {
-        let path = settings_file_path();
         // Store the raw key in the OS keychain.
         crate::secrets::store_rest_key("obsidian-rest", &key).map_err(secrets_err)?;
         // Load current settings so we can update the key reference field.
@@ -988,9 +1001,11 @@ pub async fn set_rest_key(key: String) -> IpcResult<Settings> {
 /// Remove the Obsidian REST API key from the OS keychain, clear the
 /// `rest_key_ref` field in settings, and return the updated `Settings`.
 #[tauri::command]
-pub async fn clear_rest_key() -> IpcResult<Settings> {
-    tauri::async_runtime::spawn_blocking(|| -> IpcResult<Settings> {
-        let path = settings_file_path();
+pub async fn clear_rest_key(
+    settings_path: State<'_, crate::SettingsPath>,
+) -> IpcResult<Settings> {
+    let path = settings_path.0.clone();
+    tauri::async_runtime::spawn_blocking(move || -> IpcResult<Settings> {
         // Delete the key from the OS keychain (no-op if absent).
         crate::secrets::delete_rest_key("obsidian-rest").map_err(secrets_err)?;
         // Clear the key reference in settings.
@@ -1032,9 +1047,13 @@ pub async fn has_rest_key() -> IpcResult<bool> {
 /// `ConnStatus`.  The blocking network I/O runs on a `spawn_blocking` thread
 /// so the IPC command pool stays responsive during the 3s probe timeout.
 #[tauri::command]
-pub async fn test_obsidian_connection(key: Option<String>) -> IpcResult<ConnStatus> {
+pub async fn test_obsidian_connection(
+    settings_path: State<'_, crate::SettingsPath>,
+    key: Option<String>,
+) -> IpcResult<ConnStatus> {
+    let path = settings_path.0.clone();
     tauri::async_runtime::spawn_blocking(move || -> IpcResult<ConnStatus> {
-        let status = crate::obsidian::test_obsidian_connection(&settings_file_path(), key);
+        let status = crate::obsidian::test_obsidian_connection(&path, key);
         Ok(status)
     })
     .await
@@ -1257,32 +1276,11 @@ pub async fn open_diagram_window(
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
-
-/// Derive the settings file path from the standard app data directory.
-/// Falls back to the current working directory in non-Tauri test contexts.
-fn settings_file_path() -> std::path::PathBuf {
-    // In production Tauri uses the app_data_dir; in tests we use a fixed temp path.
-    // The IPC commands that need a Tauri State should use tauri::State, but for
-    // simplicity in v1 we derive a platform-appropriate default here.
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        std::path::PathBuf::from(home)
-            .join("Library/Application Support/com.codelogiq.revenant/settings.json")
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
-        std::path::PathBuf::from(appdata)
-            .join("com.codelogiq.revenant/settings.json")
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        std::path::PathBuf::from(home)
-            .join(".config/com.codelogiq.revenant/settings.json")
-    }
-}
+//
+// The settings file path is no longer derived here from HOME/APPDATA. It is
+// resolved once at startup from Tauri's `app_config_dir()` and held in
+// `crate::SettingsPath` managed state, so every command shares one source of
+// truth and the path cannot desync from the real config location (#13).
 
 #[cfg(test)]
 mod ipc_tests {

@@ -33,7 +33,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 /// Live, per-path file watchers. Held in Tauri-managed state so a single watcher
 /// per open document stays alive for the app's lifetime and `open_file` /
@@ -77,6 +77,15 @@ impl FileWatchers {
             .len()
     }
 }
+
+/// Absolute path to `settings.json`, resolved once at startup from Tauri's real
+/// app-config dir (`app_config_dir()`) and held in managed state. Every command
+/// that reads or writes settings goes through this single source of truth, so the
+/// path can no longer desync from the actual config location — previously each
+/// caller re-derived it from `HOME`/`APPDATA`, and a wrong path silently read
+/// empty settings, which could flip `save_file` into its unrestricted "first-run"
+/// branch (#13).
+pub struct SettingsPath(pub PathBuf);
 
 /// The set of documents the user currently has open, keyed by canonical path.
 ///
@@ -199,6 +208,18 @@ pub fn run() {
             }),
         )
         .setup(|app| {
+            // Resolve the settings.json location ONCE, from Tauri's real
+            // app-config dir, and stash it in managed state so every command
+            // shares one source of truth (#13). On `com.codelogiq.revenant` this
+            // resolves to the same path the old HOME/APPDATA derivation produced,
+            // so existing settings carry over with no migration.
+            let settings_path = app
+                .path()
+                .app_config_dir()
+                .map_err(|e| format!("could not resolve app config dir: {e}"))?
+                .join("settings.json");
+            app.manage(SettingsPath(settings_path));
+
             // Cold-start CLI argument: `revenant <file.md>`.
             //
             // We read argv directly (rather than via the cli plugin's parsed
