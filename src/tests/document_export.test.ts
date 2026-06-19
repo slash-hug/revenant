@@ -247,6 +247,72 @@ describe('buildExportDocument — C3 frontmatter + images', () => {
     // Without readFileBytes, the img src passes through unchanged.
     expect(result).toContain('./img.png');
   });
+
+  it('does NOT embed a .svg local image as active content (issue #56)', async () => {
+    // A malicious .svg on disk that carries a <script> payload. If it were
+    // inlined as an image/svg+xml data URI, it would become active content in
+    // the export. The exporter must refuse to embed it.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const svgPayload = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>';
+    const readFileBytes = vi.fn().mockResolvedValue(btoa(svgPayload));
+    const content = '![diagram](./evil.svg)';
+    const result = await buildExportDocument({
+      content,
+      docPath: '/docs/test.md',
+      readFileBytes,
+    });
+
+    // It must never be emitted as an svg data URI (active content).
+    expect(result).not.toContain('data:image/svg+xml');
+    // The raw svg bytes must not be base64-inlined into the document at all.
+    expect(result).not.toContain(btoa(svgPayload));
+    // No raw <svg>/<script> active content injected from the embedded file.
+    expect(result).not.toMatch(/<script/i);
+    // We must not even have attempted to read the unsafe file's bytes.
+    expect(readFileBytes).not.toHaveBeenCalled();
+    // A warning explains the skip.
+    expect(warn).toHaveBeenCalled();
+    // Degrades to alt text instead.
+    expect(result).toContain('diagram');
+    warn.mockRestore();
+  });
+
+  it('does NOT embed an unknown image extension as a data URI (issue #56)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const readFileBytes = vi.fn().mockResolvedValue(FAKE_FONT_B64);
+    const content = '![mystery](./file.xyz)';
+    const result = await buildExportDocument({
+      content,
+      docPath: '/docs/test.md',
+      readFileBytes,
+    });
+
+    // Unknown types are not inferred as image/png and are not embedded.
+    expect(result).not.toContain('data:image/png;base64,' + FAKE_FONT_B64);
+    expect(readFileBytes).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    expect(result).toContain('mystery');
+    warn.mockRestore();
+  });
+
+  it('still embeds known raster types (png/jpg/gif/webp) as data URIs', async () => {
+    for (const [path, mime] of [
+      ['./a.png', 'image/png'],
+      ['./b.jpg', 'image/jpeg'],
+      ['./c.jpeg', 'image/jpeg'],
+      ['./d.gif', 'image/gif'],
+      ['./e.webp', 'image/webp'],
+    ] as const) {
+      const readFileBytes = vi.fn().mockResolvedValue(FAKE_FONT_B64);
+      const result = await buildExportDocument({
+        content: `![raster](${path})`,
+        docPath: '/docs/test.md',
+        readFileBytes,
+      });
+      expect(readFileBytes).toHaveBeenCalledWith('/docs/test.md', path);
+      expect(result).toContain(`data:${mime};base64,`);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

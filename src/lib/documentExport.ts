@@ -469,15 +469,39 @@ async function embedLocalImages(
       // Skip http(s) URLs — embed only relative paths.
       if (/^https?:\/\//i.test(src) || /^data:/i.test(src)) return;
 
+      // Infer the embedded MIME from the file extension, restricted to known
+      // RASTER types only. We deliberately never emit `image/svg+xml`: an SVG
+      // data URI is active content (it can carry <script>, foreignObject, event
+      // handlers) and would become a live injection surface inside the export
+      // (issue #56). For `.svg` or any unrecognized extension we skip embedding
+      // and degrade to alt text rather than inlining untrusted active content.
+      const ext = src.split('.').pop()?.toLowerCase() ?? '';
+      const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+        : ext === 'gif' ? 'image/gif'
+        : ext === 'webp' ? 'image/webp'
+        : ext === 'png' ? 'image/png'
+        : null;
+
+      if (mime === null) {
+        // Unknown or SVG (active-content) type — do not embed as a data URI.
+        console.warn(
+          `[documentExport] Refusing to embed "${src}" as a data URI: ` +
+          `only PNG/JPEG/GIF/WebP raster images are embedded (SVG/unknown types are skipped for safety).`,
+        );
+        const alt = img.getAttribute('alt') ?? '';
+        img.removeAttribute('src');
+        if (alt) {
+          const span = doc.createElement('span');
+          span.textContent = `[Image: ${alt}]`;
+          img.replaceWith(span);
+        } else {
+          img.remove();
+        }
+        return;
+      }
+
       try {
         const b64 = await readFileBytes(docPath, src);
-        // Detect MIME type from extension; default to image/png.
-        const ext = src.split('.').pop()?.toLowerCase() ?? '';
-        const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
-          : ext === 'gif' ? 'image/gif'
-          : ext === 'svg' ? 'image/svg+xml'
-          : ext === 'webp' ? 'image/webp'
-          : 'image/png';
         img.setAttribute('src', `data:${mime};base64,${b64}`);
       } catch {
         // Failure: degrade to alt text by removing the src so the alt is shown.
