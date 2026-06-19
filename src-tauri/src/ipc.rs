@@ -863,13 +863,13 @@ fn export_obsidian_blocking(
         &doc_content,
         &vault_relative,
         &export_settings,
-        crate::obsidian::REST_DEFAULT_HTTP_PORT,
+        crate::obsidian::REST_DEFAULT_PORTS,
     ).map_err(obsidian_err)?;
 
     let (method, destination) = match result {
         crate::obsidian::ExportResult::RestPushed => (
             "rest".to_string(),
-            format!("http://127.0.0.1:{}/vault/{}", crate::obsidian::REST_DEFAULT_HTTP_PORT, vault_relative),
+            format!("vault/{vault_relative}"),
         ),
         crate::obsidian::ExportResult::FilesystemCopy => (
             "filesystem".to_string(),
