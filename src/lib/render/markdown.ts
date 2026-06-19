@@ -795,19 +795,51 @@ function currentMermaidTheme(): 'default' | 'dark' {
  * diagram definitions. Combined with two-pass DOMPurify sanitization of the SVG
  * output (sanitizeMermaidSvg), this is the correct defense-in-depth posture.
  */
-async function loadMermaid() {
+async function ensureMermaid() {
   if (!_mermaidPromise) {
     _mermaidPromise = (async () => (await import('mermaid')).default)();
   }
-  const mermaid = await _mermaidPromise;
+  return _mermaidPromise;
+}
 
-  const theme = currentMermaidTheme();
+/**
+ * Initialize Mermaid to `theme` unless the singleton is already on it.
+ * MUST be called inside `withMermaidLock` — it mutates the shared
+ * `mermaid.initialize()` global config and the `_mermaidTheme` marker.
+ */
+function initMermaidTheme(
+  mermaid: typeof import('mermaid')['default'],
+  theme: 'default' | 'dark',
+): void {
   if (theme !== _mermaidTheme) {
     const themeVariables = theme === 'dark' ? DARK_THEME_VARS : undefined;
     mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme, themeVariables });
     _mermaidTheme = theme;
   }
-  return mermaid;
+}
+
+/**
+ * Serializes every Mermaid `initialize() → render()` critical section (#35).
+ *
+ * Mermaid's theme is module-global config (set via `mermaid.initialize`), not a
+ * per-render argument — v11 exposes no per-call theme override. So a live render
+ * (dark) and an export render (forced light) that interleave could flip the
+ * global theme mid-flight and render a diagram in the wrong theme. A promise-chain
+ * mutex makes each initialize→render pair atomic; combined with the export path
+ * restoring the live theme on exit (see `renderMermaidForExport`), the shared-state
+ * hazard is removed entirely rather than merely being unlikely.
+ */
+let _mermaidLock: Promise<void> = Promise.resolve();
+async function withMermaidLock<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = _mermaidLock;
+  let release!: () => void;
+  _mermaidLock = new Promise<void>((r) => (release = r));
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
 }
 
 /**
@@ -853,17 +885,21 @@ const mermaidCache = new Map<string, { code: string; theme: string; svg: string 
 
 export async function renderMermaid(code: string, blockId: string): Promise<string> {
   try {
-    const mermaid = await loadMermaid();
-    const theme = _mermaidTheme ?? 'default';
+    const mermaid = await ensureMermaid();
+    const theme = currentMermaidTheme();
+    // Cache read is theme-keyed, so a stale-theme hit can't be returned.
     const hit = mermaidCache.get(blockId);
     if (hit && hit.code === code && hit.theme === theme) return hit.svg;
-    const id = `mermaid-${blockId}`;
-    const { svg } = await mermaid.render(id, code);
-    // Two-pass sanitization: SVG structure + foreignObject HTML labels.
-    // See sanitizeMermaidSvg JSDoc for the full rationale.
-    const sanitized = sanitizeMermaidSvg(svg);
-    mermaidCache.set(blockId, { code, theme, svg: sanitized });
-    return sanitized;
+    return await withMermaidLock(async () => {
+      initMermaidTheme(mermaid, theme);
+      const id = `mermaid-${blockId}`;
+      const { svg } = await mermaid.render(id, code);
+      // Two-pass sanitization: SVG structure + foreignObject HTML labels.
+      // See sanitizeMermaidSvg JSDoc for the full rationale.
+      const sanitized = sanitizeMermaidSvg(svg);
+      mermaidCache.set(blockId, { code, theme, svg: sanitized });
+      return sanitized;
+    });
   } catch (err) {
     const msg = err instanceof Error ? escapeHtml(err.message) : 'Diagram error';
     return `<div class="mermaid-error" data-block-id="${blockId}"><strong>Diagram error:</strong> ${msg}</div>`;
@@ -877,14 +913,13 @@ export async function renderMermaid(code: string, blockId: string): Promise<stri
  * mutating `document.documentElement data-theme`, which would trigger
  * PreviewPane's MutationObserver and corrupt the live preview cache.
  *
- * NOTE: This function shares the module-level Mermaid singleton (`_mermaidPromise`,
- * `_mermaidTheme`). It calls `mermaid.initialize()` and updates `_mermaidTheme`
- * when the requested theme differs from the current one. This means an export that
- * interleaves with a live re-render could momentarily cause the wrong theme to be
- * used for that render (low practical risk since exports are discrete user actions,
- * but worth being aware of). A future improvement would be to thread the theme
- * through render options rather than via the global, but Mermaid v11 does not
- * expose a per-call theme override.
+ * Theme handling: Mermaid v11 has no per-call theme override — theme is global
+ * config set via `mermaid.initialize()`. This function therefore still mutates the
+ * shared singleton, but does so safely: the initialize→render→restore sequence runs
+ * inside `withMermaidLock` (so no live render can interleave and observe the export
+ * theme), and the live preview theme is restored before the lock releases (so the
+ * singleton never lingers in the export theme for the next live render). This
+ * removes the shared-state hazard entirely (#35).
  *
  * The result is NOT stored in `mermaidCache` because export renders use a
  * different theme than the live preview and must not overwrite cached SVGs.
@@ -895,26 +930,25 @@ export async function renderMermaidForExport(
   theme: 'default' | 'dark' = 'default',
 ): Promise<string> {
   try {
-    if (!_mermaidPromise) {
-      _mermaidPromise = (async () => (await import('mermaid')).default)();
-    }
-    const mermaid = await _mermaidPromise;
-
-    // Re-initialize only if the requested theme differs from the current one.
-    // This mutates the shared _mermaidTheme singleton (see note in jsdoc above).
-    if (theme !== _mermaidTheme) {
-      const themeVariables = theme === 'dark' ? DARK_THEME_VARS : undefined;
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme, themeVariables });
-      _mermaidTheme = theme;
-    }
-
-    // Use an export-specific element id so it does not collide with live-preview ids.
-    const id = `mermaid-export-${blockId}`;
-    const { svg } = await mermaid.render(id, code);
-    const sanitized = sanitizeMermaidSvg(svg);
-    // Intentionally NOT stored in mermaidCache — export renders must not
-    // overwrite live-preview cached SVGs.
-    return sanitized;
+    const mermaid = await ensureMermaid();
+    return await withMermaidLock(async () => {
+      // Capture the live preview theme so we can restore it after rendering.
+      // documentExport never mutates data-theme, so this reflects the live mode.
+      const liveTheme = currentMermaidTheme();
+      initMermaidTheme(mermaid, theme);
+      try {
+        // Export-specific element id so it does not collide with live-preview ids.
+        const id = `mermaid-export-${blockId}`;
+        const { svg } = await mermaid.render(id, code);
+        // Intentionally NOT stored in mermaidCache — export renders must not
+        // overwrite live-preview cached SVGs.
+        return sanitizeMermaidSvg(svg);
+      } finally {
+        // Restore the live theme atomically (still inside the lock) so the next
+        // live render is never served the export theme.
+        initMermaidTheme(mermaid, liveTheme);
+      }
+    });
   } catch (err) {
     const msg = err instanceof Error ? escapeHtml(err.message) : 'Diagram error';
     return `<div class="mermaid-error" data-block-id="${blockId}"><strong>Diagram error:</strong> ${msg}</div>`;
