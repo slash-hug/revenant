@@ -5,6 +5,11 @@
 pub mod ipc;
 pub mod export;
 
+// Shared schema-envelope policy for the versioned on-disk stores
+// (settings + annotation sidecars). One home for the "missing version → 0"
+// decision so the two stores can't re-diverge — see issue #13 item J.
+pub mod schema;
+
 // Integration tests (all workstreams). Compiled only in test builds so they
 // never ship in the production binary.
 #[cfg(test)]

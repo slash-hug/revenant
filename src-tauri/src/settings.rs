@@ -111,10 +111,10 @@ pub fn load_settings(path: &PathBuf) -> Result<Settings, SettingsError> {
     let raw = std::fs::read_to_string(path)?;
     let value: serde_json::Value = serde_json::from_str(&raw)?;
 
-    let version = value
-        .get("schema_version")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+    // Shared envelope policy: absent/null/non-integer version → 0 (migrate
+    // in-place). Lives in `crate::schema` so settings + annotations can't
+    // re-diverge on this decision (issue #13 item J).
+    let version = crate::schema::schema_version_of(&value);
 
     match version {
         0 => {

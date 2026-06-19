@@ -223,11 +223,10 @@ pub fn load_annotations_from_path(
     };
 
     // Extract schema_version from the parsed Value; absent/null → 0.
-    let version: u32 = value
-        .get("schema_version")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u32)
-        .unwrap_or(0);
+    // Shared envelope policy lives in `crate::schema` so this and settings.rs
+    // can't re-diverge on the "missing version → migrate not quarantine"
+    // decision (issue #13 item J).
+    let version: u32 = crate::schema::schema_version_of(&value);
 
     match version {
         v if v == CURRENT_SCHEMA_VERSION => {
