@@ -434,8 +434,11 @@ mod tests {
         // must be rejected at the fs layer.
         let dir = TempDir::new().unwrap();
         let allowed = vec![fs::canonicalize(dir.path()).unwrap()];
-        // <allowed>/sub/../escape.md — prefix-matches allowed but escapes it.
-        let traversal = allowed[0].join("sub").join("..").join("escape.md");
+        // Build from the non-canonicalized dir path: joining `..` onto a
+        // canonicalized verbatim (`\\?\`) path collapses `sub\..` on Windows, so
+        // `..` would never reach the guard. A raw path keeps `..` as a ParentDir
+        // component on every platform (and mirrors untrusted frontend input).
+        let traversal = dir.path().join("sub").join("..").join("escape.md");
         let err = open_file(&traversal, &allowed).unwrap_err();
         assert!(
             matches!(err, FileIoError::Path(PathError::Confined(_))),
@@ -550,9 +553,11 @@ mod tests {
         let path = write_tmp_md(&dir, "real.md", "original");
         let allowed = vec![fs::canonicalize(dir.path()).unwrap()];
 
-        // <allowed>/sub/../real.md resolves back inside but contains `..`; the
-        // traversal guard must reject it outright.
-        let traversal = allowed[0].join("sub").join("..").join("real.md");
+        // <dir>/sub/../real.md contains `..`; the traversal guard must reject it
+        // outright. Build from the non-canonicalized dir path so `..` survives as
+        // a ParentDir component (joining onto a verbatim `\\?\` path collapses it
+        // on Windows). Mirrors untrusted frontend input.
+        let traversal = dir.path().join("sub").join("..").join("real.md");
         let err = save_file(&traversal, "attacker", "anyhash", &allowed).unwrap_err();
         assert!(
             matches!(err, FileIoError::Path(PathError::Confined(_))),
