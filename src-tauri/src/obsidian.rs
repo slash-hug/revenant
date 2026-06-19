@@ -216,11 +216,33 @@ impl From<reqwest::Error> for ObsidianError {
 }
 
 /// Detect connection-refused errors that reqwest may not classify as `is_connect()`.
-/// Checks the error message as a last-resort heuristic.
+///
+/// Primary path: walk the `std::error::Error::source()` chain from the reqwest
+/// error. reqwest wraps a hyper-util error which wraps a hyper error which wraps
+/// the underlying `std::io::Error`. We iterate every link and downcast to
+/// `io::Error`, then compare `err.kind()` against `ErrorKind::ConnectionRefused`.
+/// This is locale-safe, OS-portable, and independent of OS error-code numbers.
+///
+/// Fallback: if no `io::Error` is found in the chain (e.g. a platform / reqwest
+/// version that squashes the source), we fall back to message-string heuristics
+/// as a belt-and-suspenders last resort.
 fn is_connection_refused(e: &reqwest::Error) -> bool {
+    // Primary: structured io::ErrorKind inspection.
+    // Bring the `Error` trait into scope so `.source()` is available on the
+    // trait object without a top-level `use` that would pollute the module.
+    use std::error::Error as StdError;
+    let mut source: Option<&dyn StdError> = e.source();
+    while let Some(err) = source {
+        if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+            return io_err.kind() == std::io::ErrorKind::ConnectionRefused;
+        }
+        source = err.source();
+    }
+
+    // Fallback: string heuristics (locale-fragile, kept as last resort)
     let msg = e.to_string().to_lowercase();
     msg.contains("connection refused")
-        || msg.contains("os error 61") // macOS ECONNREFUSED
+        || msg.contains("os error 61")  // macOS ECONNREFUSED
         || msg.contains("os error 111") // Linux ECONNREFUSED
 }
 
