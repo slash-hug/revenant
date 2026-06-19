@@ -5,9 +5,16 @@
    * core annotation action matches the rest of the app (C8).
    *
    * Enter (without Shift) saves; Shift+Enter inserts a newline; Esc cancels.
-   * Clicking outside cancels. Autofocuses the textarea on open.
+   * Clicking outside (on the backdrop / dialog margin) cancels. Autofocuses the
+   * textarea on open.
+   *
+   * Uses a native <dialog> element opened via showModal(), which provides a real
+   * focus trap, aria-modal semantics, and Esc handling for free (WCAG 2.1.2,
+   * 1.3.1 — see issue #41). The manual outside-click setTimeout hack and the
+   * manual Esc keydown handler have been removed in favour of native browser
+   * behaviour.
    */
-  import { createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
+  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
 
   /** Viewport coordinates near the selection (px). */
   export let x = 0;
@@ -19,16 +26,22 @@
 
   let body = '';
   let textarea: HTMLTextAreaElement;
-  let panel: HTMLDivElement;
+  let dialog: HTMLDialogElement;
   let left = x;
   let top = y;
-  // Element focused before the composer opened — focus returns here on close so
-  // keyboard users aren't dropped at the top of the document (WCAG 2.4.3, #30).
+  // Element focused before the composer opened. A native <dialog> restores focus
+  // on close(), but only reliably when it is still mounted — here the parent
+  // usually *unmounts* the component (cancel/submit removes it from the DOM)
+  // rather than calling close(), and native focus-return is flaky on WebKit in
+  // that path. So we capture the prior focus and restore it explicitly on
+  // teardown as a belt-and-suspenders (WCAG 2.4.3, #30).
   let previouslyFocused: HTMLElement | null = null;
 
   function clampToViewport() {
-    if (!panel) return;
-    const r = panel.getBoundingClientRect();
+    if (!dialog) return;
+    const inner = dialog.querySelector<HTMLElement>('.composer');
+    if (!inner) return;
+    const r = inner.getBoundingClientRect();
     const m = 12; // viewport margin
     left = Math.min(Math.max(m, x), window.innerWidth - r.width - m);
     top = Math.min(y, window.innerHeight - r.height - m);
@@ -43,55 +56,111 @@
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); save(); }
-    else if (e.key === 'Escape') { e.preventDefault(); dispatch('cancel'); }
+    // Esc is handled by the native <dialog> cancel event — no manual keydown needed.
   }
 
-  function handleOutside(e: MouseEvent) {
-    if (panel && !panel.contains(e.target as Node)) dispatch('cancel');
+  // Native <dialog> fires a `cancel` event when Esc is pressed from any child
+  // element (not just the textarea). We preventDefault to stop the native
+  // auto-close and let the parent component control open state, then dispatch
+  // our own cancel so callers can react.
+  function handleCancel(e: Event) {
+    e.preventDefault();
+    dispatch('cancel');
+  }
+
+  // Native <dialog> does NOT close on backdrop / outside-click by default.
+  // We replicate the old behaviour: clicking on the dialog element itself
+  // (outside the inner .composer content) dispatches cancel.
+  function handleDialogClick(e: MouseEvent) {
+    if (e.target === dialog) dispatch('cancel');
   }
 
   onMount(async () => {
+    // Capture the pre-open focus before showModal() moves focus into the dialog.
     previouslyFocused = document.activeElement as HTMLElement | null;
-    await tick();
+    // Open as a modal — provides built-in focus trap, aria-modal, and Esc handling.
+    dialog?.showModal();
+    // Clamp inner panel position to viewport, then focus the textarea.
+    // We read the inner .composer size after layout via a micro-task.
+    await Promise.resolve();
     clampToViewport();
     textarea?.focus();
-    // Defer so the opening click doesn't immediately count as "outside".
-    setTimeout(() => window.addEventListener('mousedown', handleOutside), 0);
   });
+
   onDestroy(() => {
-    window.removeEventListener('mousedown', handleOutside);
-    // Return focus to whatever held it before the composer opened.
+    // Close the native dialog if it is still open (e.g. parent removes component
+    // programmatically rather than through a cancel/submit event).
+    if (dialog?.open) dialog.close();
+    // Explicitly return focus to whatever held it before the composer opened, so
+    // keyboard users aren't dropped at the top of the document if the WebKit
+    // native focus-return doesn't fire on unmount (WCAG 2.4.3, #30).
     previouslyFocused?.focus?.();
   });
 </script>
 
-<div
-  bind:this={panel}
-  class="composer"
-  style="left: {left}px; top: {top}px;"
-  role="dialog"
+<!--
+  The <dialog> element is the accessible modal container. showModal() sets
+  aria-modal="true" implicitly and traps focus inside it. The inner .composer
+  div carries the visible styling; the <dialog> itself is reset to transparent
+  so the existing card styles apply unchanged.
+-->
+<dialog
+  bind:this={dialog}
+  class="composer-dialog"
   aria-label="Add a comment"
+  on:cancel={handleCancel}
+  on:click={handleDialogClick}
 >
-  {#if quotedText}
-    <p class="quote" title={quotedText}>{quotedText}</p>
-  {/if}
-  <textarea
-    bind:this={textarea}
-    bind:value={body}
-    class="composer-input"
-    placeholder="Add a comment…"
-    rows="3"
-    on:keydown={handleKeydown}
-  ></textarea>
-  <div class="composer-actions">
-    <span class="hint"><kbd>↵</kbd> to save</span>
-    <span class="spacer"></span>
-    <button type="button" class="c-btn c-secondary" on:click={() => dispatch('cancel')}>Cancel</button>
-    <button type="button" class="c-btn c-primary" on:click={save}>Comment</button>
+  <div
+    class="composer"
+    style="left: {left}px; top: {top}px;"
+  >
+    {#if quotedText}
+      <p class="quote" title={quotedText}>{quotedText}</p>
+    {/if}
+    <textarea
+      bind:this={textarea}
+      bind:value={body}
+      class="composer-input"
+      placeholder="Add a comment…"
+      rows="3"
+      on:keydown={handleKeydown}
+    ></textarea>
+    <div class="composer-actions">
+      <span class="hint"><kbd>↵</kbd> to save</span>
+      <span class="spacer"></span>
+      <button type="button" class="c-btn c-secondary" on:click={() => dispatch('cancel')}>Cancel</button>
+      <button type="button" class="c-btn c-primary" on:click={save}>Comment</button>
+    </div>
   </div>
-</div>
+</dialog>
 
 <style>
+  /* Reset native <dialog> chrome so the inner .composer card stays intact. */
+  .composer-dialog {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    overflow: visible;
+    /* Allow the inner card to be absolutely positioned within the viewport. */
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    /* The scrim is handled via ::backdrop below. */
+    pointer-events: none;
+  }
+  /* Re-enable pointer events on the inner content so clicks register. */
+  .composer-dialog .composer {
+    pointer-events: auto;
+  }
+  /* Subtle scrim behind the composer to signal modal context. */
+  .composer-dialog::backdrop {
+    background: transparent;
+  }
+
   .composer {
     position: fixed;
     z-index: var(--z-pop);
