@@ -41,15 +41,24 @@
 
   // Auto-fit diagram to viewport on mount (once elements are bound and SVG is rendered)
   let hasFittedOnMount = false;
+  let fitRaf = 0;
+  let copyTimer = 0;
   $effect(() => {
     if (viewportEl && canvasEl && !hasFittedOnMount) {
       // Wait a frame for the SVG to render and have dimensions
-      requestAnimationFrame(() => {
+      fitRaf = requestAnimationFrame(() => {
         computeViewportHeight();
         fit();
         hasFittedOnMount = true;
       });
     }
+  });
+
+  // Clear any pending timer/rAF on teardown — PreviewPane unmounts these
+  // containers frequently, so a pending callback could fire after destroy.
+  $effect(() => () => {
+    cancelAnimationFrame(fitRaf);
+    clearTimeout(copyTimer);
   });
 
   /** Set viewport height based on SVG aspect ratio at available width, capped at 70vh. */
@@ -148,7 +157,8 @@
     const ok = await copyDiagramAsPng(canvasEl);
     if (ok) {
       copyFeedback = true;
-      setTimeout(() => { copyFeedback = false; }, 1500);
+      clearTimeout(copyTimer);
+      copyTimer = setTimeout(() => { copyFeedback = false; }, 1500);
     }
   }
 
@@ -194,7 +204,7 @@
   </div>
 
   <!-- Top-right toolbar -->
-  <div class="mc-toolbar mc-toolbar-top" class:visible={hovering || true}>
+  <div class="mc-toolbar mc-toolbar-top" class:visible={hovering}>
     <button class="mc-btn" title={expanded ? 'Collapse' : 'Expand full-width'} onclick={toggleExpand}>
       {#if expanded}
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 1L1 1 1 5M11 1l4 0 0 4M5 15l-4 0 0-4M11 15l4 0 0-4"/></svg>
@@ -215,7 +225,7 @@
   </div>
 
   <!-- Bottom-right toolbar: pan + zoom -->
-  <div class="mc-toolbar mc-toolbar-bottom" class:visible={hovering || true}>
+  <div class="mc-toolbar mc-toolbar-bottom" class:visible={hovering}>
     <div class="mc-nav-grid">
       <button class="mc-btn mc-nav-up" title="Pan up" onclick={panUp}>
         <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3l5 6H3z"/></svg>
@@ -242,7 +252,7 @@
   </div>
 
   <!-- Bottom-left hint -->
-  <div class="mc-hint" class:visible={hovering || true}>
+  <div class="mc-hint" class:visible={hovering}>
     Scroll to pan · Ctrl+scroll to zoom
   </div>
 </div>
