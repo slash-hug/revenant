@@ -303,15 +303,40 @@ pub fn save_annotations_to_path(
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-/// Rename `sidecar_path` to `<path>.bak` and return a `Quarantined` result.
+/// Pick a backup path that does not clobber an existing backup.
+///
+/// Returns `<path>.bak` if free; otherwise the first free `<path>.bak.1`,
+/// `<path>.bak.2`, … so an earlier quarantine's backup is never overwritten.
+fn next_available_backup_path(sidecar_path: &Path) -> PathBuf {
+    let mut base = sidecar_path.as_os_str().to_owned();
+    base.push(".bak");
+    let base = PathBuf::from(base);
+
+    if !base.exists() {
+        return base;
+    }
+
+    for n in 1u32.. {
+        let mut candidate = base.as_os_str().to_owned();
+        candidate.push(format!(".{n}"));
+        let candidate = PathBuf::from(candidate);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    // Unreachable in practice (u32::MAX iterations), but keep the type total.
+    base
+}
+
+/// Rename `sidecar_path` to a non-colliding `<path>.bak` (or `<path>.bak.N`)
+/// and return a `Quarantined` result.
 fn quarantine(
     sidecar_path: &Path,
     current_doc_hash: &str,
     reason: &str,
 ) -> Result<LoadResult, AnnotationError> {
-    let mut bak_path = sidecar_path.as_os_str().to_owned();
-    bak_path.push(".bak");
-    let bak_path = PathBuf::from(bak_path);
+    let bak_path = next_available_backup_path(sidecar_path);
 
     fs::rename(sidecar_path, &bak_path)?;
 
