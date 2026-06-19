@@ -231,6 +231,57 @@ mod integration {
         assert_eq!(SIMILARITY_THRESHOLD, 0.75);
     }
 
+    // ── Regression #50: reported range is clamped to EOF ──────────────────────
+    //
+    // The fuzzy path offsets the matched window in the NEW document by line
+    // counts derived from the OLD annotation (`before_line_count` +
+    // `quoted_line_count`). When the matched window sits at the very end of a
+    // shorter NEW document, that offset overshoots the last valid line index,
+    // yielding an out-of-range `Anchored` range. The reported range must be
+    // clamped to the new document's last line index.
+    //
+    // Construction: a 2-line `context_before` matches a window at EOF, and an
+    // empty `quoted_text` (which forces `quoted_line_count = 1`) pushes the
+    // offset one line past the window — i.e. past EOF — when unclamped.
+
+    #[test]
+    fn trap50_reanchor_clamps_anchor_end_to_eof() {
+        // NEW document: 4 lines (indices 0..=3); the matchable context sits at
+        // the very end (lines 2 and 3).
+        let edited = "filler 0\nfiller 1\nctx a\nctx b\n";
+        let new_hash = sha256_hex(edited.as_bytes());
+
+        // OLD document differs (forces the fuzzy path rather than hash short-circuit).
+        let old_hash = sha256_hex(b"some older, different document body");
+
+        // 2-line context_before, empty quoted_text, empty context_after.
+        // Unclamped this produces anchor_start = window_start(2) + before(2) = 4,
+        // and anchor_end = 4 — both past the last valid index (3).
+        let a = ann("trap50", 2, 2, "", "ctx a\nctx b", "");
+
+        let r = reanchor(&a, edited, &new_hash, &old_hash);
+
+        // The reported range must never exceed the last valid line index of the
+        // NEW document, regardless of match status.
+        let last_idx = (edited.lines().count() as u32).saturating_sub(1);
+        assert!(
+            r.annotation.line_end <= last_idx,
+            "anchor_end {} must be <= last line index {}",
+            r.annotation.line_end,
+            last_idx
+        );
+        assert!(
+            r.annotation.line_start <= last_idx,
+            "anchor_start {} must be <= last line index {}",
+            r.annotation.line_start,
+            last_idx
+        );
+        assert!(
+            r.annotation.line_start <= r.annotation.line_end,
+            "anchor_start must not exceed anchor_end"
+        );
+    }
+
     // ── Regression #49: similarity counts characters, not bytes ───────────────
 
     #[test]
