@@ -451,26 +451,20 @@ pub fn open_file(
     let p = std::path::Path::new(&path);
     let opened = crate::file_io::open_file(p).map_err(file_io_err)?;
 
-    // Confinement check using configured vault dirs (best-effort; falls back to
-    // allowing any path when no vaults are configured yet so first-run UX works).
-    let settings_path = settings_file_path();
-    if let Ok(settings) = crate::settings::get_settings(&settings_path) {
-        if !settings.vaults.is_empty() {
-            let allowed: Vec<std::path::PathBuf> = settings.vaults.iter()
-                .filter_map(|v| std::fs::canonicalize(v).ok())
-                .collect();
-            // Also allow the document's own parent directory (opened doc can be
-            // anywhere — the vault constraint applies to writes/exports, not reads
-            // of arbitrary user files they drag-open). Use the opened canonical path.
-            let doc_dir = opened.path.parent().map(|d| d.to_path_buf());
-            let mut check_dirs = allowed;
-            if let Some(d) = doc_dir {
-                check_dirs.push(d);
-            }
-            crate::paths::assert_confined(&opened.path, &check_dirs)
-                .map_err(|e| IpcError { code: "PATH_CONFINED".into(), message: e.to_string() })?;
-        }
-    }
+    // No vault confinement on open — intentionally. Revenant is a markdown
+    // viewer, so opening an arbitrary `.md` the user explicitly chose (OS dialog,
+    // CLI arg, drag-open) is the whole point; the user's open action IS the trust
+    // boundary for reads. `file_io::open_file` already requires a readable `.md`.
+    //
+    // (#32) The vault check that used to live here was security theater: it always
+    // appended the opened doc's OWN parent dir to the allowed set, so it could
+    // never reject — `opened.path` always starts_with its own parent. Removing it
+    // drops a misleading no-op (and a settings read on every open).
+    //
+    // Confinement that actually constrains untrusted input is enforced where it
+    // matters: `save_file` confines writes to configured vaults, and the commands
+    // that take an untrusted `doc_path` (export, annotations, image bytes) are
+    // confined to the open-documents set (#85) tracked just below.
 
     // Track this document as open so the source-read confinement on
     // export/annotation commands can authorize against it. Done regardless of
