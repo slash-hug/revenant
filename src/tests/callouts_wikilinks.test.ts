@@ -167,6 +167,28 @@ describe('callout core rule — collapsible variants', () => {
     expect(staticDoc.querySelector('div.callout-title')).not.toBeNull();
     expect(staticDoc.querySelector('summary.callout-title')).toBeNull();
   });
+
+  it('chevron CSS selector target: summary.callout-title is a child of details.callout', () => {
+    // The disclosure chevron uses selector:
+    //   .preview-content details.callout summary.callout-title::after
+    // This test confirms the rendered markup matches that structural assumption
+    // so a refactor that changes the tag/nesting would fail CI immediately.
+    const html = renderMarkdown('> [!warning]- Closed\n> Body.');
+    const doc = parse(html);
+
+    // The <details> wrapper must carry the callout class.
+    const details = doc.querySelector('details.callout');
+    expect(details).not.toBeNull();
+
+    // The <summary> with callout-title must be a direct child of that <details>.
+    const summary = details?.querySelector(':scope > summary.callout-title');
+    expect(summary).not.toBeNull();
+
+    // Static callout must NOT produce a <details> parent for any .callout-title.
+    const staticHtml = renderMarkdown('> [!warning] Static\n> Body.');
+    const staticDoc = parse(staticHtml);
+    expect(staticDoc.querySelector('details.callout summary.callout-title')).toBeNull();
+  });
 });
 
 describe('callout core rule — data attributes (TRAP 4 / B-4)', () => {

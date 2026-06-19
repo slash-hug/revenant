@@ -276,6 +276,53 @@
 }
 
 /*
+ * Disclosure chevron — appears ONLY on collapsible callouts (summary.callout-title
+ * inside details.callout). Static callouts use div.callout-title and never match
+ * this selector. The chevron is pushed to the right via margin-left:auto so it
+ * does not crowd the family icon or title text.
+ *
+ * Implementation: mask-image + background-color:currentColor so the chevron
+ * inherits the family title color in both light and dark themes without
+ * needing a separate SVG data-URI per family or an inline style (which is
+ * blocked by the DOMPurify / CSP posture).
+ *
+ * The transition is gated behind prefers-reduced-motion: no animation is
+ * emitted when the user has requested reduced motion (WCAG 2.3.3 / AAA).
+ */
+.preview-content details.callout summary.callout-title::after {
+  content: "";
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  flex-shrink: 0;
+  background-color: currentColor;
+  /* Chevron-down SVG (16×16, stroke-based, matches the CALLOUT_ICONS style) */
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  transform: rotate(0deg);
+  transition: transform 200ms ease;
+}
+
+/* Rotate chevron up when the <details> is open */
+.preview-content details.callout[open] summary.callout-title::after {
+  transform: rotate(180deg);
+}
+
+/* Respect prefers-reduced-motion: remove the rotation transition */
+@media (prefers-reduced-motion: reduce) {
+  .preview-content details.callout summary.callout-title::after {
+    transition: none;
+  }
+}
+
+/*
  * Reveal body margin when details is open. The .callout-body sits directly
  * inside <details> after <summary>, so top margin provides breathing room.
  */
