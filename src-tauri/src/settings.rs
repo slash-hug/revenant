@@ -75,6 +75,25 @@ pub enum SettingsError {
 
     #[error("Unknown schema version {version}; settings quarantined to {backup_path}")]
     UnknownVersion { version: u32, backup_path: PathBuf },
+
+    #[error("Failed to migrate settings from version {version}; original quarantined to {backup_path}")]
+    MigrationFailed { version: u32, backup_path: PathBuf },
+}
+
+/// Quarantine the file at `path` by renaming it to a sibling `.bak` file.
+///
+/// Used whenever the on-disk settings cannot be safely loaded (unknown future
+/// version, or a known-version migration that fails to deserialize). The
+/// original is NEVER discarded — it is preserved so the user can recover it.
+fn quarantine_to_bak(path: &PathBuf) -> Result<PathBuf, SettingsError> {
+    let mut backup_path = path.clone();
+    let ext = backup_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("json");
+    backup_path.set_extension(format!("{ext}.bak"));
+    std::fs::rename(path, &backup_path)?;
+    Ok(backup_path)
 }
 
 /// Load settings from a file path, applying migration or quarantine as needed (C5).
@@ -101,7 +120,19 @@ pub fn load_settings(path: &PathBuf) -> Result<Settings, SettingsError> {
                     serde_json::Value::Number(serde_json::Number::from(CURRENT_SCHEMA_VERSION)),
                 );
             }
-            let mut settings: Settings = serde_json::from_value(obj).unwrap_or_default();
+            // On deserialization failure, DO NOT reset to defaults and overwrite —
+            // that would silently destroy the user's original settings. Instead
+            // quarantine the original to .bak and return defaults without writing.
+            let mut settings: Settings = match serde_json::from_value(obj) {
+                Ok(s) => s,
+                Err(_) => {
+                    let backup_path = quarantine_to_bak(path)?;
+                    return Err(SettingsError::MigrationFailed {
+                        version,
+                        backup_path,
+                    });
+                }
+            };
             settings.schema_version = CURRENT_SCHEMA_VERSION;
             save_settings(path, &settings)?;
             Ok(settings)
@@ -120,20 +151,26 @@ pub fn load_settings(path: &PathBuf) -> Result<Settings, SettingsError> {
                     serde_json::Value::Number(serde_json::Number::from(CURRENT_SCHEMA_VERSION)),
                 );
             }
-            let mut settings: Settings = serde_json::from_value(obj).unwrap_or_default();
+            // On deserialization failure, DO NOT reset to defaults and overwrite —
+            // that would silently destroy the user's original settings. Instead
+            // quarantine the original to .bak and return defaults without writing.
+            let mut settings: Settings = match serde_json::from_value(obj) {
+                Ok(s) => s,
+                Err(_) => {
+                    let backup_path = quarantine_to_bak(path)?;
+                    return Err(SettingsError::MigrationFailed {
+                        version: v,
+                        backup_path,
+                    });
+                }
+            };
             settings.schema_version = CURRENT_SCHEMA_VERSION;
             save_settings(path, &settings)?;
             Ok(settings)
         }
         v => {
             // Unknown/future version — quarantine to .bak, return default (C5).
-            let mut backup_path = path.clone();
-            let ext = backup_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("json");
-            backup_path.set_extension(format!("{ext}.bak"));
-            std::fs::rename(path, &backup_path)?;
+            let backup_path = quarantine_to_bak(path)?;
             Err(SettingsError::UnknownVersion {
                 version: v,
                 backup_path,

@@ -182,6 +182,63 @@ fn test_unknown_future_version_quarantined() {
     );
 }
 
+// ── Test 5b: migration deserialization failure → quarantine, no data loss ────
+
+/// Regression for #53: when an older-version settings file has a malformed
+/// field, migration deserialization fails. The original MUST be quarantined to
+/// `.bak` (preserved verbatim) rather than reset to defaults and overwritten,
+/// which would be silent data loss.
+#[test]
+fn test_migration_parse_failure_quarantines_without_dataloss() {
+    let dir = TempDir::new().unwrap();
+    let path = tmp_settings_path(&dir);
+
+    // An older-version file (v0, no schema_version field) with a malformed
+    // field: `vaults` is a string, not the expected array. Deserialization into
+    // Settings will fail during migration.
+    let malformed_legacy_json = r#"{
+        "vaults": "this-should-be-an-array-not-a-string",
+        "default_export_subfolder": "",
+        "theme": "light",
+        "export_on_save": false,
+        "rest_key_ref": null
+    }"#;
+    std::fs::write(&path, malformed_legacy_json).unwrap();
+
+    let result = load_settings(&path);
+
+    // (a) It must NOT silently succeed by returning defaults written over the file.
+    assert!(
+        matches!(result, Err(SettingsError::MigrationFailed { version: 0, .. })),
+        "malformed migration must return MigrationFailed, got: {result:?}"
+    );
+
+    // (b) The original file must have been quarantined to .bak — not destroyed.
+    assert!(
+        !path.exists(),
+        "original settings file should have been quarantined (renamed to .bak)"
+    );
+    let backup = dir.path().join("settings.json.bak");
+    assert!(
+        backup.exists(),
+        "quarantined backup file should exist at .bak path"
+    );
+
+    // (c) The .bak content must be the ORIGINAL bytes — preserved, not overwritten
+    //     with defaults.
+    let backup_content = std::fs::read_to_string(&backup).unwrap();
+    assert_eq!(
+        backup_content, malformed_legacy_json,
+        "quarantined .bak must contain the original file content verbatim, \
+         proving the original was preserved (not reset to defaults)"
+    );
+    // Defaults must NOT have leaked into the .bak.
+    assert!(
+        !backup_content.contains("\"schema_version\""),
+        "quarantined original must not have been rewritten with a schema_version"
+    );
+}
+
 // ── Test 6: default schema_version is 1 ──────────────────────────────────────
 
 #[test]
