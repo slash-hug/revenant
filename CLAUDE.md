@@ -97,7 +97,7 @@ The Obsidian REST key is stored in the OS keychain via the `keyring` crate. Only
 - All fs ops go through the Rust core — no blanket webview ACL
 - markdown-it output sanitized with DOMPurify before DOM injection
 - Mermaid SVG output also sanitized
-- Strict CSP in tauri.conf.json (allows eval/blob for Mermaid workers)
+- Strict CSP in tauri.conf.json. Hardened with `object-src/base-uri/frame-ancestors/frame-src 'none'` (the app embeds no plugins, sets no `<base>`, and frames nothing). `script-src 'unsafe-eval'` (+ `blob:`) is a **deliberate, accepted exception** scoped to the Mermaid worker — mitigated because all DOM HTML is DOMPurify-sanitized first and Mermaid runs `securityLevel:'strict'`. Removing it is tracked in #46 pending a live check that Mermaid v11 still renders without eval; do not drop it without that verification.
 
 ### Fuzzy re-anchoring
 `reanchor.rs` uses the `similar` crate. Algorithm: content-hash short-circuit → probe stored line range → fuzzy match `context_before + quoted_text + context_after` with normalized similarity ≥ 0.75. Below threshold → status: detached. Tie-break: smallest line-distance, then earliest position.
