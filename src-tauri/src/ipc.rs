@@ -942,8 +942,25 @@ pub use crate::obsidian::ConnStatus;
 /// Windows Credential Manager write→delete race requires real-hardware
 /// verification (see lessons.md A6 / `#[ignore]` integration test in
 /// settings_tests.rs D3).
+/// Reject an empty or whitespace-only REST key at the IPC boundary.
+///
+/// Storing a blank credential would still flip `rest_key_ref = Some`, leaving the
+/// app in a confusing "configured but Unauthorized" state with an empty key in
+/// the keychain (#46). We validate the shape only — REST tokens are opaque and
+/// have no fixed length, so no length/format check is imposed.
+fn validate_rest_key(key: &str) -> IpcResult<()> {
+    if key.trim().is_empty() {
+        return Err(IpcError {
+            code: "INVALID_KEY".into(),
+            message: "REST API key must not be empty or whitespace".into(),
+        });
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn set_rest_key(key: String) -> IpcResult<Settings> {
+    validate_rest_key(&key)?;
     tauri::async_runtime::spawn_blocking(move || -> IpcResult<Settings> {
         let path = settings_file_path();
         // Store the raw key in the OS keychain.
@@ -1276,6 +1293,24 @@ fn settings_file_path() -> std::path::PathBuf {
 #[cfg(test)]
 mod ipc_tests {
     use super::js_string_literal;
+
+    // ── #46: REST key shape validation (validate_rest_key) ────────────────────
+    use super::validate_rest_key;
+
+    #[test]
+    fn validate_rest_key_rejects_empty_and_whitespace() {
+        assert!(validate_rest_key("").is_err());
+        assert!(validate_rest_key("   ").is_err());
+        assert!(validate_rest_key("\t\n ").is_err());
+    }
+
+    #[test]
+    fn validate_rest_key_accepts_a_real_key() {
+        assert!(validate_rest_key("abc123").is_ok());
+        // Surrounding whitespace is allowed as long as there's real content
+        // (we validate shape, not format, and don't mutate the stored key).
+        assert!(validate_rest_key("  abc123  ").is_ok());
+    }
 
     // ── #85: source-read confinement (confine_open_doc) ───────────────────────
     use super::confine_open_doc;
