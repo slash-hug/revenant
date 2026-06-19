@@ -15,6 +15,7 @@
    */
   import { createEventDispatcher, onMount } from 'svelte';
   import ThemeToggle from './ThemeToggle.svelte';
+  import { isMac } from './util/platform';
 
   type ViewMode = 'source' | 'preview' | 'split';
 
@@ -34,8 +35,7 @@
     openSettings: void;
   }>();
 
-  const isMac = typeof navigator !== 'undefined' && /Mac|iP(hone|ad)/.test(navigator.platform);
-  const paletteHint = isMac ? '⌘K' : 'Ctrl K';
+  const paletteHint = isMac() ? '⌘K' : 'Ctrl K';
 
   const modes: { id: ViewMode; label: string }[] = [
     { id: 'source', label: 'Source' },

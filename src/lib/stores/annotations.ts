@@ -137,9 +137,7 @@ function createAnnotationsStore() {
    * chain exists to prevent.
    */
   async function save(): Promise<void> {
-    saveChain = saveChain.then(runSave).catch(() => {
-      // Error already handled in runSave (surfaced + chain reset).
-    });
+    enqueueSave();
     return saveChain;
   }
 

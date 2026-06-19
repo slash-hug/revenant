@@ -65,6 +65,7 @@ import MarkdownIt from 'markdown-it';
 // The ambient module declaration in markdown-it-footnote.d.ts stubs the types.
 import MarkdownItFootnote from 'markdown-it-footnote';
 import DOMPurify, { type Config as DOMPurifyConfig } from 'dompurify';
+import { escapeHtml } from '../util/html';
 
 // ---------------------------------------------------------------------------
 // DOMPurify config
@@ -751,6 +752,31 @@ async function loadHljs() {
 let _mermaidPromise: Promise<typeof import('mermaid')['default']> | null = null;
 let _mermaidTheme: 'default' | 'dark' | null = null;
 
+/**
+ * Mermaid `themeVariables` for the app's dark mode.
+ *
+ * Mermaid's stock 'dark' node fill (#1f2020) is almost the same as the app's
+ * dark card, so diagrams read as faint outlines. Lift the node fill off the
+ * background and use the app's accent border + light text for contrast.
+ *
+ * Shared by both the live-preview (`loadMermaid`) and the export
+ * (`renderMermaidForExport`) paths so the two stay in sync.
+ */
+const DARK_THEME_VARS = {
+  darkMode: true,
+  background: '#1C1D20',
+  mainBkg: '#2b2f37',          // flowchart node fill — lifted off the card
+  nodeBorder: '#7FA6CC',        // app accent
+  nodeTextColor: '#D6D7DA',
+  primaryColor: '#2b2f37',
+  primaryBorderColor: '#7FA6CC',
+  primaryTextColor: '#D6D7DA',
+  secondaryColor: '#343842',
+  tertiaryColor: '#23262d',
+  lineColor: '#9aa0a6',
+  textColor: '#D6D7DA',
+} as const;
+
 /** The Mermaid theme matching the app's current light/dark mode. */
 function currentMermaidTheme(): 'default' | 'dark' {
   return typeof document !== 'undefined' &&
@@ -779,25 +805,7 @@ async function loadMermaid() {
 
   const theme = currentMermaidTheme();
   if (theme !== _mermaidTheme) {
-    // Mermaid's stock 'dark' node fill (#1f2020) is almost the same as the app's
-    // dark card, so diagrams read as faint outlines. Lift the node fill off the
-    // background and use the app's accent border + light text for contrast.
-    const themeVariables = theme === 'dark'
-      ? {
-          darkMode: true,
-          background: '#1C1D20',
-          mainBkg: '#2b2f37',          // flowchart node fill — lifted off the card
-          nodeBorder: '#7FA6CC',        // app accent
-          nodeTextColor: '#D6D7DA',
-          primaryColor: '#2b2f37',
-          primaryBorderColor: '#7FA6CC',
-          primaryTextColor: '#D6D7DA',
-          secondaryColor: '#343842',
-          tertiaryColor: '#23262d',
-          lineColor: '#9aa0a6',
-          textColor: '#D6D7DA',
-        }
-      : undefined;
+    const themeVariables = theme === 'dark' ? DARK_THEME_VARS : undefined;
     mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme, themeVariables });
     _mermaidTheme = theme;
   }
@@ -897,22 +905,7 @@ export async function renderMermaidForExport(
     // Re-initialize only if the requested theme differs from the current one.
     // This mutates the shared _mermaidTheme singleton (see note in jsdoc above).
     if (theme !== _mermaidTheme) {
-      const themeVariables = theme === 'dark'
-        ? {
-            darkMode: true,
-            background: '#1C1D20',
-            mainBkg: '#2b2f37',
-            nodeBorder: '#7FA6CC',
-            nodeTextColor: '#D6D7DA',
-            primaryColor: '#2b2f37',
-            primaryBorderColor: '#7FA6CC',
-            primaryTextColor: '#D6D7DA',
-            secondaryColor: '#343842',
-            tertiaryColor: '#23262d',
-            lineColor: '#9aa0a6',
-            textColor: '#D6D7DA',
-          }
-        : undefined;
+      const themeVariables = theme === 'dark' ? DARK_THEME_VARS : undefined;
       mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme, themeVariables });
       _mermaidTheme = theme;
     }
@@ -928,17 +921,4 @@ export async function renderMermaidForExport(
     const msg = err instanceof Error ? escapeHtml(err.message) : 'Diagram error';
     return `<div class="mermaid-error" data-block-id="${blockId}"><strong>Diagram error:</strong> ${msg}</div>`;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
