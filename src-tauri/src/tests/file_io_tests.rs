@@ -17,14 +17,14 @@ mod integration {
         let path = dir.path().join("cycle.md");
         fs::write(&path, "# First\n").unwrap();
 
-        let opened = open_file(&path).unwrap();
+        let opened = open_file(&path, &[]).unwrap();
         let v1_hash = opened.content_hash.clone();
 
-        let v2_hash = save_file(&path, "# Second\n", &v1_hash).unwrap();
+        let v2_hash = save_file(&path, "# Second\n", &v1_hash, &[]).unwrap();
         assert_ne!(v1_hash, v2_hash);
         assert_eq!(v2_hash, sha256_hex(b"# Second\n"));
 
-        let reopened = open_file(&path).unwrap();
+        let reopened = open_file(&path, &[]).unwrap();
         assert_eq!(reopened.content, "# Second\n");
         assert_eq!(reopened.content_hash, v2_hash);
     }
@@ -37,9 +37,9 @@ mod integration {
         let path = dir.path().join("chain.md");
         fs::write(&path, "v1\n").unwrap();
 
-        let opened = open_file(&path).unwrap();
-        let h1 = save_file(&path, "v2\n", &opened.content_hash).unwrap();
-        let h2 = save_file(&path, "v3\n", &h1).unwrap();
+        let opened = open_file(&path, &[]).unwrap();
+        let h1 = save_file(&path, "v2\n", &opened.content_hash, &[]).unwrap();
+        let h2 = save_file(&path, "v3\n", &h1, &[]).unwrap();
         assert_eq!(h2, sha256_hex(b"v3\n"));
     }
 
@@ -50,14 +50,14 @@ mod integration {
         let path = dir.path().join("stale.md");
         fs::write(&path, "original\n").unwrap();
 
-        let opened = open_file(&path).unwrap();
+        let opened = open_file(&path, &[]).unwrap();
         let original_hash = opened.content_hash.clone();
 
         // First save succeeds.
-        let _h2 = save_file(&path, "intermediate\n", &original_hash).unwrap();
+        let _h2 = save_file(&path, "intermediate\n", &original_hash, &[]).unwrap();
 
         // Trying to save with the old hash now fails.
-        let err = save_file(&path, "attempted\n", &original_hash).unwrap_err();
+        let err = save_file(&path, "attempted\n", &original_hash, &[]).unwrap_err();
         assert!(
             format!("{}", err).contains("Hash mismatch"),
             "expected hash mismatch error"
@@ -78,7 +78,7 @@ mod integration {
         fs::write(&path, initial_content).unwrap();
 
         let stale_hash = sha256_hex(b"definitely wrong hash");
-        let err = save_file(&path, "new content\n", &stale_hash).unwrap_err();
+        let err = save_file(&path, "new content\n", &stale_hash, &[]).unwrap_err();
 
         // Must be a HashMismatch.
         let msg = format!("{}", err);
@@ -100,7 +100,7 @@ mod integration {
 
         let hash = sha256_hex(long_content.as_bytes());
         let short = "short\n";
-        let new_hash = save_file(&path, short, &hash).unwrap();
+        let new_hash = save_file(&path, short, &hash, &[]).unwrap();
 
         let on_disk = fs::read_to_string(&path).unwrap();
         assert_eq!(on_disk, short, "file must contain only the new shorter content");

@@ -449,7 +449,11 @@ pub fn open_file(
     path: String,
 ) -> IpcResult<FileResult> {
     let p = std::path::Path::new(&path);
-    let opened = crate::file_io::open_file(p).map_err(file_io_err)?;
+    // No vault confinement on open (see rationale below): pass an empty
+    // allowed-dirs set, which `file_io::open_file` treats as "unrestricted".
+    // Confinement now lives inside the fs layer (#86), so the empty set is the
+    // explicit, deliberate opt-out rather than a missing check.
+    let opened = crate::file_io::open_file(p, &[]).map_err(file_io_err)?;
 
     // No vault confinement on open — intentionally. Revenant is a markdown
     // viewer, so opening an arbitrary `.md` the user explicitly chose (OS dialog,
@@ -516,19 +520,35 @@ pub async fn save_file(
                 message: format!("cannot load settings for confinement check: {e}"),
             })?;
 
-            if !settings.vaults.is_empty() {
-                // Allowed dirs come ONLY from the pre-configured vault list — never
-                // from the (frontend-supplied, untrusted) target path.
-                let allowed: Vec<std::path::PathBuf> = settings.vaults.iter()
-                    .filter_map(|v| std::fs::canonicalize(v).ok())
-                    .collect();
-                crate::paths::assert_confined(&canon, &allowed)
-                    .map_err(|e| IpcError { code: "PATH_CONFINED".into(), message: e.to_string() })?;
-            }
-            // No vaults configured (first-run) → unrestricted; once configured every
-            // save must be inside them.
+            // Allowed dirs come ONLY from the pre-configured vault list — never
+            // from the (frontend-supplied, untrusted) target path, which would let
+            // any path authorize its own parent and make confinement a no-op.
+            //
+            // No vaults configured (first-run) → empty set → unrestricted; once
+            // configured every save must be inside them. The confinement itself is
+            // now enforced *inside* `file_io::save_file` (#86) so a caller cannot
+            // write outside the allowed set by skipping a separate check — we pass
+            // the allowed dirs through instead of asserting separately here. We
+            // canonicalize against `canon` (symlink-resolved) so confinement is on
+            // the real on-disk path.
+            let allowed: Vec<std::path::PathBuf> = settings.vaults.iter()
+                .filter_map(|v| std::fs::canonicalize(v).ok())
+                .collect();
 
-            let new_hash = crate::file_io::save_file(p, &request.content, &request.expected_hash)
+            // Fail closed: if vaults ARE configured but none could be
+            // canonicalized (all missing/inaccessible), the resolved set is
+            // empty — which `file_io::save_file` would treat as "unrestricted".
+            // An empty set must mean "unrestricted" ONLY in the genuine
+            // no-vaults-configured (first-run) case, never when confinement was
+            // requested but couldn't be resolved. Reject rather than fall open.
+            if !settings.vaults.is_empty() && allowed.is_empty() {
+                return Err(IpcError {
+                    code: "PATH_CONFINED".into(),
+                    message: "vaults are configured but none could be resolved; refusing to save unconfined".into(),
+                });
+            }
+
+            let new_hash = crate::file_io::save_file(&canon, &request.content, &request.expected_hash, &allowed)
                 .map_err(file_io_err)?;
             Ok((canon, new_hash, request.path))
         },

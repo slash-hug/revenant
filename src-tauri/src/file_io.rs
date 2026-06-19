@@ -4,8 +4,12 @@
 //! - A5/C6: `save_file(path, content, expected_hash)` — sha256 hash-based
 //!   optimistic concurrency.  A mismatch (disk content changed since the caller
 //!   last read it) returns `FileIoError::HashMismatch` and never writes.
-//! - A7: `.md` extension validation + path confinement (delegated to
-//!   `crate::paths`).
+//! - A7/#86: `.md` extension validation + path confinement. Confinement is
+//!   enforced *here*, inside the fs-touching layer: `open_file`/`save_file` take
+//!   the `allowed_dirs` set and call `crate::paths::assert_confined` themselves,
+//!   so no caller can bypass confinement by skipping a separate check. An empty
+//!   `allowed_dirs` means "unrestricted" (the deliberate open-any-`.md` /
+//!   first-run opt-out documented on each function).
 //! - Spec §6: friendly errors; no silent failures.
 //!
 //! # File-watcher
@@ -25,7 +29,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
-use crate::paths::{assert_markdown, PathError};
+use crate::paths::{assert_confined, assert_markdown, PathError};
 
 /// Error type for file I/O operations.
 #[derive(Debug, thiserror::Error)]
@@ -69,10 +73,28 @@ pub struct OpenedFile {
 /// Returns the content and its sha256 hex digest so the caller can pass the
 /// hash back to `save_file` for optimistic-concurrency checking.
 ///
-/// Errors if `path` is not a `.md` file or cannot be read.
-pub fn open_file(path: &Path) -> Result<OpenedFile, FileIoError> {
+/// Errors if `path` is not a `.md` file, escapes `allowed_dirs`, or cannot be
+/// read.
+///
+/// # Path confinement (#86)
+/// Confinement is enforced *inside this fs-touching layer* (not just in the
+/// `ipc` caller) so no caller — present or future — can read outside the
+/// allowed set by skipping a separate `assert_confined`. `allowed_dirs` should
+/// contain **canonicalized** directory paths. An **empty** slice means
+/// "unrestricted" (the deliberate open-any-`.md` trust model: the user's
+/// explicit open action — OS dialog / CLI arg / drag-open — is the boundary for
+/// reads; see `ipc::open_file`). Even when unrestricted, `assert_confined`'s
+/// `..`-traversal guard is NOT applied here for the unrestricted case because no
+/// dir set bounds it; pass a non-empty set to confine.
+pub fn open_file(path: &Path, allowed_dirs: &[PathBuf]) -> Result<OpenedFile, FileIoError> {
     // Validate extension before attempting I/O.
     assert_markdown(path).map_err(|_| FileIoError::NotMarkdown(path.to_path_buf()))?;
+
+    // Confinement at the fs layer (#86): when an allowed set is supplied, the
+    // path must resolve inside it (and contain no `..` traversal).
+    if !allowed_dirs.is_empty() {
+        assert_confined(path, allowed_dirs)?;
+    }
 
     let content = fs::read_to_string(path)?;
     let content_hash = sha256_hex(content.as_bytes());
@@ -103,18 +125,36 @@ pub fn open_file(path: &Path) -> Result<OpenedFile, FileIoError> {
 /// that ignore advisory locks can still race between our re-hash and write,
 /// but they will be detected by the re-hash if they finish before we read.
 ///
+/// # Path confinement (#86)
+/// Confinement is enforced *inside this fs-touching layer* — the layer that
+/// actually writes to disk — so a future caller cannot write outside the
+/// allowed set by forgetting a separate `assert_confined`. `allowed_dirs`
+/// should contain **canonicalized** directory paths. An **empty** slice means
+/// "unrestricted" (the first-run / no-vault-configured case; once vaults exist
+/// the caller passes them and every write is confined — see `ipc::save_file`,
+/// which fails *closed* if the vault list can't be loaded).
+///
 /// # Arguments
 /// * `path`          - Target file path (must have `.md` extension).
 /// * `content`       - New content to write.
 /// * `expected_hash` - sha256 hex digest the caller received from the last
 ///   `open_file` or successful `save_file`.
+/// * `allowed_dirs`  - Canonicalized dirs the write must stay within; empty =
+///   unrestricted.
 pub fn save_file(
     path: &Path,
     content: &str,
     expected_hash: &str,
+    allowed_dirs: &[PathBuf],
 ) -> Result<String, FileIoError> {
     // Validate extension.
     assert_markdown(path).map_err(|_| FileIoError::NotMarkdown(path.to_path_buf()))?;
+
+    // Confinement at the fs layer (#86): a non-empty allowed set bounds every
+    // write (and rejects `..` traversal). Checked before any file is opened.
+    if !allowed_dirs.is_empty() {
+        assert_confined(path, allowed_dirs)?;
+    }
 
     // Open the file for read+write so we can re-hash from the same fd.
     let file = fs::OpenOptions::new()
@@ -357,7 +397,7 @@ mod tests {
     fn open_file_returns_content_and_hash() {
         let dir = TempDir::new().unwrap();
         let path = write_tmp_md(&dir, "test.md", "# Hello");
-        let opened = open_file(&path).unwrap();
+        let opened = open_file(&path, &[]).unwrap();
         assert_eq!(opened.content, "# Hello");
         assert_eq!(opened.content_hash, sha256_hex(b"# Hello"));
     }
@@ -367,8 +407,53 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("notes.txt");
         fs::write(&path, "text").unwrap();
-        let err = open_file(&path).unwrap_err();
+        let err = open_file(&path, &[]).unwrap_err();
         assert!(matches!(err, FileIoError::NotMarkdown(_)));
+    }
+
+    #[test]
+    fn open_file_rejects_path_outside_allowed_dirs() {
+        // #86: confinement is enforced at the fs layer — a path outside the
+        // allowed set is rejected here, not only in the ipc wrapper.
+        let allowed_dir = TempDir::new().unwrap();
+        let outside_dir = TempDir::new().unwrap();
+        let path = write_tmp_md(&outside_dir, "secret.md", "# secret");
+
+        let allowed =
+            vec![fs::canonicalize(allowed_dir.path()).unwrap()];
+        let err = open_file(&path, &allowed).unwrap_err();
+        assert!(
+            matches!(err, FileIoError::Path(PathError::Confined(_))),
+            "open of a path outside allowed_dirs must be Confined, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn open_file_rejects_dotdot_traversal() {
+        // #86: a `..` traversal that lexically prefix-matches the allowed dir
+        // must be rejected at the fs layer.
+        let dir = TempDir::new().unwrap();
+        let allowed = vec![fs::canonicalize(dir.path()).unwrap()];
+        // <allowed>/sub/../escape.md — prefix-matches allowed but escapes it.
+        let traversal = allowed[0].join("sub").join("..").join("escape.md");
+        let err = open_file(&traversal, &allowed).unwrap_err();
+        assert!(
+            matches!(err, FileIoError::Path(PathError::Confined(_))),
+            "open of a `..` traversal must be Confined, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn open_file_inside_allowed_dir_succeeds() {
+        // Sanity: a confined open of an in-bounds file still works.
+        let dir = TempDir::new().unwrap();
+        write_tmp_md(&dir, "ok.md", "# ok");
+        let allowed = vec![fs::canonicalize(dir.path()).unwrap()];
+        // Use the canonicalized path so the lexical confinement check matches
+        // (macOS temp dirs canonicalize /var → /private/var).
+        let path = allowed[0].join("ok.md");
+        let opened = open_file(&path, &allowed).unwrap();
+        assert_eq!(opened.content, "# ok");
     }
 
     // ── save_file tests ───────────────────────────────────────────────────────
@@ -377,9 +462,9 @@ mod tests {
     fn save_file_round_trip() {
         let dir = TempDir::new().unwrap();
         let path = write_tmp_md(&dir, "doc.md", "original");
-        let opened = open_file(&path).unwrap();
+        let opened = open_file(&path, &[]).unwrap();
 
-        let new_hash = save_file(&path, "updated", &opened.content_hash).unwrap();
+        let new_hash = save_file(&path, "updated", &opened.content_hash, &[]).unwrap();
         assert_eq!(new_hash, sha256_hex(b"updated"));
 
         let on_disk = fs::read_to_string(&path).unwrap();
@@ -392,9 +477,9 @@ mod tests {
         // new content (no trailing bytes) and clean up its staging file.
         let dir = TempDir::new().unwrap();
         let path = write_tmp_md(&dir, "doc.md", "a much longer original body");
-        let opened = open_file(&path).unwrap();
+        let opened = open_file(&path, &[]).unwrap();
 
-        let new_hash = save_file(&path, "short", &opened.content_hash).unwrap();
+        let new_hash = save_file(&path, "short", &opened.content_hash, &[]).unwrap();
         assert_eq!(new_hash, sha256_hex(b"short"));
         assert_eq!(fs::read_to_string(&path).unwrap(), "short");
 
@@ -406,7 +491,7 @@ mod tests {
         );
 
         // A second save round-trips against the new hash.
-        let h2 = save_file(&path, "second update", &new_hash).unwrap();
+        let h2 = save_file(&path, "second update", &new_hash, &[]).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "second update");
         assert_eq!(h2, sha256_hex(b"second update"));
     }
@@ -420,7 +505,7 @@ mod tests {
         fs::write(&path, "external change").unwrap();
 
         let stale_hash = sha256_hex(b"original");
-        let err = save_file(&path, "my change", &stale_hash).unwrap_err();
+        let err = save_file(&path, "my change", &stale_hash, &[]).unwrap_err();
         assert!(matches!(err, FileIoError::HashMismatch { .. }));
 
         // File must remain at the externally-written content.
@@ -433,8 +518,62 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("notes.txt");
         fs::write(&path, "text").unwrap();
-        let err = save_file(&path, "new", "anyhash").unwrap_err();
+        let err = save_file(&path, "new", "anyhash", &[]).unwrap_err();
         assert!(matches!(err, FileIoError::NotMarkdown(_)));
+    }
+
+    #[test]
+    fn save_file_rejects_path_outside_allowed_dirs() {
+        // #86: the fs-writing layer enforces confinement itself. A save target
+        // outside the allowed set is rejected before any write, and the
+        // original on-disk content is untouched.
+        let allowed_dir = TempDir::new().unwrap();
+        let outside_dir = TempDir::new().unwrap();
+        let path = write_tmp_md(&outside_dir, "victim.md", "original");
+        let hash = sha256_hex(b"original");
+
+        let allowed = vec![fs::canonicalize(allowed_dir.path()).unwrap()];
+        let err = save_file(&path, "attacker content", &hash, &allowed).unwrap_err();
+        assert!(
+            matches!(err, FileIoError::Path(PathError::Confined(_))),
+            "save to a path outside allowed_dirs must be Confined, got {err:?}"
+        );
+        // The out-of-bounds file must be left exactly as it was.
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+    }
+
+    #[test]
+    fn save_file_rejects_dotdot_traversal() {
+        // #86: a `..` traversal that lexically prefix-matches the allowed dir
+        // must be rejected at the fs layer (no write, no temp file).
+        let dir = TempDir::new().unwrap();
+        let path = write_tmp_md(&dir, "real.md", "original");
+        let allowed = vec![fs::canonicalize(dir.path()).unwrap()];
+
+        // <allowed>/sub/../real.md resolves back inside but contains `..`; the
+        // traversal guard must reject it outright.
+        let traversal = allowed[0].join("sub").join("..").join("real.md");
+        let err = save_file(&traversal, "attacker", "anyhash", &allowed).unwrap_err();
+        assert!(
+            matches!(err, FileIoError::Path(PathError::Confined(_))),
+            "save via a `..` traversal must be Confined, got {err:?}"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+    }
+
+    #[test]
+    fn save_file_inside_allowed_dir_succeeds() {
+        // Sanity: a confined save of an in-bounds file still round-trips.
+        let dir = TempDir::new().unwrap();
+        write_tmp_md(&dir, "doc.md", "original");
+        let allowed = vec![fs::canonicalize(dir.path()).unwrap()];
+        // Canonicalized path so the lexical confinement check matches on macOS.
+        let path = allowed[0].join("doc.md");
+        let opened = open_file(&path, &[]).unwrap();
+
+        let new_hash = save_file(&path, "updated", &opened.content_hash, &allowed).unwrap();
+        assert_eq!(new_hash, sha256_hex(b"updated"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "updated");
     }
 
     // ── atomic_write_bytes ────────────────────────────────────────────────────
