@@ -47,11 +47,12 @@
   import type { Command } from './lib/commandFilter';
   import { generateReview } from './lib/ReviewExporter';
   import { basename } from './lib/util/path';
+  import { isMac as isMacPlatform } from './lib/util/platform';
 
   type ViewMode = 'source' | 'preview' | 'split';
 
   // Platform-aware shortcut glyphs for palette hints.
-  const isMac = typeof navigator !== 'undefined' && /Mac|iP(hone|ad)/.test(navigator.platform);
+  const isMac = isMacPlatform();
   const mod = isMac ? '⌘' : 'Ctrl';
 
   // Device-local layout prefs (#18), persisted in localStorage.

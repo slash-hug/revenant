@@ -31,6 +31,7 @@
     stripFrontmatter,
   } from './render/markdown';
   import type { AnchorV1, BlockAnchor } from './types/ipc';
+  import { isMac } from './util/platform';
   import AnnotationSeals from './AnnotationSeals.svelte';
   import {
     annotationFocus,
@@ -63,9 +64,7 @@
   }>();
 
   // Shortcut hint shown on the "+ Add comment" affordance (#10 discoverability).
-  const _isMac = typeof navigator !== 'undefined'
-    && (/Mac/i.test(navigator.platform || '') || /Mac OS X/i.test(navigator.userAgent || ''));
-  const addCommentShortcut = _isMac ? '⌘⌥M' : 'Ctrl+Alt+M';
+  const addCommentShortcut = isMac() ? '⌘⌥M' : 'Ctrl+Alt+M';
 
   // "+ Add comment" affordance shown at the selection (mirrors EditorPane).
   let showAddComment = false;

@@ -29,6 +29,7 @@
   import { annotationsStore } from './stores/annotations';
   import { annotationFocus, focusAnnotation, hoverAnnotation, setAnchorRect } from './stores/annotationFocus';
   import { findSpan } from './annotationHighlight';
+  import { isMac } from './util/platform';
 
   // -------------------------------------------------------------------------
   // Annotation focus / gutter-seal CM6 integration (T3.1 / D12)
@@ -364,9 +365,7 @@
   // -------------------------------------------------------------------------
   // "Add comment" floating affordance state
   // -------------------------------------------------------------------------
-  const _isMac = typeof navigator !== 'undefined'
-    && (/Mac/i.test(navigator.platform || '') || /Mac OS X/i.test(navigator.userAgent || ''));
-  const addCommentShortcut = _isMac ? '⌘⌥M' : 'Ctrl+Alt+M';
+  const addCommentShortcut = isMac() ? '⌘⌥M' : 'Ctrl+Alt+M';
   let showAddComment = false;
   let addCommentX = 0;
   let addCommentY = 0;

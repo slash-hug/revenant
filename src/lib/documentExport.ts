@@ -50,6 +50,7 @@ import type { Annotation } from './types/ipc';
 // findSpan is a PURE string matcher (whitespace- and markdown-tolerant); it touches
 // no live DOM / CSS.highlights, so it is safe to reuse here for the comments layer.
 import { findSpan } from './annotationHighlight';
+import { escapeHtml } from './util/html';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -658,19 +659,6 @@ function insertCommentsLayer(
   container.innerHTML = sectionParts.join('');
   const section = container.firstElementChild!;
   doc.body.appendChild(section);
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 // ---------------------------------------------------------------------------
