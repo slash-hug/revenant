@@ -118,6 +118,49 @@ mod integration {
         assert!(bak_content.contains("\"x\"")); // annotation id preserved
     }
 
+    /// Regression for #54: quarantining the same sidecar path twice must not
+    /// overwrite the first `.bak`. Both backups survive with distinct names.
+    #[test]
+    fn second_quarantine_does_not_overwrite_existing_bak() {
+        let dir = TempDir::new().unwrap();
+        let sidecar_path = dir.path().join("doc.md.annotations.json");
+
+        // First corruption → first quarantine.
+        fs::write(
+            &sidecar_path,
+            r#"{"schema_version":42,"doc_content_hash":"h","general_notes":"first precious","annotations":[]}"#,
+        )
+        .unwrap();
+        let first_bak = match load_annotations_from_path(&sidecar_path, "h").unwrap() {
+            LoadResult::Quarantined { bak_path, .. } => bak_path,
+            _ => panic!("expected Quarantined on first corruption"),
+        };
+
+        // Second corruption at the SAME path → second quarantine.
+        fs::write(
+            &sidecar_path,
+            r#"{"schema_version":43,"doc_content_hash":"h","general_notes":"second precious","annotations":[]}"#,
+        )
+        .unwrap();
+        let second_bak = match load_annotations_from_path(&sidecar_path, "h").unwrap() {
+            LoadResult::Quarantined { bak_path, .. } => bak_path,
+            _ => panic!("expected Quarantined on second corruption"),
+        };
+
+        // Distinct backup names: the first .bak was not clobbered.
+        assert_ne!(first_bak, second_bak);
+
+        // Both backups still exist on disk with their original contents intact.
+        assert!(first_bak.exists(), "first backup must survive");
+        assert!(second_bak.exists(), "second backup must exist");
+        assert!(fs::read_to_string(&first_bak)
+            .unwrap()
+            .contains("first precious"));
+        assert!(fs::read_to_string(&second_bak)
+            .unwrap()
+            .contains("second precious"));
+    }
+
     /// After quarantine, a fresh save/load cycle works normally.
     #[test]
     fn after_quarantine_can_save_fresh_sidecar() {
