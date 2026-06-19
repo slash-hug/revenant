@@ -123,6 +123,7 @@
   function resolveAnnotationDocRange(
     doc: EditorState['doc'],
     ann: Annotation,
+    docText?: string,
   ): { from: number; to: number } | null {
     const q = ann.quoted_text;
     if (q) {
@@ -136,7 +137,10 @@
       // annotated rather than the first match anywhere in the document.
       const lineNum = Math.min(Math.max(ann.line_start + 1, 1), doc.lines);
       const nearOffset = doc.line(lineNum).from + Math.max(0, ann.char_start);
-      const span = findSpan(doc.toString(), q, true, nearOffset);
+      // Reuse a precomputed doc string when the caller provides one (gutter /
+      // wash passes resolve many annotations against the same doc), so the CM6
+      // rope isn't materialized once per annotation (perf #60).
+      const span = findSpan(docText ?? doc.toString(), q, true, nearOffset);
       if (span) return span;
     }
     // Fallback: stored line/char offsets.
@@ -166,10 +170,13 @@
     const active = annotations.filter(
       (a) => a.status === 'anchored' || a.status === 'block_level',
     );
+    // Materialize the doc rope ONCE per pass and reuse it across every
+    // annotation resolution below (perf #60).
+    const docText = doc.toString();
     // Resolve each to a line position, deduping to one seal per line (active wins).
     const byLine = new Map<number, { ann: Annotation; active: boolean }>();
     for (const ann of active) {
-      const range = resolveAnnotationDocRange(doc, ann);
+      const range = resolveAnnotationDocRange(doc, ann, docText);
       if (!range) continue;
       const linePos = doc.lineAt(range.from).from;
       const isActive = ann.id === activeId;
@@ -196,6 +203,9 @@
     activeId: string | null,
     hoverId: string | null,
   ): DecorationSet {
+    // Materialize the doc rope ONCE per pass and reuse it across both span
+    // resolutions below (perf #60).
+    const docText = doc.toString();
     // Paint the active span (full brush) and, if different, the hovered span
     // (faint brush) — mirrors the preview's active/hover wash.
     const washable = (id: string | null): { from: number; to: number } | null => {
@@ -203,7 +213,7 @@
       const ann = annotations.find((a) => a.id === id);
       if (!ann || (ann.status !== 'anchored' && ann.status !== 'block_level')) return null;
       try {
-        const range = resolveAnnotationDocRange(doc, ann);
+        const range = resolveAnnotationDocRange(doc, ann, docText);
         return range && range.from < range.to ? range : null;
       } catch {
         return null;
