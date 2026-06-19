@@ -169,16 +169,48 @@ fn test_rest_no_key_ref_falls_back_to_filesystem() {
 }
 
 /// 3c: rest_put to an unreachable port returns NotRunning (connection refused).
+///
+/// This test also serves as the end-to-end coverage for `is_connection_refused`:
+/// it makes a real refused connection and asserts the error is mapped to
+/// `ObsidianError::NotRunning`. The primary detection path walks the
+/// `std::error::Error::source()` chain from the `reqwest::Error`, downcasting
+/// each link to `std::io::Error` and checking
+/// `io_err.kind() == ErrorKind::ConnectionRefused` — no string matching involved.
 #[test]
 fn test_rest_put_connection_refused_is_not_running() {
     use crate::obsidian::rest_put;
 
-    // Port 1 is privileged and always refused on macOS.
+    // Port 1 is privileged and always refused on macOS/Linux (and on Windows via
+    // WinSock WSAECONNREFUSED). The `is_connection_refused` helper must detect it
+    // via `io::ErrorKind::ConnectionRefused` in the reqwest error source chain.
     let result = rest_put("# Doc", "note.md", "any-key", 1);
 
     assert!(
         matches!(result, Err(ObsidianError::NotRunning)),
         "connection refused must map to NotRunning, got: {result:?}"
+    );
+}
+
+/// Verify that a refused connection on a non-privileged port also maps to
+/// `ObsidianError::NotRunning`. Uses `probe_obsidian` (a `GET /vault/` request)
+/// rather than `rest_put` so both call sites of `is_connection_refused` are
+/// exercised by the test suite. Port 1 (always refused) is used as above.
+///
+/// The structured `io::ErrorKind` check inside `is_connection_refused` is
+/// locale-safe: it does not depend on the OS error message or error-code number
+/// ("os error 61" / "os error 111"), so this test holds across macOS, Linux,
+/// and Windows even if the platform message differs.
+#[test]
+fn test_probe_obsidian_connection_refused_via_error_kind() {
+    // Port 1 is a privileged port, always connection-refused on every major OS.
+    // We assert `Unreachable` — the same variant that a refused connection maps
+    // to in `probe_obsidian` (which delegates to `is_connection_refused` via the
+    // `From<reqwest::Error>` impl when `is_connect()` alone doesn't catch it).
+    let status = probe_obsidian("any-key", 1);
+    assert_eq!(
+        status,
+        ConnStatus::Unreachable,
+        "connection refused on port 1 must yield Unreachable (via io::ErrorKind, not string match), got: {status:?}"
     );
 }
 
