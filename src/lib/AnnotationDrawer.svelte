@@ -4,6 +4,7 @@
    *  - C9  comment list with status badges + the detached ("revenant") section.
    *  - C10 General Notes textarea persisted as general_notes in the sidecar.
    */
+  import { onDestroy } from 'svelte';
   import { annotationsStore } from './stores/annotations';
   import { annotationFocus, focusAnnotation } from './stores/annotationFocus';
   import { deleteAnnotationWithUndo, saveAnnotationEdit } from './annotationActions';
@@ -15,6 +16,13 @@
 
   let notesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   const NOTES_DEBOUNCE_MS = 800;
+
+  onDestroy(() => {
+    if (notesDebounceTimer) {
+      clearTimeout(notesDebounceTimer);
+      notesDebounceTimer = null;
+    }
+  });
 
   function handleNotesInput(e: Event) {
     const value = (e.target as HTMLTextAreaElement).value;
