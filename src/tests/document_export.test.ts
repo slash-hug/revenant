@@ -12,7 +12,21 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { Annotation } from '../lib/types/ipc';
+import { LIGHT_ROOT_CSS } from '../lib/documentExport';
+
+// Real source of the light theme tokens — read from disk (a `?raw` import of a
+// .css file resolves to an empty string under this jsdom/vite test pipeline, so
+// the live markdown.css?raw is mocked elsewhere; we read tokens.css directly).
+// `process.cwd()` is the repo root when Vitest runs. Used by the parity test
+// below to catch drift in the hand-maintained LIGHT_ROOT_CSS copy inside
+// documentExport.ts.
+const tokensCssRaw = readFileSync(
+  resolve(process.cwd(), 'src/lib/styles/tokens.css'),
+  'utf8',
+);
 
 // ---------------------------------------------------------------------------
 // Mock woff2 ?url imports — return deterministic fake paths.
@@ -430,6 +444,63 @@ describe('buildExportDocument — C4 comments layer', () => {
     expect(result).toContain('Comment on second');
   });
 
+  it('numbers marks in DOCUMENT order even when the annotation array is out of order', async () => {
+    // The annotations are supplied in REVERSE document order: "Second phrase"
+    // (which appears later in the prose) comes first in the array, "First phrase"
+    // second. Numbering by array order would put <sup>1</sup> on the later span
+    // and <sup>2</sup> on the earlier one — the bug. The fix sorts located ranges
+    // by document position, so <sup>1</sup> must wrap the EARLIER span.
+    const result = await buildExportDocument({
+      content: '# Hello\n\nFirst phrase here. Then Second phrase here.',
+      includeComments: true,
+      annotations: [
+        makeAnnotation('a2', 'anchored', 'Comment on second', 'Second phrase'),
+        makeAnnotation('a1', 'anchored', 'Comment on first', 'First phrase'),
+      ],
+    });
+
+    // Parse the marked-up body and read the numbers in document order.
+    const dom = new DOMParser().parseFromString(result, 'text/html');
+    const marks = Array.from(dom.querySelectorAll('mark.ann-mark'));
+    expect(marks.length).toBe(2);
+    // The first mark in the document must be the one over "First phrase" and bear sup #1.
+    const firstMarkText = marks[0].textContent ?? '';
+    const secondMarkText = marks[1].textContent ?? '';
+    expect(firstMarkText).toContain('First phrase');
+    expect(firstMarkText).toContain('1');
+    expect(secondMarkText).toContain('Second phrase');
+    expect(secondMarkText).toContain('2');
+  });
+
+  it('numbers ADJACENT spans correctly without corrupting later ranges', async () => {
+    // Two adjacent quoted spans within the same sentence. Locating ranges against
+    // a DOM already mutated by an earlier-injected <sup>N</sup> can shift offsets
+    // or match an injected number; the fix locates against the pristine DOM and
+    // mutates last-to-first. Supplied out of order to also exercise the sort.
+    const result = await buildExportDocument({
+      content: '# Hi\n\nalpha beta gamma delta epsilon.',
+      includeComments: true,
+      annotations: [
+        makeAnnotation('a2', 'anchored', 'on gamma delta', 'gamma delta'),
+        makeAnnotation('a1', 'anchored', 'on alpha beta', 'alpha beta'),
+      ],
+    });
+
+    const dom = new DOMParser().parseFromString(result, 'text/html');
+    const marks = Array.from(dom.querySelectorAll('mark.ann-mark'));
+    expect(marks.length).toBe(2);
+    // Earlier span ("alpha beta") is mark #1; later span ("gamma delta") is #2.
+    expect(marks[0].textContent).toContain('alpha beta');
+    expect(marks[0].textContent).toContain('1');
+    expect(marks[1].textContent).toContain('gamma delta');
+    expect(marks[1].textContent).toContain('2');
+    // Endnote ordering must match: note 1 quotes "alpha beta", note 2 "gamma delta".
+    const notes = Array.from(dom.querySelectorAll('.export-comments ol li'));
+    expect(notes.length).toBe(2);
+    expect(notes[0].textContent).toContain('alpha beta');
+    expect(notes[1].textContent).toContain('gamma delta');
+  });
+
   it('does not contain hardcoded AI assistant names', async () => {
     const result = await buildExportDocument({
       content: '# Hello\n\nSome text.',
@@ -498,5 +569,74 @@ describe('buildExportDocument — C4 comments layer', () => {
     // The escaped form of '<' must be present (confirms escapeHtml ran on body).
     expect(result).toContain('&lt;b&gt;');
     expect(result).toContain('&amp;');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Item #4 — token-parity guard: LIGHT_ROOT_CSS must not drift from tokens.css
+// ---------------------------------------------------------------------------
+//
+// LIGHT_ROOT_CSS is a hand-maintained light-only subset of tokens.css (we cannot
+// `?raw`-inline the whole file because it carries a [data-theme="dark"] override
+// block the export must never include). This test asserts every `--token: value`
+// declared in LIGHT_ROOT_CSS matches the value in the live light `:root` block of
+// tokens.css — so any future edit to a token in the source that isn't mirrored
+// here fails the build instead of silently shipping a stale export theme.
+
+/** Extract `--token` → value pairs from the FIRST `:root { … }` block of a CSS
+ * string (the light theme; the dark overrides live under `[data-theme="dark"]`). */
+function parseRootTokens(css: string): Map<string, string> {
+  const open = css.indexOf(':root');
+  const brace = css.indexOf('{', open);
+  // Find the matching close brace for this block.
+  let depth = 0;
+  let end = brace;
+  for (let i = brace; i < css.length; i++) {
+    if (css[i] === '{') depth++;
+    else if (css[i] === '}') {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  const body = css.slice(brace + 1, end);
+  const map = new Map<string, string>();
+  // Match `--name: value;` (value runs to the first `;`). Strip inline comments.
+  const re = /(--[\w-]+)\s*:\s*([^;]+);/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const name = m[1].trim();
+    const value = m[2].replace(/\/\*[\s\S]*?\*\//g, '').trim();
+    map.set(name, value);
+  }
+  return map;
+}
+
+describe('documentExport — LIGHT_ROOT_CSS / tokens.css parity (item #4)', () => {
+  it('every token in LIGHT_ROOT_CSS matches the live light :root in tokens.css', () => {
+    const source = parseRootTokens(tokensCssRaw);
+    const exported = parseRootTokens(LIGHT_ROOT_CSS);
+
+    expect(exported.size).toBeGreaterThan(0);
+    expect(source.size).toBeGreaterThan(0);
+
+    const mismatches: string[] = [];
+    for (const [name, exportedValue] of exported) {
+      const sourceValue = source.get(name);
+      if (sourceValue === undefined) {
+        mismatches.push(`${name}: present in LIGHT_ROOT_CSS but absent from tokens.css :root`);
+      } else if (sourceValue !== exportedValue) {
+        mismatches.push(`${name}: export="${exportedValue}" vs source="${sourceValue}"`);
+      }
+    }
+    expect(mismatches, `LIGHT_ROOT_CSS has drifted from tokens.css:\n${mismatches.join('\n')}`).toEqual([]);
+  });
+
+  it('specifically pins --ann-underline (the previously-drifted token)', () => {
+    const source = parseRootTokens(tokensCssRaw);
+    const exported = parseRootTokens(LIGHT_ROOT_CSS);
+    expect(exported.get('--ann-underline')).toBe(source.get('--ann-underline'));
   });
 });

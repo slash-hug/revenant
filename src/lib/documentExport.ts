@@ -90,7 +90,13 @@ export interface ExportOpts {
 // so the exported document is always light-mode regardless of system theme.
 // ---------------------------------------------------------------------------
 
-const LIGHT_ROOT_CSS = `:root {
+// Exported for the token-parity test (document_export.test.ts), which asserts
+// every token value here matches the live light `:root` block in tokens.css.
+// This block is a deliberate light-only subset — we cannot `?raw`-inline the
+// whole tokens.css because it carries a `[data-theme="dark"]` override block the
+// export must never include (the bundle is always light-mode). The parity test
+// is the guard against this hand-maintained copy drifting from the source.
+export const LIGHT_ROOT_CSS = `:root {
   --font-ui: 'Geist Variable', 'Geist', ui-sans-serif, system-ui, sans-serif;
   --font-prose: 'Literata', Georgia, 'Times New Roman', serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
@@ -216,8 +222,13 @@ async function buildFontFaceCSS(): Promise<string> {
   font-display: swap;
   src: url('data:font/woff2;base64,${b64}') format('woff2');
 }`;
-      } catch {
+      } catch (err) {
         // Font load failure is non-fatal: the browser falls back to system fonts.
+        console.warn(
+          `[documentExport] Failed to embed font "${desc.family}" ${desc.weight}/${desc.style} ` +
+          `from "${desc.url}"; export will fall back to a system font.`,
+          err,
+        );
         return '';
       }
     }),
@@ -340,7 +351,7 @@ const COMMENTS_CSS = `.export-comments {
 }
 mark.ann-mark {
   background: rgba(60, 136, 147, 0.18);
-  border-bottom: 2px solid #3C8893;
+  border-bottom: 2px solid var(--ann-underline);
   padding: 0 1px;
   border-radius: 2px;
   color: inherit;
@@ -348,7 +359,7 @@ mark.ann-mark {
 mark.ann-mark sup {
   font-size: 0.7em;
   font-weight: var(--fw-semibold);
-  color: #3C8893;
+  color: var(--ann-underline);
   margin-left: 1px;
 }`;
 
@@ -378,8 +389,13 @@ async function hydrateMermaid(doc: Document): Promise<void> {
         const svg = await renderMermaidForExport(code, blockId, 'default');
         el.removeAttribute('data-mermaid-pending');
         el.innerHTML = svg;
-      } catch {
+      } catch (err) {
         // Per-block isolation: leave as-is on error.
+        console.warn(
+          `[documentExport] Mermaid render failed for block "${blockId}"; ` +
+          `leaving the raw diagram source in the export.`,
+          err,
+        );
       }
     }),
   );
@@ -406,8 +422,13 @@ async function hydrateCode(doc: Document): Promise<void> {
         tmp.innerHTML = highlighted;
         const newPre = tmp.firstElementChild;
         if (newPre) pre.replaceWith(newPre);
-      } catch {
-        // Per-block isolation.
+      } catch (err) {
+        // Per-block isolation: leave the un-highlighted <pre><code> in place.
+        console.warn(
+          `[documentExport] Syntax highlighting failed for a "${lang || 'plaintext'}" ` +
+          `code block; leaving it un-highlighted in the export.`,
+          err,
+        );
       }
     }),
   );
@@ -504,8 +525,13 @@ async function embedLocalImages(
       try {
         const b64 = await readFileBytes(docPath, src);
         img.setAttribute('src', `data:${mime};base64,${b64}`);
-      } catch {
+      } catch (err) {
         // Failure: degrade to alt text by removing the src so the alt is shown.
+        console.warn(
+          `[documentExport] Could not embed local image "${src}" ` +
+          `(unreadable or outside the document directory); degrading to alt text.`,
+          err,
+        );
         const alt = img.getAttribute('alt') ?? '';
         img.removeAttribute('src');
         if (alt) {
@@ -586,30 +612,72 @@ function insertCommentsLayer(
     anchored.length > 0 || detached.length > 0 || (generalNotes?.trim().length ?? 0) > 0;
   if (!hasContent) return;
 
-  // Number anchored annotations in document order via findAnchorSpan.
-  let markNumber = 0;
-  const endnotes: Array<{ n: number; ann: Annotation; found: boolean }> = [];
+  // --- Endnote numbering: document order, pristine-DOM ranges ---------------
+  //
+  // The numbering must follow *document position*, not the annotation-array
+  // order, and every range must be located against the PRISTINE DOM. Two bugs
+  // are avoided here (issue #40 P1):
+  //   1. Array order ≠ document order — annotations can arrive in any order
+  //      (creation order, id order), so numbering by array index produced marks
+  //      whose superscripts ran out of sequence down the page.
+  //   2. Mutating-while-locating — injecting <mark>…<sup>N</sup> for an earlier
+  //      annotation rewrites the text nodes a later findAnchorRange() re-scans,
+  //      so an adjacent/overlapping span could match an injected number or land
+  //      on corrupted offsets.
+  //
+  // Strategy: locate ALL ranges first (no mutation), sort by document position,
+  // assign numbers in that order, then inject marks LAST-to-FIRST so that
+  // wrapping a later range never shifts the offsets of an earlier, not-yet-
+  // wrapped range.
+  type Located = { ann: Annotation; range: Range };
+  const located: Located[] = [];
+  const unfound: Annotation[] = [];
 
   for (const ann of anchored) {
-    markNumber++;
     const range = findAnchorRange(doc, ann);
-    if (range) {
-      const mark = doc.createElement('mark');
-      mark.className = 'ann-mark';
-      // extractContents pulls the (possibly multi-node) range contents into the
-      // mark, splitting inline-formatting elements at the boundaries if needed —
-      // formatting is preserved, the span is wrapped intact.
-      mark.appendChild(range.extractContents());
+    if (range) located.push({ ann, range });
+    else unfound.push(ann);
+  }
 
-      const sup = doc.createElement('sup');
-      sup.textContent = String(markNumber);
-      mark.appendChild(sup);
+  // Sort by document position. compareBoundaryPoints(START_TO_START) returns
+  // -1 if `a` starts before `b`, 0 if identical, 1 if after. For ties (same
+  // start, e.g. nested/adjacent spans) fall back to END_TO_END so the shorter
+  // span sorts first — a stable, deterministic order.
+  located.sort((a, b) => {
+    const byStart = a.range.compareBoundaryPoints(Range.START_TO_START, b.range);
+    if (byStart !== 0) return byStart;
+    return a.range.compareBoundaryPoints(Range.END_TO_END, b.range);
+  });
 
-      range.insertNode(mark);
-      endnotes.push({ n: markNumber, ann, found: true });
-    } else {
-      endnotes.push({ n: markNumber, ann, found: false });
-    }
+  // Assign numbers in document order.
+  const endnotes: Array<{ n: number; ann: Annotation; found: boolean }> = located.map(
+    ({ ann }, i) => ({ n: i + 1, ann, found: true }),
+  );
+
+  // Inject marks last-to-first so earlier ranges' offsets stay valid as we go.
+  for (let i = located.length - 1; i >= 0; i--) {
+    const { range } = located[i];
+    const markNumber = i + 1;
+    const mark = doc.createElement('mark');
+    mark.className = 'ann-mark';
+    // extractContents pulls the (possibly multi-node) range contents into the
+    // mark, splitting inline-formatting elements at the boundaries if needed —
+    // formatting is preserved, the span is wrapped intact.
+    mark.appendChild(range.extractContents());
+
+    const sup = doc.createElement('sup');
+    sup.textContent = String(markNumber);
+    mark.appendChild(sup);
+
+    range.insertNode(mark);
+  }
+
+  // Append any not-found anchored annotations after the located ones, numbered
+  // in array order (they have no document position to sort by).
+  let nextNumber = located.length;
+  for (const ann of unfound) {
+    nextNumber++;
+    endnotes.push({ n: nextNumber, ann, found: false });
   }
 
   // Build the endnotes section HTML.
