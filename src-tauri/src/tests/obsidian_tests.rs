@@ -8,8 +8,9 @@
 /// 5. Distinguish "REST not running" vs "REST misconfigured" error paths.
 /// 6. (D-1/D-2) ConnStatus probe: GET /vault/ 200→Ok, 401→Unauthorized, down→Unreachable.
 use crate::obsidian::{
-    export_obsidian, export_obsidian_with_frontmatter, probe_obsidian, test_obsidian_connection,
-    ConnStatus, ExportResult, ObsidianError, REST_DEFAULT_HTTP_PORT,
+    export_obsidian, export_obsidian_with_frontmatter, probe_obsidian, scheme_for_port,
+    test_obsidian_connection, ConnStatus, ExportResult, ObsidianError, REST_DEFAULT_HTTP_PORT,
+    REST_DEFAULT_HTTPS_PORT,
 };
 use crate::secrets::test_helpers::init_mock_keychain;
 use crate::secrets::{delete_rest_key, store_rest_key};
@@ -73,7 +74,7 @@ fn test_export_obsidian_no_key_ref_uses_filesystem() {
     let dir = TempDir::new().unwrap();
     let settings = settings_no_rest(dir.path());
 
-    let result = export_obsidian("# Note", "Reviews/note.md", &settings, 1);
+    let result = export_obsidian("# Note", "Reviews/note.md", &settings, &[1]);
     assert!(
         matches!(result, Ok(ExportResult::FilesystemCopy)),
         "without key_ref, should fall back to filesystem copy, got: {result:?}"
@@ -135,7 +136,7 @@ fn test_rest_not_running_falls_back_to_filesystem_no_key_in_keychain() {
         "# Fallback doc",
         "Reviews/fallback.md",
         &settings,
-        1, // port — doesn't matter since key lookup fails first
+        &[1], // port — does not matter since key lookup fails first
     );
 
     assert!(
@@ -156,7 +157,7 @@ fn test_rest_no_key_ref_falls_back_to_filesystem() {
     let dir = TempDir::new().unwrap();
     let settings = settings_no_rest(dir.path());
 
-    let result = export_obsidian("# No-REST doc", "Reviews/norest.md", &settings, 1);
+    let result = export_obsidian("# No-REST doc", "Reviews/norest.md", &settings, &[1]);
 
     assert!(
         matches!(result, Ok(ExportResult::FilesystemCopy)),
@@ -207,7 +208,7 @@ fn test_frontmatter_merge_before_export() {
         &extra,
         "Reviews/merged.md",
         &settings,
-        REST_DEFAULT_HTTP_PORT,
+        &[REST_DEFAULT_HTTP_PORT],
     );
 
     assert!(
@@ -254,7 +255,7 @@ fn test_no_vault_configured_returns_clear_error() {
         ..Settings::default()
     };
 
-    let result = export_obsidian("# Content", "note.md", &settings, 1 /* refused port */);
+    let result = export_obsidian("# Content", "note.md", &settings, &[1] /* refused port */);
 
     assert!(
         matches!(result, Err(ObsidianError::NoVaultConfigured)),
@@ -273,7 +274,7 @@ fn test_filesystem_copy_creates_parent_dirs() {
         "# Deep note",
         "a/b/c/deep.md",
         &settings,
-        1, // refused
+        &[1], // refused
     );
 
     assert!(
@@ -465,5 +466,52 @@ fn test_obsidian_connection_no_key_ref_is_unreachable() {
         status,
         ConnStatus::Unreachable,
         "no key_ref in settings must yield ConnStatus::Unreachable, got: {status:?}"
+    );
+}
+
+// ── HTTPS-first / HTTP-fallback (Obsidian default is HTTPS :27124) ────────────
+
+/// The default HTTPS port maps to the `https` scheme; everything else (the
+/// opt-in HTTP server and any mock/test port) maps to `http`.
+#[test]
+fn test_scheme_for_port_https_default_else_http() {
+    assert_eq!(scheme_for_port(REST_DEFAULT_HTTPS_PORT), "https");
+    assert_eq!(scheme_for_port(REST_DEFAULT_HTTP_PORT), "http");
+    assert_eq!(scheme_for_port(54321), "http"); // a mock/random port
+}
+
+/// The port-fallback loop: a connection-refused first port must fall through to
+/// a reachable second port and push there. Mirrors the production HTTPS→HTTP
+/// fallback (here both use http via mockito, but the loop behavior is identical).
+/// Uses `rest_put_first_reachable` directly with an injected key so it's hermetic
+/// (the keyring mock doesn't persist across Entry::new, so a keychain-backed
+/// end-to-end test isn't possible).
+#[test]
+fn test_rest_put_falls_through_refused_port_to_reachable_one() {
+    use crate::obsidian::rest_put_first_reachable;
+
+    let mut server = Server::new();
+    let mock_port = server
+        .url()
+        .trim_start_matches("http://127.0.0.1:")
+        .parse::<u16>()
+        .unwrap();
+    let _mock = server
+        .mock("PUT", mockito::Matcher::Any)
+        .with_status(201)
+        .create();
+
+    // Port 1 is always refused; the loop must fall through to the reachable mock.
+    let result = rest_put_first_reachable("# Note", "Reviews/note.md", "good-key", &[1, mock_port]);
+    assert!(
+        result.is_ok(),
+        "a refused first port must fall through to the reachable second port, got: {result:?}"
+    );
+
+    // And all-refused → NotRunning (so the caller uses the filesystem fallback).
+    let all_refused = rest_put_first_reachable("# Note", "n.md", "k", &[1, 2]);
+    assert!(
+        matches!(all_refused, Err(ObsidianError::NotRunning)),
+        "all ports refused must return NotRunning, got: {all_refused:?}"
     );
 }

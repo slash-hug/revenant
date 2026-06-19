@@ -1,7 +1,9 @@
 /// Obsidian vault export module (WS-D / D3).
 ///
 /// Export strategy (plan §5 / D3 / docs/obsidian-rest-notes.md):
-///   1. Probe `GET http://127.0.0.1:27123/` to check reachability.
+///   1. Probe `GET /vault/` to check reachability, trying HTTPS :27124 first
+///      (the plugin's default) then plain HTTP :27123 (only on if the user
+///      enabled the non-encrypted server).
 ///   2. If reachable, push via `PUT /vault/{path}` with Bearer auth.
 ///   3. If not reachable → `ObsidianError::NotRunning` → filesystem fallback.
 ///   4. If 401 → `ObsidianError::Misconfigured` → surface configure prompt.
@@ -18,13 +20,30 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-/// Default HTTP port for the Obsidian Local REST API plugin.
-/// We default to HTTP (27123) in v1 to avoid self-signed certificate trust
-/// complexity on a loopback-only connection. See docs/obsidian-rest-notes.md.
+/// Default HTTP port for the Obsidian Local REST API plugin. The plugin ships
+/// this server *disabled* — only on if the user enables "Enable Non-encrypted
+/// (HTTP) Server" — so it is the fallback, not the default.
 pub const REST_DEFAULT_HTTP_PORT: u16 = 27123;
 
-/// Default HTTPS port (for future v1.x when cert-pinning is implemented).
+/// Default HTTPS port for the Obsidian Local REST API plugin. This is what the
+/// plugin enables out of the box (self-signed cert), so it is tried first. The
+/// cert is accepted without validation because the connection is loopback-only
+/// (`127.0.0.1`) — see `rest_client`.
 pub const REST_DEFAULT_HTTPS_PORT: u16 = 27124;
+
+/// Ports tried in order when reaching the plugin: HTTPS (default) then HTTP
+/// (opt-in). The scheme is derived from the port via `scheme_for_port`.
+pub const REST_DEFAULT_PORTS: &[u16] = &[REST_DEFAULT_HTTPS_PORT, REST_DEFAULT_HTTP_PORT];
+
+/// The URL scheme for a given plugin port: HTTPS for the default 27124, plain
+/// HTTP otherwise (the 27123 non-encrypted server and any test/mock port).
+pub(crate) fn scheme_for_port(port: u16) -> &'static str {
+    if port == REST_DEFAULT_HTTPS_PORT {
+        "https"
+    } else {
+        "http"
+    }
+}
 
 /// Connection timeout for REST reachability probes.
 const PROBE_TIMEOUT_SECS: u64 = 3;
@@ -55,7 +74,7 @@ pub enum ConnStatus {
 /// - connection refused / timeout → `ConnStatus::Unreachable`
 pub fn probe_obsidian(api_key: &str, port: u16) -> ConnStatus {
     let client = rest_client();
-    let url = format!("http://127.0.0.1:{port}/vault/");
+    let url = format!("{}://127.0.0.1:{port}/vault/", scheme_for_port(port));
 
     let response = client
         .get(&url)
@@ -113,7 +132,20 @@ pub fn test_obsidian_connection(settings_path: &Path, key: Option<String>) -> Co
         }
     };
 
-    probe_obsidian(&api_key, REST_DEFAULT_HTTP_PORT)
+    // Try each default endpoint (HTTPS first, then HTTP). An Ok/Unauthorized
+    // result is definitive — the plugin answered — so return it; only keep trying
+    // on Unreachable (that port isn't being served).
+    let mut status = ConnStatus::Unreachable;
+    for &port in REST_DEFAULT_PORTS {
+        match probe_obsidian(&api_key, port) {
+            ConnStatus::Unreachable => continue,
+            answered => {
+                status = answered;
+                break;
+            }
+        }
+    }
+    status
 }
 
 /// A process-wide reqwest client, built once and reused (perf #4). The probe
@@ -125,6 +157,11 @@ fn rest_client() -> &'static Client {
     REST_CLIENT.get_or_init(|| {
         Client::builder()
             .timeout(Duration::from_secs(PROBE_TIMEOUT_SECS))
+            // Accept the plugin's self-signed certificate. This is safe because
+            // every request targets the loopback interface (127.0.0.1) only —
+            // there is no network path for a MITM, so cert validation buys
+            // nothing here while blocking the plugin's default HTTPS server.
+            .danger_accept_invalid_certs(true)
             .build()
             .unwrap_or_else(|_| Client::new())
     })
@@ -209,15 +246,16 @@ pub fn export_obsidian(
     content: &str,
     vault_relative_path: &str,
     settings: &Settings,
-    rest_port: u16,
+    rest_ports: &[u16],
 ) -> Result<ExportResult, ObsidianError> {
-    // 1. Try REST if a key reference is configured.
+    // 1. Try REST if a key reference is configured. `try_rest_export` attempts
+    //    each endpoint in order (HTTPS then HTTP); a NotRunning result (every
+    //    endpoint refused, or the key isn't in the keychain) falls through to the
+    //    filesystem fallback, while a 401/other error surfaces immediately.
     if let Some(ref key_ref) = settings.rest_key_ref {
-        match try_rest_export(content, vault_relative_path, key_ref, rest_port) {
+        match try_rest_export(content, vault_relative_path, key_ref, rest_ports) {
             Ok(()) => return Ok(ExportResult::RestPushed),
-            Err(ObsidianError::NotRunning) => {
-                // Fall through to filesystem fallback below.
-            }
+            Err(ObsidianError::NotRunning) => { /* fall through to filesystem */ }
             Err(e) => return Err(e),
         }
     }
@@ -241,7 +279,7 @@ pub fn export_obsidian_with_frontmatter(
     extra_frontmatter: &std::collections::HashMap<String, serde_json::Value>,
     vault_relative_path: &str,
     settings: &Settings,
-    rest_port: u16,
+    rest_ports: &[u16],
 ) -> Result<ExportResult, ObsidianError> {
     // Convert HashMap<String, serde_json::Value> → serde_yaml::Mapping for the frontmatter API.
     let overlay: serde_yaml::Mapping = extra_frontmatter
@@ -268,7 +306,7 @@ pub fn export_obsidian_with_frontmatter(
     let merged_doc = reassemble(Some(&merged_mapping), &parsed.body, parsed.line_ending).map_err(|e| {
         ObsidianError::Http(format!("frontmatter reassemble error: {e}"))
     })?;
-    export_obsidian(&merged_doc, vault_relative_path, settings, rest_port)
+    export_obsidian(&merged_doc, vault_relative_path, settings, rest_ports)
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -285,7 +323,7 @@ fn try_rest_export(
     content: &str,
     vault_relative_path: &str,
     key_ref: &str,
-    port: u16,
+    ports: &[u16],
 ) -> Result<(), ObsidianError> {
     // If the key isn't in the keychain (returns None), treat it the same as
     // "not configured" → fall through to filesystem copy rather than surfacing
@@ -295,7 +333,31 @@ fn try_rest_export(
         None => return Err(ObsidianError::NotRunning),
     };
 
-    rest_put(content, vault_relative_path, &api_key, port)
+    rest_put_first_reachable(content, vault_relative_path, &api_key, ports)
+}
+
+/// PUT to the first reachable endpoint in `ports`, in order (HTTPS :27124 then
+/// HTTP :27123 in production). A `NotRunning` (connection refused) on one port
+/// falls through to the next; any other outcome — `Ok`, `Misconfigured` (401),
+/// or an HTTP error — is definitive and returned immediately. If every port is
+/// refused, returns `NotRunning` so the caller can use the filesystem fallback.
+///
+/// Takes the API key directly (no keychain) so the fallback can be tested
+/// hermetically against a mock server.
+pub(crate) fn rest_put_first_reachable(
+    content: &str,
+    vault_relative_path: &str,
+    api_key: &str,
+    ports: &[u16],
+) -> Result<(), ObsidianError> {
+    let mut last = Err(ObsidianError::NotRunning);
+    for &port in ports {
+        match rest_put(content, vault_relative_path, api_key, port) {
+            Err(ObsidianError::NotRunning) => last = Err(ObsidianError::NotRunning),
+            definitive => return definitive,
+        }
+    }
+    last
 }
 
 /// Low-level REST PUT — sends the request with the given API key.
@@ -320,7 +382,7 @@ pub fn rest_put(
         .collect::<Vec<_>>()
         .join("/");
 
-    let url = format!("http://127.0.0.1:{port}/vault/{encoded_path}");
+    let url = format!("{}://127.0.0.1:{port}/vault/{encoded_path}", scheme_for_port(port));
 
     let response = client
         .put(&url)
