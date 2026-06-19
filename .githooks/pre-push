@@ -1,0 +1,33 @@
+#!/bin/sh
+#
+# Pre-push frontend gate.
+#
+# Why this exists: `tsc --noEmit` does NOT type-check inside .svelte files —
+# `svelte-check` is the only tool that compiles component <script> blocks with
+# the project's strict TS config. A timer-typing error inside MermaidContainer
+# (PR #65) sailed past a tsc-only local gate and failed CI on both OS legs.
+# See tasks/lessons.md (2026-06-19).
+#
+# This hook is wired via package.json's "prepare" script (core.hooksPath=.githooks),
+# so it installs on `npm install` and is inherited by every worktree of this repo
+# — humans on the Mac AND background agents pushing branches.
+#
+# Fast by design (svelte-check + vitest, ~7s). Rust is covered by CI's test legs,
+# not here, so the hook stays quick enough that nobody reaches for --no-verify.
+# Genuine emergency bypass: `git push --no-verify`.
+#
+set -e
+
+# Fresh clone before `npm install` — nothing to check yet.
+if [ ! -d node_modules ]; then
+  echo "pre-push: node_modules missing — skipping frontend gate (run 'npm install')"
+  exit 0
+fi
+
+echo "pre-push: svelte-check (type-checks .svelte files that tsc skips)…"
+npm run --silent check
+
+echo "pre-push: vitest…"
+npm test --silent
+
+echo "pre-push: ✓ frontend gate passed"

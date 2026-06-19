@@ -83,6 +83,19 @@ impl FileWatchers {
 /// If `path` is already absolute, return it as-is. Otherwise, join it onto
 /// `cwd` (the working directory at capture time) and canonicalize. Falls back
 /// to the joined-but-uncanonicalized path if the file doesn't exist yet.
+/// Pick the first CLI argument that is a file path rather than a flag.
+///
+/// Returns the first argument that does NOT start with `-`, so a path passed
+/// after a flag (e.g. `revenant --foo file.md`) is still found. Shared by the
+/// single-instance handler and the cold-start path so both behave identically.
+///
+/// Note: callers pass the full argv slice *including* `argv[0]` (the program
+/// name); since the program name is itself not flag-prefixed, callers skip it
+/// before calling this helper.
+fn first_file_arg<I: IntoIterator<Item = String>>(args: I) -> Option<String> {
+    args.into_iter().find(|arg| !arg.starts_with('-'))
+}
+
 fn resolve_cli_path(path: &str, cwd: &str) -> String {
     let p = std::path::Path::new(path);
     if p.is_absolute() {
@@ -117,11 +130,11 @@ pub fn run() {
                 //
                 // Resolve relative paths against `cwd` (the second instance's working
                 // directory) — the running instance's CWD differs from the terminal.
-                if let Some(path) = argv.get(1) {
-                    if !path.starts_with('-') {
-                        let resolved = resolve_cli_path(path, &cwd);
-                        let _ = app.emit("open_file_request", resolved);
-                    }
+                // Skip argv[0] (program name); take the first non-flag argument so
+                // a path passed after a flag (e.g. `revenant --foo file.md`) works.
+                if let Some(path) = first_file_arg(argv.into_iter().skip(1)) {
+                    let resolved = resolve_cli_path(&path, &cwd);
+                    let _ = app.emit("open_file_request", resolved);
                 }
             }),
         )
@@ -137,16 +150,22 @@ pub fn run() {
             //
             // Resolve relative paths against the process CWD at startup so the
             // path is absolute before the event reaches the frontend.
-            if let Some(path) = std::env::args().nth(1) {
-                if !path.starts_with('-') {
-                    let cwd = std::env::current_dir().unwrap_or_default();
-                    let resolved = resolve_cli_path(&path, &cwd.to_string_lossy());
-                    let handle = app.handle().clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(700));
-                        let _ = handle.emit("open_file_request", resolved);
-                    });
-                }
+            // Skip argv[0] (program name); take the first non-flag argument so a
+            // path passed after a flag (e.g. `revenant --foo file.md`) works.
+            if let Some(path) = first_file_arg(std::env::args().skip(1)) {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let resolved = resolve_cli_path(&path, &cwd.to_string_lossy());
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // The 700ms delay gives the webview time to mount and register
+                    // its `open_file_request` listener; emitting sooner would be
+                    // missed since `setup` runs before the frontend is ready.
+                    // FOLLOW-UP: replace this fixed sleep with a frontend "ready"
+                    // handshake — deferred because it needs live cold-start
+                    // verification of the native app, which can't be done headless.
+                    std::thread::sleep(std::time::Duration::from_millis(700));
+                    let _ = handle.emit("open_file_request", resolved);
+                });
             }
             Ok(())
         })
@@ -179,4 +198,39 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod lib_tests {
+    use super::first_file_arg;
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn returns_path_when_first_arg() {
+        assert_eq!(
+            first_file_arg(args(&["file.md"])),
+            Some("file.md".to_string())
+        );
+    }
+
+    #[test]
+    fn returns_path_after_flag() {
+        assert_eq!(
+            first_file_arg(args(&["--foo", "file.md"])),
+            Some("file.md".to_string())
+        );
+    }
+
+    #[test]
+    fn returns_none_when_only_flags() {
+        assert_eq!(first_file_arg(args(&["--foo", "-b"])), None);
+    }
+
+    #[test]
+    fn returns_none_when_empty() {
+        assert_eq!(first_file_arg(args(&[])), None);
+    }
 }

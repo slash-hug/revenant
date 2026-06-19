@@ -287,11 +287,13 @@ fn best_fuzzy_match(
 }
 
 /// Compute a normalized similarity score in [0.0, 1.0] between `a` and `b`
-/// using `similar`'s Patience diff.
+/// using `similar`'s char-level diff.
 ///
-/// The score is 1 - (edit_distance / max_len), where edit_distance is the
-/// number of changed characters.
-fn normalized_similarity(a: &str, b: &str) -> f64 {
+/// The score is the count of unchanged characters divided by the total number
+/// of characters emitted by the diff (equal + inserted + deleted). Counting is
+/// done in Unicode scalar values (chars), not bytes, so multibyte content is
+/// weighted the same as ASCII.
+pub(crate) fn normalized_similarity(a: &str, b: &str) -> f64 {
     if a == b {
         return 1.0;
     }
@@ -304,7 +306,7 @@ fn normalized_similarity(a: &str, b: &str) -> f64 {
     let mut total = 0usize;
 
     for change in diff.iter_all_changes() {
-        let len = change.value().len();
+        let len = change.value().chars().count();
         total += len;
         if change.tag() == ChangeTag::Equal {
             unchanged += len;
@@ -315,9 +317,9 @@ fn normalized_similarity(a: &str, b: &str) -> f64 {
         return 1.0;
     }
 
-    // Score = ratio of unchanged characters to the union of both strings.
-    // This is equivalent to: 2 * |LCS| / (|a| + |b|) — the Dice coefficient
-    // on character level, which maps to [0, 1].
+    // Score = ratio of unchanged characters to the total characters emitted by
+    // the char-level diff (equal + inserted + deleted). This is a plain
+    // character-count ratio in [0, 1]; it is NOT the Dice coefficient.
     unchanged as f64 / total as f64
 }
 

@@ -13,10 +13,15 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo test <module> --manifest-path src-tauri/Cargo.toml  # e.g. reanchor, file_io
 
 # Frontend
-npm install          # first time / after package.json changes
+npm install          # first time / after package.json changes (also wires the pre-push hook)
 npm run build        # produces dist/
 npm test             # Vitest (jsdom)
-npx tsc --noEmit     # TypeScript type check
+npm run check        # svelte-check — THE frontend type gate (tsc --noEmit does NOT check .svelte files)
+npm run verify       # full frontend gate in one shot: check + test + build
+
+# A pre-push hook (.githooks/pre-push, auto-installed by `npm install` via the "prepare"
+# script) runs check + vitest before every push. `npx tsc --noEmit` alone is insufficient —
+# it skips .svelte files entirely. See tasks/lessons.md (2026-06-19).
 
 # Tauri
 cargo tauri dev      # hot-reload dev server
@@ -74,7 +79,7 @@ revenant/
 ## Key conventions
 
 ### IPC contract (ipc.rs / ipc.ts) — FROZEN
-All IPC commands and types live in `src-tauri/src/ipc.rs` (Rust) and `src/lib/types/ipc.ts` (TS mirror). WS-A froze this surface. Do NOT add new commands without updating both files. Commands: `open_file`, `unwatch_file`, `save_file(expected_hash)`, `load_annotations`, `save_annotations`, `generate_review`, `export_obsidian`, `get_settings`, `set_settings`, `snapshot_webview`, `export_html`, `export_pdf`, `read_file_bytes`, `set_rest_key`, `clear_rest_key`, `has_rest_key`, `test_obsidian_connection`, `get_app_version`, `check_for_updates`, `open_release_page`. Events: `open_file_request`, `file_changed`.
+All IPC commands and types live in `src-tauri/src/ipc.rs` (Rust) and `src/lib/types/ipc.ts` (TS mirror). WS-A froze this surface. Do NOT add new commands without updating both files. Commands: `open_file`, `unwatch_file`, `save_file(expected_hash)`, `load_annotations`, `save_annotations`, `generate_review`, `export_obsidian`, `get_settings`, `set_settings`, `open_diagram_window`, `snapshot_webview`, `export_html`, `export_pdf`, `read_file_bytes`, `set_rest_key`, `clear_rest_key`, `has_rest_key`, `test_obsidian_connection`, `get_app_version`, `check_for_updates`, `open_release_page`. Events: `open_file_request`, `file_changed`.
 
 ### Module ownership
 `lib.rs` is owned by WS-A only. WS-B/C/D fill their own module files; they never edit `lib.rs`. All `#[command]` registrations are in `lib.rs`.

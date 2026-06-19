@@ -8,7 +8,7 @@
 mod integration {
     use crate::annotations::{Annotation, AnchorStatus};
     use crate::file_io::sha256_hex;
-    use crate::reanchor::{reanchor, reanchor_all, SIMILARITY_THRESHOLD};
+    use crate::reanchor::{normalized_similarity, reanchor, reanchor_all, SIMILARITY_THRESHOLD};
 
     fn ann(
         id: &str,
@@ -279,6 +279,39 @@ mod integration {
         assert!(
             r.annotation.line_start <= r.annotation.line_end,
             "anchor_start must not exceed anchor_end"
+        );
+    }
+
+    // ── Regression #49: similarity counts characters, not bytes ───────────────
+
+    #[test]
+    fn similarity_counts_chars_not_bytes_accented() {
+        // "café" vs "cafe" differ only in the final char (é vs e). "é" is a
+        // 2-byte UTF-8 sequence, so byte- and char-weighting diverge.
+        //
+        // Char-level diff: equal "caf" (3) + delete "é" (1) + insert "e" (1)
+        //   → unchanged = 3, total = 5 → 0.6
+        // If bytes were (incorrectly) counted, "é" would weigh 2:
+        //   → unchanged = 3, total = 6 → 0.5
+        let s = normalized_similarity("café", "cafe");
+        assert!(
+            (s - 0.6).abs() < 1e-9,
+            "expected char-ratio 0.6, got {s} (byte-counting would give 0.5)"
+        );
+    }
+
+    #[test]
+    fn similarity_counts_chars_not_bytes_cjk() {
+        // "日本語" vs "日本X" differ only in the final char. Each CJK char is a
+        // 3-byte UTF-8 sequence; the substituted ASCII "X" is 1 byte.
+        //
+        // Char-level diff: equal "日本" (2) + delete "語" (1) + insert "X" (1)
+        //   → unchanged = 2, total = 4 → 0.5
+        // Byte-counting would weight the CJK chars as 3 each, skewing the ratio.
+        let s = normalized_similarity("日本語", "日本X");
+        assert!(
+            (s - 0.5).abs() < 1e-9,
+            "expected char-ratio 0.5, got {s} (byte-counting would skew this)"
         );
     }
 }
