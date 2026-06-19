@@ -70,7 +70,7 @@ import DOMPurify, { type Config as DOMPurifyConfig } from 'dompurify';
 // DOMPurify config
 // ---------------------------------------------------------------------------
 
-const PURIFY_CONFIG = {
+const PURIFY_CONFIG: DOMPurifyConfig = {
   ALLOWED_TAGS: [
     'p', 'br', 'hr',
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
@@ -122,7 +122,7 @@ const PURIFY_CONFIG = {
   // reverse-tabnapping on any link that carries a target attribute.
   ADD_ATTR: ['target'],
   FORCE_BODY: false,
-} as const;
+};
 
 // Mermaid renders its node/label theming as a `<style>` block inside the SVG
 // (class-based, e.g. `.node rect { fill: … }`) plus `<foreignObject>` HTML labels.
@@ -141,17 +141,17 @@ const PURIFY_CONFIG = {
 // general markdown keeps the stricter PURIFY_CONFIG.
 
 /** DOMPurify config for the SVG pass (pass 1). */
-const MERMAID_SVG_PURIFY_CONFIG = {
+const MERMAID_SVG_PURIFY_CONFIG: DOMPurifyConfig = {
   USE_PROFILES: { svg: true, svgFilters: true, html: true },
   ADD_TAGS: ['style', 'foreignObject'],
   ADD_ATTR: ['dominant-baseline', 'data-block-id', 'data-source-line', 'data-block-type'],
-} as const;
+};
 
 /** DOMPurify config for foreignObject inner HTML (pass 2). */
-const MERMAID_FO_HTML_PURIFY_CONFIG = {
+const MERMAID_FO_HTML_PURIFY_CONFIG: DOMPurifyConfig = {
   ALLOWED_TAGS: ['div', 'span', 'p', 'br', 'strong', 'em', 'b', 'i', 'a', 'code'],
   ALLOWED_ATTR: ['class', 'style', 'xmlns', 'href'],
-} as const;
+};
 
 /**
  * Sanitize Mermaid SVG output with a two-pass approach that preserves
@@ -175,10 +175,7 @@ function sanitizeMermaidSvg(svg: string): string {
   });
 
   // Pass 1: sanitize the full SVG structure.
-  const sanitized = DOMPurify.sanitize(
-    svg,
-    MERMAID_SVG_PURIFY_CONFIG as unknown as DOMPurifyConfig,
-  ) as unknown as string;
+  const sanitized = DOMPurify.sanitize(svg, MERMAID_SVG_PURIFY_CONFIG);
 
   // If there were no foreignObjects, skip the re-injection step.
   if (foContents.length === 0) return sanitized;
@@ -188,10 +185,7 @@ function sanitizeMermaidSvg(svg: string): string {
   const cleanFos = cleanDoc.querySelectorAll('foreignObject');
   cleanFos.forEach((fo, i) => {
     if (i < foContents.length) {
-      const cleanHtml = DOMPurify.sanitize(
-        foContents[i],
-        MERMAID_FO_HTML_PURIFY_CONFIG as unknown as DOMPurifyConfig,
-      ) as unknown as string;
+      const cleanHtml = DOMPurify.sanitize(foContents[i], MERMAID_FO_HTML_PURIFY_CONFIG);
       fo.innerHTML = cleanHtml;
     }
   });
@@ -655,7 +649,7 @@ export function renderMarkdown(src: string): string {
   _blockCounter = 0;
   const { content } = stripFrontmatter(src);
   const rawHtml = md.render(content);
-  return DOMPurify.sanitize(rawHtml, PURIFY_CONFIG as unknown as DOMPurifyConfig) as unknown as string;
+  return DOMPurify.sanitize(rawHtml, PURIFY_CONFIG);
 }
 
 // ---------------------------------------------------------------------------
@@ -823,7 +817,7 @@ export async function renderCodeBlock(code: string, lang: string): Promise<strin
     const validLang = hljs.getLanguage(lang) ? lang : 'plaintext';
     const result = hljs.highlight(code, { language: validLang });
     const highlighted = `<pre><code class="hljs language-${validLang}">${result.value}</code></pre>`;
-    const sanitized = DOMPurify.sanitize(highlighted, PURIFY_CONFIG as unknown as DOMPurifyConfig) as unknown as string;
+    const sanitized = DOMPurify.sanitize(highlighted, PURIFY_CONFIG);
     if (hljsCache.size >= HLJS_CACHE_MAX) hljsCache.clear(); // simple bound
     hljsCache.set(key, sanitized);
     return sanitized;
