@@ -50,7 +50,7 @@ function formatQuote(text: string): string {
 }
 
 /**
- * Format a single anchored (non-detached) annotation as a numbered comment block.
+ * Format a single annotation as a numbered comment block.
  *
  * Output shape:
  * ### Comment N — L42–L45
@@ -58,9 +58,14 @@ function formatQuote(text: string): string {
  * > quoted snippet line 2
  *
  * Body text here.
+ *
+ * @param ann         The annotation to format.
+ * @param index       The 1-based comment number.
+ * @param labelOverride  When supplied, replaces the default anchor label
+ *                       (e.g. "[detached] L99" for detached comments).
  */
-function formatAnnotation(ann: Annotation, index: number): string {
-  const anchorLabel = formatAnchorLabel(ann);
+function formatAnnotation(ann: Annotation, index: number, labelOverride?: string): string {
+  const anchorLabel = labelOverride ?? formatAnchorLabel(ann);
   const quote = formatQuote(ann.quoted_text);
   const lines: string[] = [`### Comment ${index} — ${anchorLabel}`];
   if (quote) {
@@ -138,13 +143,7 @@ export function formatReview(sidecar: Sidecar, docPath: string): ReviewPayload {
     );
     detachedAnnotations.forEach((ann, i) => {
       const label = `[detached] ${formatAnchorLabel(ann)}`;
-      const quote = formatQuote(ann.quoted_text);
-      const lines = [`### Comment ${openAnnotations.length + i + 1} — ${label}`];
-      if (quote) {
-        lines.push('', quote);
-      }
-      lines.push('', ann.body.trim());
-      sections.push(lines.join('\n'), '');
+      sections.push(formatAnnotation(ann, openAnnotations.length + i + 1, label), '');
     });
   }
 

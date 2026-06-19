@@ -213,4 +213,24 @@ describe('formatReview', () => {
     // The detached annotation body should appear in the detached section
     expect(markdown).toContain('This block was moved.');
   });
+
+  // -------------------------------------------------------------------------
+  // Shared formatter parity: open and detached use the same heading/quote/body
+  // shape so they can't drift independently.
+  // -------------------------------------------------------------------------
+
+  it('open and detached comments share the same heading/quote/body structure', () => {
+    const sidecar = makeSidecar([
+      makeAnnotation('a1', 'anchored', 'Open body', 4, 4, 'open quote'),
+      makeAnnotation('a2', 'detached', 'Detached body', 9, 9, 'detached quote'),
+    ]);
+    const { markdown } = formatReview(sidecar, '/docs/spec.md');
+
+    // Open comment: ### Comment 1 — L5 (line_start=4 → display L5)
+    expect(markdown).toMatch(/### Comment 1 — L5\n\n> open quote\n\nOpen body/);
+
+    // Detached comment: ### Comment 2 — [detached] L10 (line_start=9 → display L10)
+    // The heading, blank line, quote, blank line, body pattern must be identical to open.
+    expect(markdown).toMatch(/### Comment 2 — \[detached\] L10\n\n> detached quote\n\nDetached body/);
+  });
 });
