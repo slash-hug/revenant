@@ -58,6 +58,22 @@ objc2-app-kit = { version = "0.3", features = ["NSImage", "NSBitmapImageRep", "N
 objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKSnapshotConfiguration", "WKPDFConfiguration", "WKWebViewConfiguration", "WKNavigation", "WKNavigationDelegate", "block2"] }
 dispatch2 = "0.3"
 
+# Windows-only: off-screen WebView2 → PrintToPdf for PDF export (#36, export.rs).
+# webview2-com / windows versions are pinned to what wry 0.55 already locks
+# (webview2-com 0.38, windows 0.61) so no extra copies of those crates enter the
+# tree. `url` (already transitive via Tauri) builds the file:// URL for the temp
+# bundle WebView2 navigates to.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+] }
+url = "2"
+
 [dev-dependencies]
 tempfile = "3"
 mockito = "1"
