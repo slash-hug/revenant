@@ -776,10 +776,17 @@
       </div>
 
       {#if $activeTab}
-        <div class="ws-status" role="status" aria-label="Document status">
+        <!--
+          The bar itself is NOT a live region: line/comment counts change on every
+          keystroke and would otherwise be re-announced constantly. Only the
+          save-state indicator below is role="status" so saved/unsaved transitions
+          (the one status change worth announcing) reach assistive tech.
+        -->
+        <div class="ws-status" aria-label="Document status">
           <span
             class="st-save"
             class:dirty={$activeTab.dirty}
+            role="status"
             title={$activeTab.dirty ? 'Unsaved changes' : 'All changes saved'}
           >
             <span class="st-dot" aria-hidden="true"></span>
