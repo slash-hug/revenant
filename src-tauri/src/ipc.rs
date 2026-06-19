@@ -420,8 +420,15 @@ fn watch_file(
 /// watcher + thread are released instead of leaking for the app's lifetime (#26).
 /// No-op if the path isn't being watched.
 #[tauri::command]
-pub fn unwatch_file(watchers: State<crate::FileWatchers>, path: String) {
+pub fn unwatch_file(
+    watchers: State<crate::FileWatchers>,
+    open_docs: State<crate::OpenDocuments>,
+    path: String,
+) {
     watchers.unwatch(&path);
+    // Drop it from the open set too, so a closed document can no longer be used
+    // as an export/annotation source-read target (#85).
+    open_docs.remove(&path);
 }
 
 // ---------------------------------------------------------------------------
@@ -438,6 +445,7 @@ pub fn unwatch_file(watchers: State<crate::FileWatchers>, path: String) {
 pub fn open_file(
     app: AppHandle,
     watchers: State<crate::FileWatchers>,
+    open_docs: State<crate::OpenDocuments>,
     path: String,
 ) -> IpcResult<FileResult> {
     let p = std::path::Path::new(&path);
@@ -463,6 +471,12 @@ pub fn open_file(
                 .map_err(|e| IpcError { code: "PATH_CONFINED".into(), message: e.to_string() })?;
         }
     }
+
+    // Track this document as open so the source-read confinement on
+    // export/annotation commands can authorize against it. Done regardless of
+    // whether the watcher below starts, so a failed watcher never wrongly blocks
+    // a legitimately-open document from being exported/annotated (#85).
+    open_docs.insert(opened.path.clone());
 
     // Start watching this file for external changes so the frontend can surface
     // a conflict prompt instead of silently clobbering (A5/C12).
@@ -566,6 +580,38 @@ pub fn apply_reanchor_to_sidecar(
     sidecar
 }
 
+/// Confine a frontend-supplied document path to the set of documents the user
+/// actually has open, returning its canonical path, before it is read or written.
+///
+/// `doc_path` comes from the (untrusted) webview. Every command that reads a
+/// user-supplied document path — `export_obsidian`, `load_annotations`,
+/// `save_annotations`, and `read_file_bytes` (whose image read is rooted at the
+/// doc's parent) — routes through this so the confinement cannot drift between
+/// them: a path the user never opened is rejected with `PATH_CONFINED`,
+/// so a compromised frontend cannot read an arbitrary file (e.g. `~/.ssh/id_rsa`,
+/// `/etc/passwd`) and leak it into a vault export or annotation sidecar (#85).
+///
+/// `open_docs` holds canonical paths (`OpenDocuments`), so we canonicalize the
+/// incoming path before comparing — this also collapses symlink/`..`/case
+/// variants to the same on-disk identity the open set was keyed by.
+fn confine_open_doc(
+    doc_path: &str,
+    open_docs: &std::collections::HashSet<std::path::PathBuf>,
+) -> IpcResult<std::path::PathBuf> {
+    let canon = std::fs::canonicalize(doc_path).map_err(|e| IpcError {
+        code: "PATH_CONFINED".into(),
+        message: format!("doc_path '{doc_path}' could not be resolved: {e}"),
+    })?;
+    if open_docs.contains(&canon) {
+        Ok(canon)
+    } else {
+        Err(IpcError {
+            code: "PATH_CONFINED".into(),
+            message: "document must be open before it can be read, exported, or annotated".into(),
+        })
+    }
+}
+
 /// Load sidecar annotations for a document. Migrates schema if needed.
 ///
 /// T1.3/A4: now `async` so the re-anchor computation can run on a blocking
@@ -580,10 +626,17 @@ pub fn apply_reanchor_to_sidecar(
 /// The re-anchor guard itself is in `apply_reanchor_to_sidecar` — a sync
 /// function that integration tests call directly (T1.4/R-OFFSET-TEST).
 #[tauri::command]
-pub async fn load_annotations(doc_path: String) -> IpcResult<Sidecar> {
+pub async fn load_annotations(
+    open_docs: State<'_, crate::OpenDocuments>,
+    doc_path: String,
+) -> IpcResult<Sidecar> {
+    // Confine the (untrusted) doc_path to a currently-open document before any
+    // read, so this command cannot be used to read an arbitrary file (#85).
+    let canon = confine_open_doc(&doc_path, &open_docs.snapshot())?;
+
     // Read the full doc content (we need it for re-anchoring and hashing).
     let doc_content = tauri::async_runtime::spawn_blocking({
-        let path = doc_path.clone();
+        let path = canon.clone();
         move || std::fs::read_to_string(&path)
     })
     .await
@@ -593,10 +646,10 @@ pub async fn load_annotations(doc_path: String) -> IpcResult<Sidecar> {
     let doc_hash = crate::file_io::sha256_hex(doc_content.as_bytes());
 
     let load_result = tauri::async_runtime::spawn_blocking({
-        let path = doc_path.clone();
+        let path = canon.clone();
         let hash = doc_hash.clone();
         move || {
-            let p = std::path::Path::new(&path);
+            let p = path.as_path();
             crate::annotations::load_annotations(p, &hash)
         }
     })
@@ -634,10 +687,18 @@ pub async fn load_annotations(doc_path: String) -> IpcResult<Sidecar> {
 /// context fields). This is the single source of truth for context; the
 /// frontend never supplies it.
 #[tauri::command]
-pub async fn save_annotations(doc_path: String, sidecar: Sidecar) -> IpcResult<()> {
+pub async fn save_annotations(
+    open_docs: State<'_, crate::OpenDocuments>,
+    doc_path: String,
+    sidecar: Sidecar,
+) -> IpcResult<()> {
+    // Confine the (untrusted) doc_path to a currently-open document before the
+    // read + sidecar write (which also touches the nearest .gitignore) (#85).
+    let canon = confine_open_doc(&doc_path, &open_docs.snapshot())?;
+
     // Reads the whole doc + writes the sidecar — blocking fs, offloaded (perf #28).
     tauri::async_runtime::spawn_blocking(move || -> IpcResult<()> {
-        let p = std::path::Path::new(&doc_path);
+        let p = canon.as_path();
 
         // Read the current doc content so we can derive annotation context lines.
         let doc_content = std::fs::read_to_string(p)
@@ -705,8 +766,15 @@ pub async fn generate_review(payload: ReviewPayload) -> IpcResult<ReviewResult> 
 /// unreachable. Running it off a command-worker thread keeps the command pool /
 /// UI responsive (perf #4).
 #[tauri::command]
-pub async fn export_obsidian(request: ExportObsidianRequest) -> IpcResult<ExportObsidianResult> {
-    tauri::async_runtime::spawn_blocking(move || export_obsidian_blocking(request))
+pub async fn export_obsidian(
+    open_docs: State<'_, crate::OpenDocuments>,
+    request: ExportObsidianRequest,
+) -> IpcResult<ExportObsidianResult> {
+    // Confine the export SOURCE read to a currently-open document before the
+    // blocking body reads it: without this, a frontend-supplied doc_path could
+    // read any file on disk and push its contents into the vault export (#85).
+    let canon_doc = confine_open_doc(&request.doc_path, &open_docs.snapshot())?;
+    tauri::async_runtime::spawn_blocking(move || export_obsidian_blocking(request, canon_doc))
         .await
         .map_err(|e| IpcError {
             code: "INTERNAL".into(),
@@ -715,7 +783,13 @@ pub async fn export_obsidian(request: ExportObsidianRequest) -> IpcResult<Export
 }
 
 /// The blocking body of `export_obsidian` (runs on a blocking thread).
-fn export_obsidian_blocking(request: ExportObsidianRequest) -> IpcResult<ExportObsidianResult> {
+///
+/// `canon_doc` is the canonical source path already confined to an open
+/// document by the async wrapper (#85); the read below uses it directly.
+fn export_obsidian_blocking(
+    request: ExportObsidianRequest,
+    canon_doc: std::path::PathBuf,
+) -> IpcResult<ExportObsidianResult> {
     // Load current settings to get vault list and REST key ref.
     let settings_path = settings_file_path();
     let settings = crate::settings::get_settings(&settings_path).map_err(settings_err)?;
@@ -749,12 +823,12 @@ fn export_obsidian_blocking(request: ExportObsidianRequest) -> IpcResult<ExportO
         });
     }
 
-    // Read document content.
-    let doc_content = std::fs::read_to_string(&request.doc_path)
+    // Read document content from the confinement-checked canonical source path.
+    let doc_content = std::fs::read_to_string(&canon_doc)
         .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
 
     // Build vault-relative path: subfolder / filename
-    let filename = std::path::Path::new(&request.doc_path)
+    let filename = canon_doc
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("export.md");
@@ -998,14 +1072,23 @@ pub async fn export_pdf(out_path: String, html: String) -> IpcResult<String> {
 /// subdirectories included).  A `has_parent_traversal` pre-guard is applied
 /// before the confinement check so dot-dot paths cannot escape.
 ///
+/// `doc_path` is itself confined to a currently-open document first (#85):
+/// otherwise an untrusted frontend `doc_path` would let any directory authorize
+/// reads of *any* file type within it (this command is not extension-restricted),
+/// returning the bytes straight to the renderer.
+///
 /// On failure (path out of bounds, unreadable) returns `IO_ERROR`.  The
 /// frontend treats this as a "skip" and degrades to alt text — it must not
 /// abort the entire export.
 #[tauri::command]
-pub fn read_file_bytes(doc_path: String, image_path: String) -> IpcResult<String> {
-    let doc = std::path::Path::new(&doc_path);
+pub fn read_file_bytes(
+    open_docs: State<crate::OpenDocuments>,
+    doc_path: String,
+    image_path: String,
+) -> IpcResult<String> {
+    let canon_doc = confine_open_doc(&doc_path, &open_docs.snapshot())?;
     let img = std::path::Path::new(&image_path);
-    crate::export::read_file_bytes(doc, img)
+    crate::export::read_file_bytes(&canon_doc, img)
 }
 
 /// Capture the current web content as a PNG data URL.
@@ -1193,6 +1276,63 @@ fn settings_file_path() -> std::path::PathBuf {
 #[cfg(test)]
 mod ipc_tests {
     use super::js_string_literal;
+
+    // ── #85: source-read confinement (confine_open_doc) ───────────────────────
+    use super::confine_open_doc;
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    #[test]
+    fn confine_open_doc_accepts_currently_open_document() {
+        let dir = TempDir::new().unwrap();
+        let f = dir.path().join("note.md");
+        std::fs::write(&f, "x").unwrap();
+        let canon = std::fs::canonicalize(&f).unwrap();
+        let mut open = HashSet::new();
+        open.insert(canon.clone());
+        assert_eq!(confine_open_doc(f.to_str().unwrap(), &open).unwrap(), canon);
+    }
+
+    #[test]
+    fn confine_open_doc_rejects_unopened_document() {
+        // A real, readable file that the user never opened must be rejected — this
+        // is the exfiltration target (e.g. a secret file) the fix exists to block.
+        let dir = TempDir::new().unwrap();
+        let f = dir.path().join("secret.md");
+        std::fs::write(&f, "x").unwrap();
+        let open: HashSet<PathBuf> = HashSet::new();
+        assert!(confine_open_doc(f.to_str().unwrap(), &open).is_err());
+    }
+
+    #[test]
+    fn confine_open_doc_rejects_nonexistent_path() {
+        let open: HashSet<PathBuf> = HashSet::new();
+        assert!(confine_open_doc("/no/such/file/xyzzy.md", &open).is_err());
+    }
+
+    // On case-insensitive filesystems (default macOS APFS) a differently-cased
+    // path refers to the same file; `canonicalize` must normalize it to the same
+    // on-disk identity the open set was keyed by, so an open doc isn't wrongly
+    // rejected. This test verifies that property where it matters.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn confine_open_doc_accepts_case_variant_of_open_doc() {
+        let dir = TempDir::new().unwrap();
+        let f = dir.path().join("Note.md");
+        std::fs::write(&f, "x").unwrap();
+        let canon = std::fs::canonicalize(&f).unwrap();
+        let mut open = HashSet::new();
+        open.insert(canon.clone());
+        // Query with a lowercased filename — same file on case-insensitive APFS.
+        let lowercased = dir.path().join("note.md");
+        let got = confine_open_doc(lowercased.to_str().unwrap(), &open);
+        assert!(
+            got.is_ok(),
+            "a case-variant path to an open document must resolve to the same canonical path"
+        );
+        assert_eq!(got.unwrap(), canon);
+    }
 
     #[test]
     fn js_string_literal_escapes_quotes_and_backslashes() {
