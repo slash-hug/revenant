@@ -535,6 +535,19 @@ pub async fn save_file(
                 .filter_map(|v| std::fs::canonicalize(v).ok())
                 .collect();
 
+            // Fail closed: if vaults ARE configured but none could be
+            // canonicalized (all missing/inaccessible), the resolved set is
+            // empty — which `file_io::save_file` would treat as "unrestricted".
+            // An empty set must mean "unrestricted" ONLY in the genuine
+            // no-vaults-configured (first-run) case, never when confinement was
+            // requested but couldn't be resolved. Reject rather than fall open.
+            if !settings.vaults.is_empty() && allowed.is_empty() {
+                return Err(IpcError {
+                    code: "PATH_CONFINED".into(),
+                    message: "vaults are configured but none could be resolved; refusing to save unconfined".into(),
+                });
+            }
+
             let new_hash = crate::file_io::save_file(&canon, &request.content, &request.expected_hash, &allowed)
                 .map_err(file_io_err)?;
             Ok((canon, new_hash, request.path))
