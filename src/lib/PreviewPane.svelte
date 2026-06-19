@@ -22,7 +22,7 @@
    *  - blockMap   : Map<string, number>  — block-id → source-line mapping (C8).
    *  - addAnnotation : { anchor: AnchorV1 }  — preview-side "Add comment" (C8).
    */
-  import { onMount, onDestroy, afterUpdate, createEventDispatcher, tick, mount, unmount } from 'svelte';
+  import { onMount, onDestroy, tick, mount, unmount, createEventDispatcher } from 'svelte';
   import './styles/markdown.css';
   import {
     renderMarkdown,
@@ -55,8 +55,11 @@
   } from './stores/previewZoom';
   import MermaidContainer from './MermaidContainer.svelte';
 
-  export let content: string = '';
-  export let scrollLine: number = 1;
+  interface Props {
+    content?: string;
+    scrollLine?: number;
+  }
+  let { content = '', scrollLine = 1 }: Props = $props();
 
   const dispatch = createEventDispatcher<{
     blockMap: Map<string, number>;
@@ -67,19 +70,18 @@
   const addCommentShortcut = isMac() ? '⌘⌥M' : 'Ctrl+Alt+M';
 
   // "+ Add comment" affordance shown at the selection (mirrors EditorPane).
-  let showAddComment = false;
+  let showAddComment = $state(false);
   let pendingAnchor: AnchorV1 | null = null;
   let pendingQuoted = '';
-  let btnX = 0;
-  let btnY = 0;
+  let btnX = $state(0);
+  let btnY = $state(0);
 
   const LARGE_FILE_THRESHOLD = 2000; // lines
 
-  let previewEl: HTMLDivElement | null = null;
-  let pvScrollEl: HTMLDivElement | null = null;
+  let previewEl: HTMLDivElement | null = $state(null);
+  let pvScrollEl: HTMLDivElement | null = $state(null);
   let sealsComponent: AnnotationSeals | null = null;
-  let html = '';
-  let syncDegraded = false;
+  let html = $state('');
   let isHydrating = false;
 
   // Mounted MermaidContainer instances — tracked for cleanup on re-render.
@@ -171,14 +173,16 @@
     return Object.keys(pairs).length > 0 ? pairs : null;
   }
 
-  $: frontmatterHeader = parseFrontmatterHeader(content);
-  $: fmTitle = frontmatterHeader?.title as string | undefined;
-  $: fmMeta = frontmatterHeader
-    ? Object.entries(frontmatterHeader).filter(([k]) => k !== 'title')
-    : [];
+  const frontmatterHeader = $derived(parseFrontmatterHeader(content));
+  const fmTitle = $derived(frontmatterHeader?.title as string | undefined);
+  const fmMeta = $derived(
+    frontmatterHeader
+      ? Object.entries(frontmatterHeader).filter(([k]) => k !== 'title')
+      : [],
+  );
 
   /** CSS scale factor derived from the zoom percentage store. */
-  $: zoomScale = $previewZoom / 100;
+  const zoomScale = $derived($previewZoom / 100);
 
   function initials(name: string): string {
     return name.trim().split(/\s+/).map((w) => w[0] ?? '').slice(0, 2).join('').toUpperCase();
@@ -188,10 +192,10 @@
   // Render + hydrate pipeline
   // -------------------------------------------------------------------------
 
-  $: {
-    // Sync render (no Mermaid/hljs yet — those are hydrated async after mount).
+  // Sync render (no Mermaid/hljs yet — those are hydrated async after DOM update).
+  $effect(() => {
     html = renderMarkdown(content);
-  }
+  });
 
   // afterUpdate fires on EVERY update (focus, scroll, annotations…), but the heavy
   // post-render pipeline (hydrate Mermaid/hljs, rebuild the block-map + scroll
@@ -199,18 +203,30 @@
   // html token so typing/focus updates don't re-query + re-hydrate every block
   // (#2 — the dominant per-keystroke cost). Seal recompute still runs every update
   // because annotations can change without the HTML changing.
+  //
+  // In Svelte 5, $effect runs after DOM updates (same timing as afterUpdate) and
+  // tracks its reactive dependencies automatically. The html dependency here ensures
+  // the hydration pipeline only re-runs when html changes — equivalent to the
+  // lastHydratedHtml gate in the old afterUpdate.
   let lastHydratedHtml = '';
-  afterUpdate(async () => {
-    if (!previewEl) return;
-    await tick();
-    if (html !== lastHydratedHtml) {
-      lastHydratedHtml = html;
-      await hydrateDynamicBlocks();
-      emitBlockMap();
-      rebuildScrollIndex(); // sorted line→block index for binary-search scroll-sync (#3)
-    }
-    // Recompute seal positions after render (D2/D10: stays on afterUpdate).
-    triggerSealRecompute();
+  $effect(() => {
+    // Read html to register the dependency. The effect re-runs when html changes.
+    const currentHtml = html;
+    // Also read previewEl to re-run if the element changes (e.g. remount).
+    const el = previewEl;
+    if (!el) return;
+
+    void (async () => {
+      await tick();
+      if (currentHtml !== lastHydratedHtml) {
+        lastHydratedHtml = currentHtml;
+        await hydrateDynamicBlocks();
+        emitBlockMap();
+        rebuildScrollIndex(); // sorted line→block index for binary-search scroll-sync (#3)
+      }
+      // Recompute seal positions after render (D2/D10: stays on afterUpdate).
+      triggerSealRecompute();
+    })();
   });
 
   /**
@@ -477,10 +493,7 @@
   // Scroll sync (C7 / A9 — section-anchored, best-effort)
   // -------------------------------------------------------------------------
 
-  $: {
-    const lineCount = content.split('\n').length;
-    syncDegraded = lineCount > LARGE_FILE_THRESHOLD;
-  }
+  const syncDegraded = $derived(content.split('\n').length > LARGE_FILE_THRESHOLD);
 
   // Parallel sorted arrays (lines + elements), rebuilt once per render
   // (rebuildScrollIndex) so scroll-sync is a binary search instead of an
@@ -489,7 +502,7 @@
   let scrollEls: HTMLElement[] = [];
   let scrollSyncRaf = 0;
   let pendingScrollLine = 0;
-  // Last editor line we synced the preview to. The sync block below depends on
+  // Last editor line we synced the preview to. The sync effect below depends on
   // `syncDegraded`, which is reassigned on every `content` re-pass (i.e. any App
   // re-render) — without this guard the block re-fires and yanks the preview back
   // to `scrollLine` even when the editor never moved, so a user scrolling the
@@ -511,16 +524,18 @@
   // guard is what keeps it inert: without it, `syncDegraded` reassigning on every
   // content re-pass would re-fire this and yank the preview to the top.
   // rAF-throttle so a future re-enable coalesces continuous scroll to one sync/frame.
-  $: if (previewEl && scrollLine > 0 && !syncDegraded && scrollLine !== lastSyncedScrollLine) {
-    lastSyncedScrollLine = scrollLine;
-    pendingScrollLine = scrollLine;
-    if (!scrollSyncRaf) {
-      scrollSyncRaf = requestAnimationFrame(() => {
-        scrollSyncRaf = 0;
-        syncScrollToLine(pendingScrollLine);
-      });
+  $effect(() => {
+    if (previewEl && scrollLine > 0 && !syncDegraded && scrollLine !== lastSyncedScrollLine) {
+      lastSyncedScrollLine = scrollLine;
+      pendingScrollLine = scrollLine;
+      if (!scrollSyncRaf) {
+        scrollSyncRaf = requestAnimationFrame(() => {
+          scrollSyncRaf = 0;
+          syncScrollToLine(pendingScrollLine);
+        });
+      }
     }
-  }
+  });
 
   function syncScrollToLine(line: number) {
     if (!previewEl || !pvScrollEl) return;
@@ -687,7 +702,7 @@
   {/if}
 
   <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div class="pv-scroll" bind:this={pvScrollEl} on:wheel={handleZoomWheel}>
+  <div class="pv-scroll" bind:this={pvScrollEl} onwheel={handleZoomWheel}>
     <!-- AnnotationSeals overlay — first child of .pv-scroll (D3).
          Absolutely positioned relative to .pv-scroll (position: relative added below). -->
     <AnnotationSeals
@@ -724,7 +739,7 @@
       <div
         class="preview-content"
         bind:this={previewEl}
-        on:mouseup={handlePreviewMouseUp}
+        onmouseup={handlePreviewMouseUp}
       >{@html html}</div>
     </article>
   </div>
@@ -733,7 +748,7 @@
     <!-- Positioning wrapper only; the button inside is self-labeling (no
          role="tooltip" — that would hide the interactive button from AT). -->
     <div class="add-comment-affordance" style="left: {btnX}px; top: {btnY + 6}px;">
-      <button class="add-comment-btn" type="button" on:click={handleAddCommentClick}>
+      <button class="add-comment-btn" type="button" onclick={handleAddCommentClick}>
         + Add comment
         <span class="add-comment-kbd" aria-hidden="true">{addCommentShortcut}</span>
       </button>

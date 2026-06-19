@@ -12,7 +12,7 @@
   import CommentCard from './CommentCard.svelte';
   import type { Annotation } from './types/ipc';
 
-  export let open: boolean = true;
+  let { open = true }: { open?: boolean } = $props();
 
   let notesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   const NOTES_DEBOUNCE_MS = 800;
@@ -39,8 +39,8 @@
 
   // Inline body editing (UX #17). Empty saves are disallowed (saveAnnotationEdit).
   const saveHint = isMac() ? '⌘↩' : 'Ctrl+↩';
-  let editingId: string | null = null;
-  let draft = '';
+  let editingId: string | null = $state(null);
+  let draft = $state('');
 
   function startEdit(e: MouseEvent, ann: Annotation) {
     e.stopPropagation();
@@ -73,10 +73,14 @@
     return start === end ? `L${start}` : `L${start}–L${end}`;
   }
 
-  $: activeAnnotations = $annotationsStore.annotations.filter(
-    (a) => a.status === 'anchored' || a.status === 'block_level',
+  const activeAnnotations = $derived(
+    $annotationsStore.annotations.filter(
+      (a) => a.status === 'anchored' || a.status === 'block_level',
+    ),
   );
-  $: detachedAnnotations = $annotationsStore.annotations.filter((a) => a.status === 'detached');
+  const detachedAnnotations = $derived(
+    $annotationsStore.annotations.filter((a) => a.status === 'detached'),
+  );
 </script>
 
 {#if open}
@@ -90,7 +94,7 @@
           aria-labelledby="gn-label"
           placeholder="Notes that apply to the whole document…"
           value={$annotationsStore.generalNotes}
-          on:input={handleNotesInput}
+          oninput={handleNotesInput}
           rows="3"
         ></textarea>
       </section>
