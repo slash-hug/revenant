@@ -364,3 +364,23 @@ actually reaches that guard on all platforms (here: absolute AND containing `..`
 `PathBuf::join("..")` does not normalize, so the `..` component survives for the guard
 to detect. The macOS-only dev loop will not catch Windows path-semantics bugs — watch
 the `windows-latest` CI job, not just local `cargo test`.
+
+## `tsc --noEmit` does not type-check inside `.svelte` files — `svelte-check` does (2026-06-19)
+
+**What happened:** PR #65 (Mermaid container cleanup) declared `let copyTimer = 0;`
+then assigned `copyTimer = setTimeout(...)`. Our local frontend gate ran
+`npx tsc --noEmit`, which passed — but `tsc` only checks `.ts` files, it does **not**
+parse `.svelte` files, so the timer-typing error inside the component was invisible.
+CI runs `npm run check` (`svelte-check`), which *does* compile `.svelte` script blocks
+with the same strict TS config, and it failed both the macOS and Windows `Test` legs
+with `Type 'Timeout' is not assignable to type 'number'` — `setTimeout` resolves to
+`NodeJS.Timeout` under the Node-typed toolchain, not the browser's `number`. The fix:
+type the handle as `ReturnType<typeof setTimeout>` (the convention already used by
+`AnnotationDrawer`, `EditorPane`, `Suminagashi`), not a `0`-inferred `number`.
+
+**Rule:** The frontend type gate is **`npm run check` (svelte-check), not
+`tsc --noEmit`** — `tsc` skips `.svelte` files entirely. Any validation that only runs
+`tsc` has a hole the size of every component. Run `npm run check` before pushing (and in
+any agent's frontend test gate) whenever a `.svelte` file changed. For timer handles,
+never infer the type from a `0` sentinel — write `ReturnType<typeof setTimeout>` so the
+return type of `setTimeout`/`setInterval` is accepted on every platform.
