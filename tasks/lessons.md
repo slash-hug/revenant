@@ -2,6 +2,35 @@
 
 Repo-specific lessons. Append after any correction tied to this codebase.
 
+## Path/fs logic must be tested on Windows CI, not just macOS (2026-06-19)
+
+**What happened:** #86's `..`-traversal confinement tests (`open_file`/`save_file`
+`_rejects_dotdot_traversal`) passed on macOS but failed on `windows-latest`
+(`NotFound` instead of `Confined`) — so `main` shipped red on Windows after the
+#86 merge, caught only when #36 ran the full CI. Root cause: `fs::canonicalize`
+on Windows returns a **verbatim** path (`\\?\C:\...`). Joining `..` onto a verbatim
+path lexically collapses `sub\..` *before* it reaches the guard, so `..` never
+appears as a `Component::ParentDir`. The tests built the traversal from the
+canonicalized `allowed[0]`, so on Windows the path resolved in-bounds.
+
+**Lesson:** (1) Build `..`-traversal test paths from a **non-canonicalized** base
+so `..` survives as a `ParentDir` component on every platform (and it mirrors real
+untrusted frontend input). (2) Any path/confinement/fs change must be validated on
+the Windows CI job before "done" — macOS-only `cargo test` is not sufficient for
+path code. `has_parent_traversal` now also treats a literal `Normal("..")` as
+traversal (defense-in-depth for verbatim paths).
+
+## Cross-compiling the full app to Windows from macOS is blocked by `ring` (2026-06-19)
+
+**What happened:** `cargo check --target x86_64-pc-windows-msvc` on the whole app
+fails in `ring`'s C build (no Windows headers on macOS), so it can't compile-verify
+`#[cfg(windows)]` code locally. **Workaround that worked for #36:** extract the
+Windows-only fns into a tiny scratch crate depending only on `webview2-com`/
+`windows`/`url` (no `reqwest`/`ring`) and `cargo check` *that* against the MSVC
+target — it caught every COM API error (return types, `EventRegistrationToken` is
+just `i64`, `BOOL`→`bool`, missing `Win32_Graphics_Gdi` feature) without a Windows
+box. CI's `windows-latest` job is the integration gate.
+
 ## Build + unit tests passing ≠ the app launches (2026-06-13)
 
 **What happened:** All four workstreams shipped with green `cargo build`,
