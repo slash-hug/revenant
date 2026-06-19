@@ -191,6 +191,25 @@ describe('callout core rule — collapsible variants', () => {
   });
 });
 
+describe('callout core rule — decorative icon accessibility (#45)', () => {
+  it('family icon SVG is aria-hidden and survives DOMPurify sanitization', () => {
+    const html = renderMarkdown('> [!warning] Heads up\n> Body.');
+    const doc = parse(html);
+    const icon = doc.querySelector('.callout-title svg');
+    expect(icon).not.toBeNull();
+    // aria-hidden must survive the sanitize pass (it is in PURIFY_CONFIG.ALLOWED_ATTR);
+    // otherwise the decorative icon is announced by screen readers.
+    expect(icon?.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('collapsible callout icon is also aria-hidden', () => {
+    const html = renderMarkdown('> [!info]+ Open\n> Body.');
+    const doc = parse(html);
+    const icon = doc.querySelector('summary.callout-title svg');
+    expect(icon?.getAttribute('aria-hidden')).toBe('true');
+  });
+});
+
 describe('callout core rule — data attributes (TRAP 4 / B-4)', () => {
   it('outer element carries data-block-id, data-source-line, data-block-type="callout"', () => {
     const html = renderMarkdown('> [!info] Title\n> Body.');

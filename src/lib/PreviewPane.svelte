@@ -736,10 +736,17 @@
       {/if}
 
       <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <!--
+        Annotation seals rendered inside the preview are tabindex=-1/aria-hidden
+        (the drawer is the canonical keyboard surface). aria-keyshortcuts advertises
+        the existing Alt+Up/Alt+Down seal navigation (handled in App.svelte) so AT
+        users discover it from the preview, matching the drawer's own annotation list.
+      -->
       <div
         class="preview-content"
         bind:this={previewEl}
         onmouseup={handlePreviewMouseUp}
+        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
       >{@html html}</div>
     </article>
   </div>
