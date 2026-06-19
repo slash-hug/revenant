@@ -13,6 +13,13 @@ use std::path::PathBuf;
 /// Current settings schema version.
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
+/// The opaque reference written into `rest_key_ref` to name the OS-keychain
+/// entry holding the REST key (set by `set_rest_key` in `ipc.rs`). The raw REST
+/// key is NEVER stored in settings: a legitimate `rest_key_ref` is this opaque
+/// label, so any value present must begin with this prefix. A raw key (e.g. an
+/// `sk-…` token) would not, which is exactly what the leak guard catches.
+pub const REST_KEY_REF: &str = "obsidian-rest";
+
 /// Default preview zoom percentage.
 fn default_preview_zoom() -> u32 {
     100
@@ -188,18 +195,22 @@ pub fn save_settings(path: &PathBuf, settings: &Settings) -> Result<(), Settings
     let json = serde_json::to_string_pretty(settings)?;
 
     // Structural safety check: the Settings struct intentionally has no field
-    // that holds a raw secret — only `rest_key_ref` (an opaque reference string).
-    // This runtime assert fires in both debug AND release builds so it cannot be
-    // silently compiled away.  It checks that `rest_key_ref` is not a raw API
-    // key by verifying the serialized value does not look like a credential.
-    // The `sk-` prefix check is intentionally broad as an extra layer of
-    // defense; the primary guard is the struct definition itself.
+    // that holds a raw secret — only `rest_key_ref`, which must hold an opaque
+    // keychain reference (never a raw API key). This runtime assert fires in
+    // both debug AND release builds so it cannot be silently compiled away.
+    //
+    // The real leak risk is a raw key written into `rest_key_ref` (it would
+    // serialize as `"rest_key_ref":"<key>"`, which no generic field-name scan
+    // would catch). So we assert directly on the value: if it is present it must
+    // be the opaque keychain reference (it begins with `REST_KEY_REF`). A raw
+    // key would not, so this trips before it can be persisted. `None` is fine.
     assert!(
-        !json.contains("\"password\"")
-            && !json.contains("\"api_key\"")
-            && !json.contains("\"secret\""),
-        "BUG: Serialized settings contain a field that looks like a secret. \
-         Check that rest_key_ref holds only an opaque reference, not a raw key."
+        settings
+            .rest_key_ref
+            .as_deref()
+            .map_or(true, |r| r.starts_with(REST_KEY_REF)),
+        "BUG: rest_key_ref holds an unexpected value; it must be the opaque \
+         keychain reference {REST_KEY_REF:?}, never a raw key."
     );
 
     std::fs::write(path, json)?;
