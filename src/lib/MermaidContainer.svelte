@@ -42,7 +42,7 @@
   // Auto-fit diagram to viewport on mount (once elements are bound and SVG is rendered)
   let hasFittedOnMount = false;
   let fitRaf = 0;
-  let copyTimer = 0;
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
     if (viewportEl && canvasEl && !hasFittedOnMount) {
       // Wait a frame for the SVG to render and have dimensions
