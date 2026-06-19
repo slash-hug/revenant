@@ -583,10 +583,11 @@ pub fn apply_reanchor_to_sidecar(
 /// Confine a frontend-supplied document path to the set of documents the user
 /// actually has open, returning its canonical path, before it is read or written.
 ///
-/// `doc_path` comes from the (untrusted) webview. Every command that touches a
+/// `doc_path` comes from the (untrusted) webview. Every command that reads a
 /// user-supplied document path — `export_obsidian`, `load_annotations`,
-/// `save_annotations` — routes through this so the confinement cannot drift
-/// between them: a path the user never opened is rejected with `PATH_CONFINED`,
+/// `save_annotations`, and `read_file_bytes` (whose image read is rooted at the
+/// doc's parent) — routes through this so the confinement cannot drift between
+/// them: a path the user never opened is rejected with `PATH_CONFINED`,
 /// so a compromised frontend cannot read an arbitrary file (e.g. `~/.ssh/id_rsa`,
 /// `/etc/passwd`) and leak it into a vault export or annotation sidecar (#85).
 ///
@@ -1071,14 +1072,23 @@ pub async fn export_pdf(out_path: String, html: String) -> IpcResult<String> {
 /// subdirectories included).  A `has_parent_traversal` pre-guard is applied
 /// before the confinement check so dot-dot paths cannot escape.
 ///
+/// `doc_path` is itself confined to a currently-open document first (#85):
+/// otherwise an untrusted frontend `doc_path` would let any directory authorize
+/// reads of *any* file type within it (this command is not extension-restricted),
+/// returning the bytes straight to the renderer.
+///
 /// On failure (path out of bounds, unreadable) returns `IO_ERROR`.  The
 /// frontend treats this as a "skip" and degrades to alt text — it must not
 /// abort the entire export.
 #[tauri::command]
-pub fn read_file_bytes(doc_path: String, image_path: String) -> IpcResult<String> {
-    let doc = std::path::Path::new(&doc_path);
+pub fn read_file_bytes(
+    open_docs: State<crate::OpenDocuments>,
+    doc_path: String,
+    image_path: String,
+) -> IpcResult<String> {
+    let canon_doc = confine_open_doc(&doc_path, &open_docs.snapshot())?;
     let img = std::path::Path::new(&image_path);
-    crate::export::read_file_bytes(doc, img)
+    crate::export::read_file_bytes(&canon_doc, img)
 }
 
 /// Capture the current web content as a PNG data URL.

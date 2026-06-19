@@ -90,6 +90,18 @@ impl FileWatchers {
 /// file (e.g. `~/.ssh/id_rsa`) and leaking it into a vault export or sidecar
 /// (#85). Distinct from `FileWatchers`, whose membership depends on the watch
 /// succeeding — which is exactly why we do not reuse it for authorization.
+///
+/// Two properties to preserve:
+/// - **One path = one entry, no refcount.** `unwatch_file` removes the single
+///   entry on tab close. This is safe only because the frontend dedupes opens by
+///   path (focus-existing-tab), so a path is never open in two tabs at once. A
+///   future duplicate-tab / multi-window feature that breaks that invariant would
+///   need this set to become refcounted, or closing one tab would wrongly revoke
+///   a still-open document.
+/// - **Stale entries fail safe.** If the frontend never calls `unwatch_file`
+///   (renderer crash, hard kill), an entry lingers for the process lifetime. The
+///   residual exposure is bounded to a path the user *did* open this session, so
+///   it is a confused-deputy non-escalation, not an arbitrary-read.
 #[derive(Default)]
 pub struct OpenDocuments {
     pub inner: Mutex<HashSet<PathBuf>>,
