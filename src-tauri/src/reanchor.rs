@@ -103,8 +103,13 @@ pub fn reanchor(
         best_fuzzy_match(&needle, &lines, needle_line_count, ann.line_start)
     {
         // Offset into the window to get the anchor on the quoted_text lines.
-        let anchor_start = window_start + before_line_count as u32;
-        let anchor_end = anchor_start + quoted_line_count as u32 - 1;
+        // `before_line_count`/`quoted_line_count` come from the OLD document, but
+        // the matched window lives in the NEW document, so the naive end can run
+        // past the new document's last line. Clamp the reported range to the new
+        // document's valid line indices (the matching/window logic is unchanged).
+        let last_line = lines.len().saturating_sub(1) as u32;
+        let anchor_start = (window_start + before_line_count as u32).min(last_line);
+        let anchor_end = (anchor_start + quoted_line_count as u32 - 1).min(last_line);
 
         let mut updated = ann.clone();
         updated.line_start = anchor_start;
