@@ -407,3 +407,29 @@ mtime travels with the file and fools mtime-based build tools (cargo, make). Use
 `touch` the file after restoring. When a test result is surprising right after a
 sed/mv edit dance, suspect a stale artifact first: `touch` the source (or `cargo clean
 -p <crate>`) and re-run before trusting the outcome.
+
+## Confinement belongs IN the fs-touching layer, not only the caller (#86, 2026-06-19)
+
+**What happened:** `file_io::open_file`/`save_file` did only `.md`-extension
+checks; ALL path confinement lived in the `ipc.rs` wrappers (`assert_confined`
+on the caller side). Any future direct caller of `file_io` (a new command, a
+helper, a test-turned-prod path) wrote anywhere on disk with no `..` guard and
+no vault check — confinement was caller-opt-in, so a single forgotten
+`assert_confined` re-opened the hole #46 had nominally closed.
+
+**Lesson:** A security check enforced only by the caller is one mistake away
+from being absent. Push it into the layer that actually performs the dangerous
+operation so a bypassing caller is impossible *by construction* (mechanical
+enforcement over a prose guarantee).
+
+**Rule:**
+- `file_io::open_file(path, allowed_dirs)` / `save_file(path, content,
+  expected_hash, allowed_dirs)` call `assert_confined` themselves. An EMPTY
+  `allowed_dirs` slice = "unrestricted" — the deliberate opt-out for the
+  open-any-`.md` trust model (the user's explicit open is the boundary) and the
+  first-run no-vault-configured save case. `ipc.rs` passes the canonicalized
+  vault list through instead of asserting separately.
+- `save_file` now writes the symlink-resolved `canon` path (the same path that
+  was confined), not the raw frontend-supplied `p`.
+- The `ipc.rs` IPC contract (command sigs / serde / `PATH_CONFINED` error code)
+  is unchanged — only the internal Rust `file_io` signatures moved.
