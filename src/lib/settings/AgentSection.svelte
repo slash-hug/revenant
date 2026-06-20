@@ -55,8 +55,8 @@
       >Relative</button>
       <button
         type="button"
-        class:active={$settings?.agent_nudge_path_style === 'absolute'}
-        aria-pressed={$settings?.agent_nudge_path_style === 'absolute'}
+        class:active={($settings?.agent_nudge_path_style ?? 'relative') === 'absolute'}
+        aria-pressed={($settings?.agent_nudge_path_style ?? 'relative') === 'absolute'}
         on:click={() => onStyleChange('absolute')}
       >Absolute</button>
     </div>

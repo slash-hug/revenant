@@ -14,7 +14,7 @@
    *   - Scrollable detail pane (max 660px)
    *
    * Props:
-   *   - category: 'general' | 'integrations' | 'about'  — deep-link initial tab
+   *   - category: 'general' | 'integrations' | 'agent' | 'about'  — deep-link initial tab
    * Events:
    *   - close — App.svelte sets settingsView = null on receipt
    */
