@@ -37,6 +37,7 @@ fn test_settings_round_trip() {
         export_on_save: true,
         rest_key_ref: Some("obsidian-rest".to_string()),
         preview_zoom: 125,
+        ..Settings::default()
     };
 
     save_settings(&path, &original).expect("save should succeed");
@@ -72,6 +73,7 @@ fn test_no_secret_in_serialized_json() {
         // rest_key_ref holds the LABEL, not the secret.
         rest_key_ref: Some("obsidian-rest".to_string()),
         preview_zoom: 100,
+        ..Settings::default()
     };
 
     save_settings(&path, &settings).expect("save should succeed");
@@ -531,6 +533,7 @@ fn test_preserving_ref_survives_stale_frontend_payload() {
         export_on_save: false,
         rest_key_ref: Some("obsidian-rest".to_string()),
         preview_zoom: 90,
+        ..Settings::default()
     };
     save_settings(&path, &on_disk).expect("initial save should succeed");
 
@@ -544,6 +547,7 @@ fn test_preserving_ref_survives_stale_frontend_payload() {
         export_on_save: true,
         rest_key_ref: None, // stale — frontend doesn't know about the saved key
         preview_zoom: 150,
+        ..Settings::default()
     };
     set_settings_preserving_ref(&path, stale_incoming).expect("merge save should succeed");
 
@@ -715,4 +719,46 @@ fn test_keychain_rollback_on_settings_write_failure() {
         !has_rest_key(key_ref),
         "key must be absent from keychain after rollback delete"
     );
+}
+
+// ── Task 3: agent_nudge_template + agent_nudge_path_style ────────────────────
+
+#[test]
+fn defaults_include_agent_nudge_fields() {
+    let s = crate::settings::Settings::default();
+    assert_eq!(s.agent_nudge_path_style, "relative");
+    assert!(s.agent_nudge_template.contains("{review_path}"));
+    assert!(s.agent_nudge_template.contains("{doc_path}"));
+}
+
+#[test]
+fn old_settings_json_without_agent_fields_loads_with_defaults() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("settings.json");
+    // A v1 file written before these fields existed.
+    std::fs::write(
+        &path,
+        r#"{"schema_version":1,"vaults":[],"default_export_subfolder":"",
+            "theme":"system","export_on_save":false,"rest_key_ref":null,
+            "preview_zoom":100}"#,
+    )
+    .unwrap();
+
+    let loaded = crate::settings::get_settings(&path).unwrap();
+    assert_eq!(loaded.agent_nudge_path_style, "relative");
+    assert!(loaded.agent_nudge_template.contains("{review_path}"));
+}
+
+#[test]
+fn preserving_ref_keeps_agent_fields() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("settings.json");
+    let mut s = crate::settings::Settings::default();
+    s.agent_nudge_template = "custom {doc_path}".to_string();
+    s.agent_nudge_path_style = "absolute".to_string();
+    crate::settings::set_settings_preserving_ref(&path, s).unwrap();
+
+    let loaded = crate::settings::get_settings(&path).unwrap();
+    assert_eq!(loaded.agent_nudge_template, "custom {doc_path}");
+    assert_eq!(loaded.agent_nudge_path_style, "absolute");
 }

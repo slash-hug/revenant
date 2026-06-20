@@ -86,6 +86,11 @@ pub struct Settings {
     pub rest_key_ref: Option<String>,
     /// Preview zoom percentage (50–200).
     pub preview_zoom: u32,
+    /// Template for the clipboard nudge built on "Send to agent".
+    /// Placeholders: `{review_path}`, `{doc_path}`.
+    pub agent_nudge_template: String,
+    /// Path form used in the nudge: "relative" (to git root) or "absolute".
+    pub agent_nudge_path_style: String,
 }
 
 /// Response from open_file / save_file.
@@ -281,6 +286,8 @@ fn settings_from_ipc(s: Settings) -> crate::settings::Settings {
         export_on_save: s.export_on_save,
         rest_key_ref: s.rest_key_ref,
         preview_zoom: s.preview_zoom,
+        agent_nudge_template: s.agent_nudge_template,
+        agent_nudge_path_style: s.agent_nudge_path_style,
     }
 }
 
@@ -296,6 +303,8 @@ fn settings_to_ipc(s: crate::settings::Settings) -> Settings {
         export_on_save: s.export_on_save,
         rest_key_ref: s.rest_key_ref,
         preview_zoom: s.preview_zoom,
+        agent_nudge_template: s.agent_nudge_template,
+        agent_nudge_path_style: s.agent_nudge_path_style,
     }
 }
 

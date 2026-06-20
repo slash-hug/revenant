@@ -25,6 +25,17 @@ fn default_preview_zoom() -> u32 {
     100
 }
 
+/// Default one-line nudge copied to the clipboard on "Send to agent".
+/// MUST stay byte-identical to DEFAULT_NUDGE_TEMPLATE in src/lib/agentNudge.ts.
+fn default_agent_nudge_template() -> String {
+    "Apply the review comments in `{review_path}` to `{doc_path}`, then summarize what you changed.".to_string()
+}
+
+/// Default path form used in the nudge: "relative" (to git root) or "absolute".
+fn default_agent_nudge_path_style() -> String {
+    "relative".to_string()
+}
+
 /// Application-level settings (persisted to disk as JSON).
 ///
 /// The REST key is intentionally absent from this struct — it lives
@@ -55,6 +66,15 @@ pub struct Settings {
     /// Preview zoom level as a percentage (50–200). Default 100.
     #[serde(default = "default_preview_zoom")]
     pub preview_zoom: u32,
+
+    /// Template for the clipboard nudge built on "Send to agent".
+    /// Placeholders: `{review_path}`, `{doc_path}`.
+    #[serde(default = "default_agent_nudge_template")]
+    pub agent_nudge_template: String,
+
+    /// Path form used in the nudge: "relative" (to git root) or "absolute".
+    #[serde(default = "default_agent_nudge_path_style")]
+    pub agent_nudge_path_style: String,
 }
 
 impl Default for Settings {
@@ -67,6 +87,8 @@ impl Default for Settings {
             export_on_save: false,
             rest_key_ref: None,
             preview_zoom: 100,
+            agent_nudge_template: default_agent_nudge_template(),
+            agent_nudge_path_style: default_agent_nudge_path_style(),
         }
     }
 }
@@ -265,6 +287,8 @@ pub fn set_settings_preserving_ref(
         theme: incoming.theme,
         export_on_save: incoming.export_on_save,
         preview_zoom: incoming.preview_zoom,
+        agent_nudge_template: incoming.agent_nudge_template,
+        agent_nudge_path_style: incoming.agent_nudge_path_style,
     };
     save_settings(path, &merged)
 }

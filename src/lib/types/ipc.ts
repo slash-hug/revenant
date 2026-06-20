@@ -77,6 +77,10 @@ export interface Settings {
   rest_key_ref: string | null;
   /** Preview zoom percentage (50–200). Default 100. */
   preview_zoom: number;
+  /** Clipboard nudge template. Placeholders: {review_path}, {doc_path}. */
+  agent_nudge_template: string;
+  /** Path form used in the nudge. */
+  agent_nudge_path_style: "relative" | "absolute";
 }
 
 /** Response from open_file and save_file. */
