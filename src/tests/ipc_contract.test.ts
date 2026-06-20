@@ -125,6 +125,8 @@ describe("IPC contract", () => {
       export_on_save: false,
       rest_key_ref: null, // reference only — no raw key
       preview_zoom: 100,
+      agent_nudge_template: "Apply the review comments in `{review_path}` to `{doc_path}`, then summarize what you changed.",
+      agent_nudge_path_style: "relative",
     };
     expect(settings.schema_version).toBe(1);
     // Ensure no 'rest_key' property exists on the type (only rest_key_ref)
@@ -197,6 +199,8 @@ describe("IPC contract", () => {
       export_on_save: false,
       rest_key_ref: "obsidian-rest",
       preview_zoom: 100,
+      agent_nudge_template: "Apply the review comments in `{review_path}` to `{doc_path}`, then summarize what you changed.",
+      agent_nudge_path_style: "relative",
     };
     mockInvoke.mockResolvedValueOnce(updatedSettings);
     const result = await setRestKey("my-secret-key");
@@ -215,6 +219,8 @@ describe("IPC contract", () => {
       export_on_save: false,
       rest_key_ref: null,
       preview_zoom: 100,
+      agent_nudge_template: "Apply the review comments in `{review_path}` to `{doc_path}`, then summarize what you changed.",
+      agent_nudge_path_style: "relative",
     };
     mockInvoke.mockResolvedValueOnce(updatedSettings);
     const result = await clearRestKey();

@@ -47,6 +47,8 @@
   import type { Command } from './lib/commandFilter';
   import { generateReview } from './lib/ReviewExporter';
   import { basename } from './lib/util/path';
+  import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+  import { buildNudge, DEFAULT_NUDGE_TEMPLATE } from './lib/agentNudge';
   import { isMac as isMacPlatform } from './lib/util/platform';
 
   type ViewMode = 'source' | 'preview' | 'split';
@@ -95,7 +97,7 @@
   let shortcutsOpen = $state(false); // keyboard-shortcuts help overlay (#25)
   // Settings view-state: null = settings closed; string = active category.
   // Replaces the old boolean settingsOpen (A1).
-  let settingsView: 'general' | 'integrations' | 'about' | null = $state(null);
+  let settingsView: 'general' | 'integrations' | 'agent' | 'about' | null = $state(null);
   // Focus target captured on settings entry so we can restore it on exit (A3).
   let focusRestoreEl: HTMLElement | null = null;
   let editorRef = $state<{ save: () => Promise<'saved' | 'conflict' | 'error' | 'noop'> } | null>(null);
@@ -138,7 +140,7 @@
   // Settings helpers (A3)
   // -------------------------------------------------------------------------
   /** Open settings at the given category, capturing current focus for later restore. */
-  function openSettings(category: 'general' | 'integrations' | 'about' = 'general') {
+  function openSettings(category: 'general' | 'integrations' | 'agent' | 'about' = 'general') {
     focusRestoreEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     settingsView = category;
   }
@@ -349,10 +351,25 @@
     };
     busyAction = 'review';
     try {
-      await generateReview(sidecar, tab.path);
-      showToast(`Review written: ${basename(tab.path)}.review.md`);
+      const result = await generateReview(sidecar, tab.path);
+      const cfg = $settings;
+      const template = cfg?.agent_nudge_template || DEFAULT_NUDGE_TEMPLATE;
+      const style = cfg?.agent_nudge_path_style ?? 'relative';
+      const nudge = buildNudge(template, style, {
+        reviewAbs: result.review_path,
+        reviewRel: result.review_path_rel,
+        docAbs: result.doc_path,
+        docRel: result.doc_path_rel,
+      });
+      try {
+        await writeText(nudge);
+        showToast(`Review written · nudge copied — paste into your agent`);
+      } catch {
+        // Clipboard failed (rare): the file is still written, so don't block.
+        showToast(`Review written: ${basename(tab.path)}.review.md (clipboard unavailable)`);
+      }
     } catch (err) {
-      showToast(`Generate review failed: ${errMessage(err)}`);
+      showToast(`Send to agent failed: ${errMessage(err)}`);
     } finally {
       busyAction = null;
     }

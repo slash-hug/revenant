@@ -130,6 +130,13 @@ revenant --version
 Then: read in Source / Split / Preview (⌘1 / ⌘2 / ⌘3), select text and press **⌘⌥M** to leave a
 comment, press **⌘⇧R** to write a `.review.md`, and press **⌘K** any time for the command palette.
 
+### Sending reviews back to your agent
+
+Click **Send to agent** to write a `.review.md` and copy a paste-ready nudge to
+your clipboard for a running Claude Code / Copilot CLI session. Optional
+slash-command and agent-instruction templates live in
+[`integrations/`](integrations/README.md).
+
 ## Development
 
 ```sh

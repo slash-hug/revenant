@@ -40,6 +40,8 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     export_on_save: false,
     rest_key_ref: null,
     preview_zoom: 100,
+    agent_nudge_template: "Apply the review comments in `{review_path}` to `{doc_path}`, then summarize what you changed.",
+    agent_nudge_path_style: "relative",
     ...overrides,
   };
 }

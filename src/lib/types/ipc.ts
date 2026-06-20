@@ -77,6 +77,10 @@ export interface Settings {
   rest_key_ref: string | null;
   /** Preview zoom percentage (50–200). Default 100. */
   preview_zoom: number;
+  /** Clipboard nudge template. Placeholders: {review_path}, {doc_path}. */
+  agent_nudge_template: string;
+  /** Path form used in the nudge. */
+  agent_nudge_path_style: "relative" | "absolute";
 }
 
 /** Response from open_file and save_file. */
@@ -108,9 +112,16 @@ export interface ReviewPayload {
   markdown: string;
 }
 
-/** Result of generate_review. */
+/** Result of generate_review — paths used to build the agent nudge. */
 export interface ReviewResult {
+  /** Canonical absolute path of the written <doc>.md.review.md. */
   review_path: string;
+  /** Canonical absolute path of the reviewed document. */
+  doc_path: string;
+  /** Review path relative to the nearest git root; null if not in a repo. */
+  review_path_rel: string | null;
+  /** Doc path relative to the nearest git root; null if not in a repo. */
+  doc_path_rel: string | null;
 }
 
 /** Request for Obsidian export. */

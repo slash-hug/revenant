@@ -14,7 +14,7 @@
    *   - Scrollable detail pane (max 660px)
    *
    * Props:
-   *   - category: 'general' | 'integrations' | 'about'  — deep-link initial tab
+   *   - category: 'general' | 'integrations' | 'agent' | 'about'  — deep-link initial tab
    * Events:
    *   - close — App.svelte sets settingsView = null on receipt
    */
@@ -23,8 +23,9 @@
   import ObsidianSection from './settings/ObsidianSection.svelte';
   import AppearanceSection from './settings/AppearanceSection.svelte';
   import AboutSection from './settings/AboutSection.svelte';
+  import AgentSection from './settings/AgentSection.svelte';
 
-  export let category: 'general' | 'integrations' | 'about' = 'general';
+  export let category: 'general' | 'integrations' | 'agent' | 'about' = 'general';
 
   const dispatch = createEventDispatcher<{ close: void }>();
 
@@ -33,6 +34,7 @@
   const categories = [
     { id: 'general', label: 'General', component: AppearanceSection },
     { id: 'integrations', label: 'Integrations', component: ObsidianSection },
+    { id: 'agent', label: 'Agent', component: AgentSection },
     { id: 'about', label: 'About', component: AboutSection },
   ];
 
