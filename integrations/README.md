@@ -26,15 +26,23 @@ These are templates — Revenant does not install them for you yet
 Copy the snippet from [`agent-instructions.md`](agent-instructions.md) into your
 project's `CLAUDE.md` (Claude Code) or `AGENTS.md` (Copilot CLI).
 
-### 2. Claude Code slash command (optional)
+### 2. A `/revenant-review` shortcut (optional)
 
-Copy [`claude-code/revenant-review.md`](claude-code/revenant-review.md) to
-`.claude/commands/revenant-review.md` in your project (shared via git) or
-`~/.claude/commands/revenant-review.md` for all projects. Then paste
-`/revenant-review docs/spec.md.review.md` instead of the full nudge sentence.
+Both agents let you invoke a `revenant-review` shortcut instead of pasting the
+full nudge sentence — you still pass the review path.
 
-GitHub Copilot CLI has no user-defined slash commands — use the pasted nudge; its
-`AGENTS.md` support still gives you step 1.
+**Claude Code** — copy [`claude-code/revenant-review.md`](claude-code/revenant-review.md)
+to `.claude/commands/revenant-review.md` in your project (shared via git) or
+`~/.claude/commands/revenant-review.md` for all projects. Then type
+`/revenant-review docs/spec.md.review.md`.
+
+**GitHub Copilot CLI** — copy the
+[`copilot-cli/skills/revenant-review/`](copilot-cli/skills/revenant-review/SKILL.md)
+skill folder to `.github/skills/` (project, shared via git) or `~/.copilot/skills/`
+(all projects). Invoke it in a prompt:
+*"Use the `/revenant-review` skill on `docs/spec.md.review.md`."* Copilot CLI also
+reads `.claude/commands/` in recent versions (≥ 0.0.399), so the Claude command
+above may work directly too — but the skill is the documented, supported path.
 
 ## How the pieces fit
 
@@ -42,7 +50,7 @@ GitHub Copilot CLI has no user-defined slash commands — use the pasted nudge; 
 |---|---|---|
 | `<doc>.md.review.md` | Revenant (Send to agent) | your agent |
 | Clipboard nudge | Revenant (Send to agent) | you → paste into agent |
-| `revenant-review` slash command | you install once | Claude Code |
+| `revenant-review` command (Claude Code) / skill (Copilot CLI) | you install once | Claude Code · Copilot CLI |
 | `CLAUDE.md` / `AGENTS.md` snippet | you install once | your agent (always) |
 
 ## Roadmap
