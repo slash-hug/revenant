@@ -95,7 +95,7 @@
   let shortcutsOpen = $state(false); // keyboard-shortcuts help overlay (#25)
   // Settings view-state: null = settings closed; string = active category.
   // Replaces the old boolean settingsOpen (A1).
-  let settingsView: 'general' | 'integrations' | 'about' | null = $state(null);
+  let settingsView: 'general' | 'integrations' | 'agent' | 'about' | null = $state(null);
   // Focus target captured on settings entry so we can restore it on exit (A3).
   let focusRestoreEl: HTMLElement | null = null;
   let editorRef = $state<{ save: () => Promise<'saved' | 'conflict' | 'error' | 'noop'> } | null>(null);
@@ -138,7 +138,7 @@
   // Settings helpers (A3)
   // -------------------------------------------------------------------------
   /** Open settings at the given category, capturing current focus for later restore. */
-  function openSettings(category: 'general' | 'integrations' | 'about' = 'general') {
+  function openSettings(category: 'general' | 'integrations' | 'agent' | 'about' = 'general') {
     focusRestoreEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     settingsView = category;
   }
