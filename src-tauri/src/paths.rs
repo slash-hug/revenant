@@ -141,6 +141,22 @@ pub fn ensure_gitignore_entry(doc_dir: &Path) -> Result<(), PathError> {
     Ok(())
 }
 
+/// Return `path` expressed relative to the nearest git repository root (the
+/// directory that contains `.git`), using forward slashes. `None` if `path`
+/// has no `.git` ancestor.
+///
+/// `path` should be absolute/canonical (callers pass canonicalized paths); the
+/// relative form is what goes into the agent nudge so a pasted prompt stays
+/// repo-portable and doesn't leak the user's home directory.
+pub fn repo_relative(path: &Path) -> Option<String> {
+    // Walk up from the path's own directory looking for `.git`.
+    let start = if path.is_dir() { path } else { path.parent()? };
+    let git_dir = find_git_dir(start)?;
+    let root = git_dir.parent()?; // directory containing `.git`
+    let rel = path.strip_prefix(root).ok()?;
+    Some(rel.to_string_lossy().replace('\\', "/"))
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 /// Walk up from `start` looking for a directory named `.git`.
@@ -300,5 +316,26 @@ mod tests {
         assert!(contents.contains("*.annotations.json"));
         // .gitignore should NOT have been created
         assert!(!dir.path().join(".gitignore").exists());
+    }
+
+    #[test]
+    fn repo_relative_returns_path_from_git_root() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        let docs = dir.path().join("docs");
+        fs::create_dir(&docs).unwrap();
+        let doc = docs.join("spec.md");
+        fs::write(&doc, "# hi").unwrap();
+
+        assert_eq!(repo_relative(&doc).as_deref(), Some("docs/spec.md"));
+    }
+
+    #[test]
+    fn repo_relative_returns_none_outside_repo() {
+        let dir = TempDir::new().unwrap();
+        let doc = dir.path().join("spec.md");
+        fs::write(&doc, "# hi").unwrap();
+        // No .git anywhere above a fresh TempDir.
+        assert_eq!(repo_relative(&doc), None);
     }
 }
