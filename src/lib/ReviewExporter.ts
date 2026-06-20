@@ -12,7 +12,7 @@
  * which writes it to <doc>.review.md beside the source file.
  */
 
-import type { Annotation, Sidecar } from './types/ipc';
+import type { Annotation, Sidecar, ReviewResult } from './types/ipc';
 import { generateReview as ipcGenerateReview } from './types/ipc';
 import { basename } from './util/path';
 
@@ -169,9 +169,8 @@ export function formatReview(sidecar: Sidecar, docPath: string): ReviewPayload {
  *
  * Returns the payload for callers that want to show a confirmation.
  */
-export async function generateReview(sidecar: Sidecar, docPath: string): Promise<ReviewPayload> {
+export async function generateReview(sidecar: Sidecar, docPath: string): Promise<ReviewResult> {
   const payload = formatReview(sidecar, docPath);
   // Use the typed IPC wrapper which sends { payload: { doc_path, markdown } }.
-  await ipcGenerateReview({ doc_path: docPath, markdown: payload.markdown });
-  return payload;
+  return ipcGenerateReview({ doc_path: docPath, markdown: payload.markdown });
 }
