@@ -108,9 +108,16 @@ export interface ReviewPayload {
   markdown: string;
 }
 
-/** Result of generate_review. */
+/** Result of generate_review — paths used to build the agent nudge. */
 export interface ReviewResult {
+  /** Canonical absolute path of the written <doc>.md.review.md. */
   review_path: string;
+  /** Canonical absolute path of the reviewed document. */
+  doc_path: string;
+  /** Review path relative to the nearest git root; null if not in a repo. */
+  review_path_rel: string | null;
+  /** Doc path relative to the nearest git root; null if not in a repo. */
+  doc_path_rel: string | null;
 }
 
 /** Request for Obsidian export. */

@@ -118,10 +118,17 @@ pub struct ReviewPayload {
     pub markdown: String,
 }
 
-/// Result of generate_review — path where the .review.md was written.
+/// Result of generate_review — paths used to build the agent nudge.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReviewResult {
+    /// Canonical absolute path of the written `<doc>.md.review.md`.
     pub review_path: String,
+    /// Canonical absolute path of the reviewed document.
+    pub doc_path: String,
+    /// Review path relative to the nearest git root; None if not in a repo.
+    pub review_path_rel: Option<String>,
+    /// Doc path relative to the nearest git root; None if not in a repo.
+    pub doc_path_rel: Option<String>,
 }
 
 /// Update-check result returned by `check_for_updates`.
@@ -732,26 +739,16 @@ pub async fn save_annotations(
     .map_err(task_err)?
 }
 
-/// Write a pre-formatted review markdown file beside the document.
-/// Frontend (ReviewExporter.ts) builds the markdown payload.
-#[tauri::command]
-pub async fn generate_review(payload: ReviewPayload) -> IpcResult<ReviewResult> {
-    // Canonicalize + write the .review.md — blocking fs, offloaded (perf #28).
-    tauri::async_runtime::spawn_blocking(move || -> IpcResult<ReviewResult> {
-    let doc_p = std::path::Path::new(&payload.doc_path);
-
-    // Path confinement (A7/C16): the review file is written next to its source
-    // document, so the only legitimate target is "<canonical doc>.review.md".
-    // doc_path is frontend-supplied and therefore untrusted — require it to be
-    // an existing .md file, canonicalize it, and assert the derived review path
-    // stays inside the document's own directory. (Previously this command was
-    // the one fs-writing path that bypassed confinement entirely.)
+/// Canonicalize the doc, derive the `<doc>.review.md` target, confine it, and
+/// build the ReviewResult. Pure of the file write so it is unit-testable
+/// without an async runtime.
+fn resolve_review_paths(doc_path: &str) -> IpcResult<(std::path::PathBuf, ReviewResult)> {
+    let doc_p = std::path::Path::new(doc_path);
     crate::paths::assert_markdown(doc_p)
         .map_err(|e| IpcError { code: "NOT_MARKDOWN".into(), message: e.to_string() })?;
     let canon_doc = std::fs::canonicalize(doc_p)
         .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
 
-    // Derive review path: <canonical doc>.review.md
     let mut review_os = canon_doc.as_os_str().to_owned();
     review_os.push(".review.md");
     let review_path = std::path::PathBuf::from(review_os);
@@ -763,12 +760,25 @@ pub async fn generate_review(payload: ReviewPayload) -> IpcResult<ReviewResult> 
     crate::paths::assert_confined(&review_path, &[doc_dir.to_path_buf()])
         .map_err(|e| IpcError { code: "PATH_CONFINED".into(), message: e.to_string() })?;
 
-    std::fs::write(&review_path, payload.markdown.as_bytes())
-        .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
-
-    Ok(ReviewResult {
+    let result = ReviewResult {
         review_path: review_path.to_string_lossy().into_owned(),
-    })
+        doc_path: canon_doc.to_string_lossy().into_owned(),
+        review_path_rel: crate::paths::repo_relative(&review_path),
+        doc_path_rel: crate::paths::repo_relative(&canon_doc),
+    };
+    Ok((review_path, result))
+}
+
+/// Write a pre-formatted review markdown file beside the document.
+/// Frontend (ReviewExporter.ts) builds the markdown payload.
+#[tauri::command]
+pub async fn generate_review(payload: ReviewPayload) -> IpcResult<ReviewResult> {
+    // Canonicalize + write the .review.md — blocking fs, offloaded (perf #28).
+    tauri::async_runtime::spawn_blocking(move || -> IpcResult<ReviewResult> {
+        let (review_path, result) = resolve_review_paths(&payload.doc_path)?;
+        std::fs::write(&review_path, payload.markdown.as_bytes())
+            .map_err(|e| IpcError { code: "IO_ERROR".into(), message: e.to_string() })?;
+        Ok(result)
     })
     .await
     .map_err(task_err)?
@@ -1409,5 +1419,32 @@ mod ipc_tests {
         // string literals; serde_json escapes them as   /  .
         assert_eq!(js_string_literal("a\u{2028}b").unwrap(), "\"a\\u2028b\"");
         assert_eq!(js_string_literal("a\u{2029}b").unwrap(), "\"a\\u2029b\"");
+    }
+}
+
+#[cfg(test)]
+mod review_path_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn resolve_review_paths_includes_relative_forms() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        let docs = dir.path().join("docs");
+        std::fs::create_dir(&docs).unwrap();
+        let doc = docs.join("spec.md");
+        std::fs::write(&doc, "# hi").unwrap();
+
+        let (review_path, result) =
+            resolve_review_paths(&doc.to_string_lossy()).unwrap();
+
+        assert!(review_path.to_string_lossy().ends_with("spec.md.review.md"));
+        assert_eq!(result.doc_path_rel.as_deref(), Some("docs/spec.md"));
+        assert_eq!(
+            result.review_path_rel.as_deref(),
+            Some("docs/spec.md.review.md")
+        );
+        assert!(result.doc_path.ends_with("spec.md"));
     }
 }
