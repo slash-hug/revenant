@@ -4,7 +4,7 @@
  * Decisions implemented here:
  *  - TRAP 2 (agent-agnostic export): no hardcoded "Claude", "Copilot", or
  *    any other assistant name anywhere in this module. Button label is
- *    "Generate review"; output is plain markdown any agent can read.
+ *    "Send to agent"; output is plain markdown any agent can read.
  *  - C4 export format: numbered open comments with line range + quoted
  *    snippet + body, then General Notes section.
  *
