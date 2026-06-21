@@ -161,6 +161,8 @@ describe('initPreviewZoom', () => {
       preview_zoom: 140,
       agent_nudge_template: "Apply the review comments in `{review_path}` to `{doc_path}`, then summarize what you changed.",
       agent_nudge_path_style: "relative",
+      opening_animation: true,
+      opening_animation_first_launch_only: false,
     });
     initPreviewZoom();
     expect(get(previewZoom)).toBe(140);
@@ -177,6 +179,8 @@ describe('initPreviewZoom', () => {
       preview_zoom: 999,
       agent_nudge_template: "Apply the review comments in `{review_path}` to `{doc_path}`, then summarize what you changed.",
       agent_nudge_path_style: "relative",
+      opening_animation: true,
+      opening_animation_first_launch_only: false,
     });
     initPreviewZoom();
     expect(get(previewZoom)).toBe(ZOOM_MAX);

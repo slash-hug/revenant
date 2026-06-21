@@ -37,6 +37,7 @@
   import type { Tab } from './lib/stores/tabs';
   import { annotationsStore } from './lib/stores/annotations';
   import { settings, loadSettings } from './lib/stores/settings';
+  import { shouldPlayOpeningAnimation } from './lib/openingAnimation';
   import { initPreviewZoom, previewZoom, setZoom, resetZoom, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP } from './lib/stores/previewZoom';
   import { annotationFocus, clearFocus, focusAnnotation } from './lib/stores/annotationFocus';
   import Toast from './lib/Toast.svelte';
@@ -106,6 +107,9 @@
   let toast = $state<string>('');
   let recentFiles = $state<string[]>(loadRecent());
   let bloom = $state(false); // suminagashi open-transition overlay
+  // Session flag: has the opening splash played at least once this run?
+  // Drives the "only on first launch" setting; resets on app restart.
+  let splashPlayed = false;
   // Styled annotation composer popover (replaces window.prompt); null = closed.
   let compose = $state<{ anchor: AnchorV1; x: number; y: number; quoted: string } | null>(null);
 
@@ -188,8 +192,18 @@
       const res = await openFile(path);
       tabsStore.openTab(res.path, res.content, res.content_hash);
       rememberRecent(res.path);
-      // Ink-bloom transition on entering the workspace from the welcome screen.
-      if (wasEmpty) bloom = true;
+      // Ink-bloom transition on entering the workspace from the welcome screen,
+      // gated by the user's opening-animation settings.
+      if (
+        shouldPlayOpeningAnimation({
+          wasEmpty,
+          settings: $settings,
+          alreadyPlayed: splashPlayed,
+        })
+      ) {
+        bloom = true;
+        splashPlayed = true;
+      }
     } catch (err) {
       showToast(`Could not open file: ${errMessage(err)}`);
     }

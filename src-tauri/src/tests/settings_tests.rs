@@ -140,6 +140,17 @@ fn test_version_zero_migrated_in_place() {
     );
     assert_eq!(loaded.theme, "light", "migrated settings should preserve existing values");
 
+    // Fields added after v1 (absent in this legacy file) must fall back to their
+    // serde defaults rather than failing deserialization.
+    assert!(
+        loaded.opening_animation,
+        "opening_animation should default to true for legacy settings files"
+    );
+    assert!(
+        !loaded.opening_animation_first_launch_only,
+        "opening_animation_first_launch_only should default to false for legacy files"
+    );
+
     // Verify the file was written back with the new version.
     let updated_json = std::fs::read_to_string(&path).unwrap();
     assert!(
@@ -250,6 +261,42 @@ fn test_default_settings_has_schema_version_1() {
         settings.schema_version,
         CURRENT_SCHEMA_VERSION,
         "default Settings must carry schema_version = {CURRENT_SCHEMA_VERSION}"
+    );
+}
+
+// ── Test 6b: opening-animation defaults + round-trip ─────────────────────────
+
+#[test]
+fn test_opening_animation_defaults() {
+    let settings = Settings::default();
+    assert!(
+        settings.opening_animation,
+        "opening_animation must default to on (preserves historical behavior)"
+    );
+    assert!(
+        !settings.opening_animation_first_launch_only,
+        "opening_animation_first_launch_only must default to off (replays each time)"
+    );
+}
+
+#[test]
+fn test_opening_animation_round_trip() {
+    let dir = TempDir::new().unwrap();
+    let path = tmp_settings_path(&dir);
+
+    let settings = Settings {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        opening_animation: false,
+        opening_animation_first_launch_only: true,
+        ..Settings::default()
+    };
+    save_settings(&path, &settings).unwrap();
+
+    let loaded = get_settings(&path).expect("round-trip load should succeed");
+    assert!(!loaded.opening_animation, "opening_animation should persist as false");
+    assert!(
+        loaded.opening_animation_first_launch_only,
+        "opening_animation_first_launch_only should persist as true"
     );
 }
 

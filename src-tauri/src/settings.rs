@@ -36,6 +36,12 @@ fn default_agent_nudge_path_style() -> String {
     "relative".to_string()
 }
 
+/// Default for the opening-animation master toggle: on, preserving the
+/// long-standing ink-bloom behavior for users who never visit settings.
+fn default_opening_animation() -> bool {
+    true
+}
+
 /// Application-level settings (persisted to disk as JSON).
 ///
 /// The REST key is intentionally absent from this struct — it lives
@@ -75,6 +81,17 @@ pub struct Settings {
     /// Path form used in the nudge: "relative" (to git root) or "absolute".
     #[serde(default = "default_agent_nudge_path_style")]
     pub agent_nudge_path_style: String,
+
+    /// Master toggle for the ink-bloom opening animation. When false, opening a
+    /// document goes straight to the rendered markdown with no overlay or delay.
+    #[serde(default = "default_opening_animation")]
+    pub opening_animation: bool,
+
+    /// When true (and `opening_animation` is on), the splash plays only the first
+    /// time a document is opened in a session; returning to the welcome screen
+    /// and reopening will not replay it. Defaults to false (replays each time).
+    #[serde(default)]
+    pub opening_animation_first_launch_only: bool,
 }
 
 impl Default for Settings {
@@ -89,6 +106,8 @@ impl Default for Settings {
             preview_zoom: 100,
             agent_nudge_template: default_agent_nudge_template(),
             agent_nudge_path_style: default_agent_nudge_path_style(),
+            opening_animation: true,
+            opening_animation_first_launch_only: false,
         }
     }
 }
@@ -289,6 +308,8 @@ pub fn set_settings_preserving_ref(
         preview_zoom: incoming.preview_zoom,
         agent_nudge_template: incoming.agent_nudge_template,
         agent_nudge_path_style: incoming.agent_nudge_path_style,
+        opening_animation: incoming.opening_animation,
+        opening_animation_first_launch_only: incoming.opening_animation_first_launch_only,
     };
     save_settings(path, &merged)
 }

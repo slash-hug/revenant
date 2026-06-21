@@ -91,6 +91,10 @@ pub struct Settings {
     pub agent_nudge_template: String,
     /// Path form used in the nudge: "relative" (to git root) or "absolute".
     pub agent_nudge_path_style: String,
+    /// Master toggle for the ink-bloom opening animation. Default true.
+    pub opening_animation: bool,
+    /// Play the opening animation only the first time per session. Default false.
+    pub opening_animation_first_launch_only: bool,
 }
 
 /// Response from open_file / save_file.
@@ -288,6 +292,8 @@ fn settings_from_ipc(s: Settings) -> crate::settings::Settings {
         preview_zoom: s.preview_zoom,
         agent_nudge_template: s.agent_nudge_template,
         agent_nudge_path_style: s.agent_nudge_path_style,
+        opening_animation: s.opening_animation,
+        opening_animation_first_launch_only: s.opening_animation_first_launch_only,
     }
 }
 
@@ -305,6 +311,8 @@ fn settings_to_ipc(s: crate::settings::Settings) -> Settings {
         preview_zoom: s.preview_zoom,
         agent_nudge_template: s.agent_nudge_template,
         agent_nudge_path_style: s.agent_nudge_path_style,
+        opening_animation: s.opening_animation,
+        opening_animation_first_launch_only: s.opening_animation_first_launch_only,
     }
 }
 
