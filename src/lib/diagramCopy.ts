@@ -55,7 +55,9 @@ export async function copyDiagramAsPng(container: HTMLElement): Promise<boolean>
 
   try {
     const [w, h] = getSvgDimensions(svg);
-    const scale = 2; // retina
+    // Adapt to the display's devicePixelRatio for crisp Retina output (minimum 2×
+    // so copy is always at least twice the CSS resolution even on 1× displays).
+    const scale = Math.max(window.devicePixelRatio || 1, 2);
 
     const clone = svg.cloneNode(true) as SVGSVGElement;
     clone.setAttribute('width', String(w));
