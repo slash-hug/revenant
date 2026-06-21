@@ -40,7 +40,7 @@
 
   <SettingRow
     label="Preview zoom"
-    helper="Scale the preview reading column. Use Ctrl+scroll or Ctrl+Plus/Minus to adjust from the preview."
+    helper="Scale the preview reading column. Use the zoom bar at the bottom of the preview, or Ctrl+Plus/Minus / Ctrl+0."
   >
     <div class="zoom-control">
       <input

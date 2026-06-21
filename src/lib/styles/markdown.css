@@ -137,17 +137,21 @@
 .preview-content td { color: var(--text); }
 .preview-content tbody tr:hover td { background: var(--surface-2); }
 
-/* mermaid figure */
+/* mermaid figure — static presenter (no fixed height; SVG fits to column) */
 .preview-content [data-block-type="mermaid"] {
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   background: var(--surface);
   padding: 22px;
   margin: 0 0 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: auto;
+  overflow: hidden;
+}
+
+/* SVG inside a mermaid block: fit to column width, never upscale, natural height */
+.preview-content [data-block-type="mermaid"] svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
 }
 .preview-content [data-mermaid-pending] {
   min-height: 96px;

@@ -54,6 +54,8 @@
     ZOOM_STEP,
   } from './stores/previewZoom';
   import MermaidContainer from './MermaidContainer.svelte';
+  import MermaidLightbox from './MermaidLightbox.svelte';
+  import PreviewStatusBar from './PreviewStatusBar.svelte';
 
   interface Props {
     content?: string;
@@ -86,6 +88,9 @@
 
   // Mounted MermaidContainer instances — tracked for cleanup on re-render.
   let mountedContainers: ReturnType<typeof mount>[] = [];
+
+  // Lightbox state — which diagram (if any) is open in the fullscreen lightbox.
+  let lightboxDiagram = $state<{ svg: string; source: string; blockId: string } | null>(null);
 
   /**
    * Post-hydration step: wrap each rendered Mermaid div in a MermaidContainer.
@@ -123,7 +128,14 @@
 
       const instance = mount(MermaidContainer, {
         target: div,
-        props: { svg: svgContent, source, blockId },
+        props: {
+          svg: svgContent,
+          source,
+          blockId,
+          onExpand: (d: { svg: string; source: string; blockId: string }) => {
+            lightboxDiagram = d;
+          },
+        },
       });
       mountedContainers.push(instance);
     }
@@ -417,6 +429,8 @@
    */
   async function reRenderMermaidForTheme() {
     if (!previewEl) return;
+    // Close the lightbox on theme change to avoid stale SVG colors
+    lightboxDiagram = null;
     const divs = previewEl.querySelectorAll<HTMLElement>(
       '[data-block-type="mermaid"][data-mermaid-src]',
     );
@@ -657,13 +671,6 @@
     showAddComment = false;
   }
 
-  /** Ctrl+scroll wheel → zoom in/out by ZOOM_STEP per notch. */
-  function handleZoomWheel(e: WheelEvent) {
-    if (!(e.ctrlKey || e.metaKey)) return;
-    e.preventDefault();
-    adjustZoom(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP);
-  }
-
   /** Ctrl+Plus / Ctrl+Minus / Ctrl+0 → zoom controls. */
   function handleZoomKeydown(e: KeyboardEvent) {
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
@@ -702,7 +709,7 @@
   {/if}
 
   <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div class="pv-scroll" bind:this={pvScrollEl} onwheel={handleZoomWheel}>
+  <div class="pv-scroll" bind:this={pvScrollEl}>
     <!-- AnnotationSeals overlay — first child of .pv-scroll (D3).
          Absolutely positioned relative to .pv-scroll (position: relative added below). -->
     <AnnotationSeals
@@ -751,6 +758,9 @@
     </article>
   </div>
 
+  <!-- Preview zoom status bar — fixed-height flex sibling of .pv-scroll -->
+  <PreviewStatusBar />
+
   {#if showAddComment}
     <!-- Positioning wrapper only; the button inside is self-labeling (no
          role="tooltip" — that would hide the interactive button from AT). -->
@@ -762,6 +772,18 @@
     </div>
   {/if}
 </div>
+
+<!-- Lightbox rendered outside .preview-pane to escape the scaled .prose ancestor.
+     Native dialog uses showModal() for top-layer rendering. -->
+{#if lightboxDiagram}
+  <MermaidLightbox
+    svg={lightboxDiagram.svg}
+    source={lightboxDiagram.source}
+    blockId={lightboxDiagram.blockId}
+    open={lightboxDiagram !== null}
+    onClose={() => { lightboxDiagram = null; }}
+  />
+{/if}
 
 <style>
   /* Mermaid loading state (#29): a diagram block before its SVG hydrates. Hide
