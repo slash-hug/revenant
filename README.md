@@ -134,7 +134,8 @@ comment, press **⌘⇧R** to write a `.review.md`, and press **⌘K** any time 
 
 Click **Send to agent** to write a `.review.md` and copy a paste-ready nudge to
 your clipboard for a running Claude Code / Copilot CLI session. Optional
-slash-command and agent-instruction templates live in
+`/revenant-review` shortcut (a Claude Code command / Copilot CLI skill) and
+agent-instruction templates live in
 [`integrations/`](integrations/README.md).
 
 ## Development

@@ -13,7 +13,7 @@ When you generate a markdown document, open it in Revenant for review. The user
 may annotate it and click **Send to agent**, which writes a `<doc>.md.review.md`
 beside the document and copies a one-line instruction to their clipboard.
 
-When the user pastes that instruction (or runs `/revenant-review <path>`), read
-the referenced `.md.review.md` file, apply each numbered comment to the document
-it reviews, and summarize what you changed. If no review file exists, proceed
-normally — not every document gets annotated.
+When the user pastes that instruction (or invokes the `/revenant-review` command
+or skill), read the referenced `.md.review.md` file, apply each numbered comment
+to the document it reviews, and summarize what you changed. If no review file
+exists, proceed normally — not every document gets annotated.
