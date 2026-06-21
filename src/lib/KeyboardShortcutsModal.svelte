@@ -27,6 +27,9 @@
         { keys: [mod, '2'], label: 'Split' },
         { keys: [mod, '3'], label: 'Preview' },
         { keys: [mod, '\\'], label: 'Toggle annotation panel' },
+        { keys: [mod, '='], label: 'Zoom in' },
+        { keys: [mod, '-'], label: 'Zoom out' },
+        { keys: [mod, '0'], label: 'Reset zoom' },
       ],
     },
     {

@@ -29,7 +29,6 @@ import {
   getAppVersion,
   checkForUpdates,
   openReleasePage,
-  openDiagramWindow,
   type Annotation,
   type Sidecar,
   type Settings,
@@ -65,8 +64,6 @@ describe("IPC contract", () => {
     expect(typeof getAppVersion).toBe("function");
     expect(typeof checkForUpdates).toBe("function");
     expect(typeof openReleasePage).toBe("function");
-    // Diagram popout window
-    expect(typeof openDiagramWindow).toBe("function");
   });
 
   it("openFile calls invoke with correct command name", async () => {
@@ -127,6 +124,8 @@ describe("IPC contract", () => {
       preview_zoom: 100,
       agent_nudge_template: "Apply the review comments in `{review_path}` to `{doc_path}`, then summarize what you changed.",
       agent_nudge_path_style: "relative",
+      opening_animation: true,
+      opening_animation_first_launch_only: false,
     };
     expect(settings.schema_version).toBe(1);
     // Ensure no 'rest_key' property exists on the type (only rest_key_ref)
@@ -201,6 +200,8 @@ describe("IPC contract", () => {
       preview_zoom: 100,
       agent_nudge_template: "Apply the review comments in `{review_path}` to `{doc_path}`, then summarize what you changed.",
       agent_nudge_path_style: "relative",
+      opening_animation: true,
+      opening_animation_first_launch_only: false,
     };
     mockInvoke.mockResolvedValueOnce(updatedSettings);
     const result = await setRestKey("my-secret-key");
@@ -221,6 +222,8 @@ describe("IPC contract", () => {
       preview_zoom: 100,
       agent_nudge_template: "Apply the review comments in `{review_path}` to `{doc_path}`, then summarize what you changed.",
       agent_nudge_path_style: "relative",
+      opening_animation: true,
+      opening_animation_first_launch_only: false,
     };
     mockInvoke.mockResolvedValueOnce(updatedSettings);
     const result = await clearRestKey();
@@ -309,13 +312,4 @@ describe("IPC contract", () => {
     expect(typeof check.release_url).toBe("string");
   });
 
-  it("openDiagramWindow calls invoke with correct command name", async () => {
-    mockInvoke.mockResolvedValueOnce(undefined);
-    await openDiagramWindow('<svg>test</svg>', 'My Diagram', 'dark');
-    expect(mockInvoke).toHaveBeenCalledWith("open_diagram_window", {
-      svg: '<svg>test</svg>',
-      title: 'My Diagram',
-      theme: 'dark',
-    });
-  });
 });

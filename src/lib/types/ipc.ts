@@ -81,6 +81,18 @@ export interface Settings {
   agent_nudge_template: string;
   /** Path form used in the nudge. */
   agent_nudge_path_style: "relative" | "absolute";
+  /**
+   * Master toggle for the ink-bloom opening animation. When false, opening a
+   * document goes straight to the rendered markdown with no overlay or delay.
+   * Default true.
+   */
+  opening_animation: boolean;
+  /**
+   * When true (and `opening_animation` is on), the splash plays only the first
+   * time a document is opened in a session and won't replay after returning to
+   * the welcome screen. Default false.
+   */
+  opening_animation_first_launch_only: boolean;
 }
 
 /** Response from open_file and save_file. */
@@ -399,21 +411,6 @@ export function hasRestKey(): Promise<boolean> {
  */
 export function testObsidianConnection(key?: string): Promise<ConnStatus> {
   return invoke<ConnStatus>("test_obsidian_connection", { key: key ?? null });
-}
-
-// ---------------------------------------------------------------------------
-// Diagram popout window
-// ---------------------------------------------------------------------------
-
-/**
- * Open a rendered Mermaid diagram in a new OS window for focused viewing.
- *
- * `svg` is the sanitized SVG markup. `title` is a human-readable label
- * (e.g. from the nearest heading). `theme` is the current app theme
- * (`"dark"` or `"light"`). Multiple popouts can be open simultaneously.
- */
-export function openDiagramWindow(svg: string, title: string, theme: string): Promise<void> {
-  return invoke<void>("open_diagram_window", { svg, title, theme });
 }
 
 // ---------------------------------------------------------------------------

@@ -23,11 +23,25 @@
     ZOOM_MAX,
     ZOOM_STEP,
   } from '../stores/previewZoom';
+  import { settings, patchSettings } from '../stores/settings';
 
   function handleZoomInput(e: Event) {
     const value = parseInt((e.target as HTMLInputElement).value, 10);
     if (!Number.isNaN(value)) setZoom(value);
   }
+
+  function handleOpeningAnimation(e: Event) {
+    patchSettings({ opening_animation: (e.target as HTMLInputElement).checked });
+  }
+
+  function handleFirstLaunchOnly(e: Event) {
+    patchSettings({
+      opening_animation_first_launch_only: (e.target as HTMLInputElement).checked,
+    });
+  }
+
+  $: openingAnimation = $settings?.opening_animation ?? true;
+  $: firstLaunchOnly = $settings?.opening_animation_first_launch_only ?? false;
 </script>
 
 <SettingGroup label="Appearance">
@@ -40,7 +54,7 @@
 
   <SettingRow
     label="Preview zoom"
-    helper="Scale the preview reading column. Use Ctrl+scroll or Ctrl+Plus/Minus to adjust from the preview."
+    helper="Scale the preview reading column. Use the zoom bar at the bottom of the preview, or Ctrl+Plus/Minus / Ctrl+0."
   >
     <div class="zoom-control">
       <input
@@ -55,6 +69,37 @@
       />
       <span class="zoom-value">{$previewZoom}%</span>
     </div>
+  </SettingRow>
+
+  <SettingRow
+    label="Opening animation"
+    helper="Play the ink-bloom effect when entering a document from the welcome screen. Turn off to open straight to the markdown with no delay."
+  >
+    <label class="checkbox-row">
+      <input
+        type="checkbox"
+        checked={openingAnimation}
+        on:change={handleOpeningAnimation}
+        aria-label="Enable opening animation"
+      />
+      <span class="checkbox-text">{openingAnimation ? 'On' : 'Off'}</span>
+    </label>
+  </SettingRow>
+
+  <SettingRow
+    label="Only on first launch"
+    helper="Play the opening animation just once per session — reopening from the welcome screen later won't replay it."
+  >
+    <label class="checkbox-row" class:disabled={!openingAnimation}>
+      <input
+        type="checkbox"
+        checked={firstLaunchOnly}
+        disabled={!openingAnimation}
+        on:change={handleFirstLaunchOnly}
+        aria-label="Play opening animation only on first launch"
+      />
+      <span class="checkbox-text">{firstLaunchOnly ? 'On' : 'Off'}</span>
+    </label>
   </SettingRow>
 </SettingGroup>
 
@@ -77,5 +122,33 @@
     color: var(--text-muted);
     min-width: 3.5ch;
     text-align: right;
+  }
+
+  .checkbox-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+
+  .checkbox-row.disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  .checkbox-row input[type='checkbox'] {
+    accent-color: var(--accent);
+    cursor: pointer;
+    flex: none;
+  }
+
+  .checkbox-row.disabled input[type='checkbox'] {
+    cursor: default;
+  }
+
+  .checkbox-text {
+    font-size: var(--fs-sm);
+    color: var(--text-muted);
+    min-width: 2.5ch;
   }
 </style>

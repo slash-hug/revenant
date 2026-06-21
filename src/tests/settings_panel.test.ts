@@ -42,6 +42,8 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     preview_zoom: 100,
     agent_nudge_template: "Apply the review comments in `{review_path}` to `{doc_path}`, then summarize what you changed.",
     agent_nudge_path_style: "relative",
+    opening_animation: true,
+    opening_animation_first_launch_only: false,
     ...overrides,
   };
 }
