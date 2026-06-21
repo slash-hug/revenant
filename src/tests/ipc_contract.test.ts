@@ -29,7 +29,6 @@ import {
   getAppVersion,
   checkForUpdates,
   openReleasePage,
-  openDiagramWindow,
   type Annotation,
   type Sidecar,
   type Settings,
@@ -65,8 +64,6 @@ describe("IPC contract", () => {
     expect(typeof getAppVersion).toBe("function");
     expect(typeof checkForUpdates).toBe("function");
     expect(typeof openReleasePage).toBe("function");
-    // Diagram popout window
-    expect(typeof openDiagramWindow).toBe("function");
   });
 
   it("openFile calls invoke with correct command name", async () => {
@@ -309,13 +306,4 @@ describe("IPC contract", () => {
     expect(typeof check.release_url).toBe("string");
   });
 
-  it("openDiagramWindow calls invoke with correct command name", async () => {
-    mockInvoke.mockResolvedValueOnce(undefined);
-    await openDiagramWindow('<svg>test</svg>', 'My Diagram', 'dark');
-    expect(mockInvoke).toHaveBeenCalledWith("open_diagram_window", {
-      svg: '<svg>test</svg>',
-      title: 'My Diagram',
-      theme: 'dark',
-    });
-  });
 });

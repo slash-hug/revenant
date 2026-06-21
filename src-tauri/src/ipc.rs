@@ -1232,85 +1232,6 @@ pub fn open_release_page(app: AppHandle, url: String) -> IpcResult<()> {
         .map_err(|e| updates_err(crate::updates::UpdatesError::InvalidUrl(e.to_string())))
 }
 
-/// Open a rendered Mermaid diagram in a new OS window for focused viewing.
-///
-/// Creates a new WebviewWindow showing `diagram-viewer.html` with the SVG
-/// injected via an initialization script. Supports multiple concurrent popouts
-/// (window labels are `diagram-0`, `diagram-1`, etc.).
-///
-/// `svg` is the sanitized SVG markup. `title` is a human-readable label
-/// derived from the nearest heading in the document (or "Untitled").
-/// `theme` is the current app theme (`"dark"` or `"light"`) so the popout
-/// window can match the main window's appearance.
-/// Serialize a string as a valid, fully-escaped JS string literal (including the
-/// surrounding double-quotes). Uses `serde_json`, which correctly escapes quotes,
-/// backslashes, and control characters.
-///
-/// JSON permits raw U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH SEPARATOR),
-/// but in pre-ES2019 JS engines these terminate a string literal. To stay safe
-/// across engines we additionally escape them to their `\uXXXX` forms — they
-/// round-trip identically through the JS parser.
-fn js_string_literal(s: &str) -> Result<String, serde_json::Error> {
-    let json = serde_json::to_string(s)?;
-    let escaped = json
-        .replace('\u{2028}', "\\u2028")
-        .replace('\u{2029}', "\\u2029");
-    Ok(escaped)
-}
-
-#[tauri::command]
-pub async fn open_diagram_window(
-    app: AppHandle,
-    svg: String,
-    title: String,
-    theme: String,
-) -> IpcResult<()> {
-    use std::sync::atomic::{AtomicU32, Ordering};
-
-    static COUNTER: AtomicU32 = AtomicU32::new(0);
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let label = format!("diagram-{}", id);
-
-    // Serialize each interpolated value as a fully-escaped JS string literal
-    // (serde_json emits the surrounding double-quotes and handles every escape,
-    // including U+2028/U+2029 line/paragraph separators that break naive escaping).
-    let to_window_err = |e: serde_json::Error| IpcError {
-        code: "WINDOW_ERROR".to_string(),
-        message: format!("Failed to serialize diagram init script: {}", e),
-    };
-    let svg_js = js_string_literal(&svg).map_err(to_window_err)?;
-    let title_js = js_string_literal(&title).map_err(to_window_err)?;
-    let theme_value = if theme == "light" { "light" } else { "dark" };
-    let theme_js = js_string_literal(theme_value).map_err(to_window_err)?;
-
-    let init_script = format!(
-        "window.__DIAGRAM_SVG__ = {}; window.__DIAGRAM_TITLE__ = {}; document.documentElement.setAttribute('data-theme', {});",
-        svg_js, title_js, theme_js
-    );
-
-    let window_title = if title.is_empty() {
-        "Diagram".to_string()
-    } else {
-        format!("Diagram — {}", title)
-    };
-
-    let window = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("diagram-viewer.html".into()))
-        .title(&window_title)
-        .inner_size(800.0, 600.0)
-        .min_inner_size(400.0, 300.0)
-        .resizable(true)
-        .initialization_script(&init_script)
-        .build()
-        .map_err(|e| IpcError {
-            code: "WINDOW_ERROR".to_string(),
-            message: format!("Failed to create diagram window: {}", e),
-        })?;
-
-    // Focus the new window so it appears in front on Windows/macOS.
-    let _ = window.set_focus();
-
-    Ok(())
-}
 
 // ---------------------------------------------------------------------------
 // Private helpers
@@ -1323,8 +1244,6 @@ pub async fn open_diagram_window(
 
 #[cfg(test)]
 mod ipc_tests {
-    use super::js_string_literal;
-
     // ── #46: REST key shape validation (validate_rest_key) ────────────────────
     use super::validate_rest_key;
 
@@ -1398,36 +1317,6 @@ mod ipc_tests {
             "a case-variant path to an open document must resolve to the same canonical path"
         );
         assert_eq!(got.unwrap(), canon);
-    }
-
-    #[test]
-    fn js_string_literal_escapes_quotes_and_backslashes() {
-        assert_eq!(js_string_literal("a\"b").unwrap(), "\"a\\\"b\"");
-        assert_eq!(js_string_literal("a\\b").unwrap(), "\"a\\\\b\"");
-    }
-
-    #[test]
-    fn js_string_literal_escapes_newlines() {
-        assert_eq!(js_string_literal("a\nb\r").unwrap(), "\"a\\nb\\r\"");
-    }
-
-    #[test]
-    fn js_string_literal_escapes_script_terminator() {
-        // serde_json escapes the forward slash's `<`/`>` neighbors are left as-is,
-        // but the closing-tag sequence must not break out of an inline <script>.
-        // serde_json escapes `<`? No — it leaves `<`/`>` literal, so verify the
-        // literal is still a valid, quote-delimited JS string (no premature close).
-        let out = js_string_literal("</script>").unwrap();
-        assert!(out.starts_with('"') && out.ends_with('"'));
-        assert!(!out[1..out.len() - 1].contains('"'));
-    }
-
-    #[test]
-    fn js_string_literal_escapes_line_paragraph_separators() {
-        // U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR terminate JS
-        // string literals; serde_json escapes them as   /  .
-        assert_eq!(js_string_literal("a\u{2028}b").unwrap(), "\"a\\u2028b\"");
-        assert_eq!(js_string_literal("a\u{2029}b").unwrap(), "\"a\\u2029b\"");
     }
 }
 
