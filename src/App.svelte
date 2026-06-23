@@ -28,6 +28,7 @@
   import KeyboardShortcutsModal from './lib/KeyboardShortcutsModal.svelte';
   import AnnotationComposer from './lib/AnnotationComposer.svelte';
   import AnnotationPopover from './lib/AnnotationPopover.svelte';
+  import FindBar from './lib/FindBar.svelte';
   import ThemeToggle from './lib/ThemeToggle.svelte';
   import Suminagashi from './lib/Suminagashi.svelte';
   import CommandPalette from './lib/CommandPalette.svelte';
@@ -36,6 +37,7 @@
   import { tabsStore, activeTab, tabList } from './lib/stores/tabs';
   import type { Tab } from './lib/stores/tabs';
   import { annotationsStore } from './lib/stores/annotations';
+  import { findStore } from './lib/stores/find';
   import { settings, loadSettings } from './lib/stores/settings';
   import { shouldPlayOpeningAnimation } from './lib/openingAnimation';
   import { initPreviewZoom, previewZoom, setZoom, resetZoom, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP } from './lib/stores/previewZoom';
@@ -79,6 +81,7 @@
   let splitEditorFrac = $state(_layout0.frac); // editor's share of the split
   let drawerWidth = $state(_layout0.width);    // px
   let panesEl = $state<HTMLElement | null>(null);
+  let wsBodyEl = $state<HTMLElement | null>(null);
 
   // Persist layout on any change (runs once on mount too — harmless).
   $effect(() => {
@@ -95,13 +98,18 @@
     drawerWidth = nextDrawerWidth(drawerWidth, dx);
   }
   let paletteOpen = $state(false); // ⌘K command palette (#9)
+  let findBarOpen = $state(false); // Ctrl+F find bar
   let shortcutsOpen = $state(false); // keyboard-shortcuts help overlay (#25)
   // Settings view-state: null = settings closed; string = active category.
   // Replaces the old boolean settingsOpen (A1).
   let settingsView: 'general' | 'integrations' | 'agent' | 'about' | null = $state(null);
   // Focus target captured on settings entry so we can restore it on exit (A3).
   let focusRestoreEl: HTMLElement | null = null;
-  let editorRef = $state<{ save: () => Promise<'saved' | 'conflict' | 'error' | 'noop'> } | null>(null);
+  let editorRef = $state<{
+    save: () => Promise<'saved' | 'conflict' | 'error' | 'noop'>;
+    replaceMatch: (from: number, to: number, replacement: string) => void;
+    replaceAllMatches: (matches: { from: number; to: number }[], replacement: string) => void;
+  } | null>(null);
   let closing = $state<Tab | null>(null); // tab pending an unsaved-changes guard (#22)
   let conflict = $state<{ open: boolean; path: string }>({ open: false, path: '' });
   let toast = $state<string>('');
@@ -121,6 +129,34 @@
 
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
   let loadedPath: string | null = null;
+
+  // Sync findStore.open → findBarOpen (store is the source of truth for close).
+  const unsubFindBar = findStore.subscribe((s) => {
+    findBarOpen = s.open;
+  });
+
+  // -------------------------------------------------------------------------
+  // Find & Replace handler
+  // -------------------------------------------------------------------------
+  function handleFindReplace(e: Event) {
+    const ce = e as CustomEvent<{ type: string; from?: number; to?: number; replacement: string; matches?: { from: number; to: number }[] }>;
+    const { type, from, to, replacement, matches } = ce.detail;
+    if (type === 'replace' && editorRef && from != null && to != null) {
+      editorRef.replaceMatch(from, to, replacement);
+      // After a tick, grab the new content and recompute matches.
+      setTimeout(() => {
+        const newContent = $activeTab?.content ?? '';
+        const snap = findStore.snapshot;
+        findStore.afterReplace(newContent, snap.currentIndex);
+      }, 50);
+    } else if (type === 'replaceAll' && editorRef && matches) {
+      editorRef.replaceAllMatches(matches, replacement);
+      setTimeout(() => {
+        const newContent = $activeTab?.content ?? '';
+        findStore.afterReplace(newContent, 0);
+      }, 50);
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Toast helper
@@ -241,6 +277,25 @@
     // changes (including initial mount, which is a no-op — activeId is already null).
     $activeTab?.id;
     clearFocus();
+  });
+
+  // Re-run find search when the active tab content changes.
+  $effect(() => {
+    const tab = $activeTab;
+    if (tab && findStore.snapshot.open) {
+      findStore.recompute(tab.content);
+    } else if (!tab) {
+      findStore.close();
+      findBarOpen = false;
+    }
+  });
+
+  // Wire the 'findreplace' custom DOM event (bubbles from FindBar).
+  $effect(() => {
+    const el = wsBodyEl;
+    if (!el) return;
+    el.addEventListener('findreplace', handleFindReplace);
+    return () => el.removeEventListener('findreplace', handleFindReplace);
   });
 
   // -------------------------------------------------------------------------
@@ -512,6 +567,7 @@
       void dnd.then((f) => f());
       window.removeEventListener('keydown', handleGlobalKeydown);
       if (toastTimer) clearTimeout(toastTimer);
+      unsubFindBar();
     };
   });
 
@@ -560,6 +616,18 @@
     });
 
     if (!$activeTab) return cmds;
+
+    // Edit — Find & Replace
+    cmds.push({
+      id: 'find', title: 'Find', section: 'Edit', hint: `${mod}F`,
+      keywords: 'search text query',
+      run: () => { findStore.openFind(); findStore.recompute($activeTab?.content ?? ''); },
+    });
+    cmds.push({
+      id: 'find-replace', title: 'Find and Replace', section: 'Edit', hint: `${mod}H`,
+      keywords: 'search replace text substitute',
+      run: () => { findStore.openReplace(); findStore.recompute($activeTab?.content ?? ''); },
+    });
 
     // View
     cmds.push({ id: 'view-source', title: 'View: Source', section: 'View', hint: `${mod}1`, keywords: 'editor code', run: () => (viewMode = 'source') });
@@ -636,6 +704,22 @@
       if (e.key === ',') { e.preventDefault(); openSettings('general'); return; }
     }
     if ($tabList.length === 0) return;
+    // Ctrl+F → open Find bar; Ctrl+H → open Find & Replace.
+    if (!e.altKey && !e.shiftKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'f') {
+        e.preventDefault();
+        findStore.openFind();
+        findStore.recompute($activeTab?.content ?? '');
+        return;
+      }
+      if (k === 'h') {
+        e.preventDefault();
+        findStore.openReplace();
+        findStore.recompute($activeTab?.content ?? '');
+        return;
+      }
+    }
     // ⌘⌥ combos — keyboard navigation of annotations (#16). ⌘⌥M (add comment on
     // selection, #10) is handled in the focused pane, not here.
     if (e.altKey) {
@@ -753,7 +837,8 @@
 
       <TabManager on:close={(e) => requestCloseTab(e.detail.id)} />
 
-      <div class="ws-body">
+      <div class="ws-body" bind:this={wsBodyEl}>
+        <FindBar bind:open={findBarOpen} viewMode={viewMode} />
         <div class="panes view-{viewMode}" bind:this={panesEl} style="--split-editor: {splitEditorFrac * 100}%">
           {#if $activeTab}
             {#key $activeTab.id}
@@ -1062,7 +1147,7 @@
   /* ============ Workspace ============ */
   .ws { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
-  .ws-body { flex: 1; min-height: 0; display: flex; min-width: 0; }
+  .ws-body { flex: 1; min-height: 0; display: flex; min-width: 0; position: relative; }
 
   .panes { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
   .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
