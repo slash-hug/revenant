@@ -30,6 +30,14 @@
   import { annotationFocus, focusAnnotation, hoverAnnotation, setAnchorRect } from './stores/annotationFocus';
   import { findSpan } from './annotationHighlight';
   import { isMac } from './util/platform';
+  import { findStore } from './stores/find';
+  import {
+    findCmField,
+    findDecorationExt,
+    findThemeExt,
+    setFindMatchesEffect,
+    setFindActiveIndexEffect,
+  } from './find-highlight';
 
   // -------------------------------------------------------------------------
   // Annotation focus / gutter-seal CM6 integration (T3.1 / D12)
@@ -383,6 +391,7 @@
   /** Store unsubscribe handles — cleaned up in onDestroy. */
   let unsubAnnotations: (() => void) | null = null;
   let unsubFocus: (() => void) | null = null;
+  let unsubFind: (() => void) | null = null;
 
   // -------------------------------------------------------------------------
   // CodeMirror setup
@@ -396,6 +405,10 @@
         annotationCmField,
         annotationGutterExt,
         annotationWashExt,
+        // Find & Replace decoration field + decoration provider + theme.
+        findCmField,
+        findDecorationExt,
+        findThemeExt,
         lineNumbers(),
         highlightActiveLine(),
         highlightActiveLineGutter(),
@@ -558,6 +571,31 @@
         }
       }
     });
+
+    // Subscribe to the find store: push match ranges and active index into
+    // the CM6 state, and scroll the active match into view.
+    let lastFindMatches: import('./stores/find').MatchRange[] = [];
+    let lastFindActive = -1;
+    unsubFind = findStore.subscribe((s) => {
+      if (!view) return;
+      if (s.matches !== lastFindMatches) {
+        lastFindMatches = s.matches;
+        view.dispatch({ effects: [setFindMatchesEffect.of(s.matches)] });
+      }
+      if (s.currentIndex !== lastFindActive) {
+        lastFindActive = s.currentIndex;
+        view.dispatch({ effects: [setFindActiveIndexEffect.of(s.currentIndex)] });
+        // Scroll the active match into view.
+        if (s.currentIndex >= 0 && s.currentIndex < s.matches.length) {
+          const match = s.matches[s.currentIndex];
+          if (match.from >= 0 && match.from <= view.state.doc.length) {
+            view.dispatch({
+              effects: EditorView.scrollIntoView(match.from, { y: 'center' }),
+            });
+          }
+        }
+      }
+    });
   });
 
   onDestroy(() => {
@@ -570,6 +608,7 @@
     // Unsubscribe from annotation stores before destroying the view.
     unsubAnnotations?.();
     unsubFocus?.();
+    unsubFind?.();
     view?.destroy();
   });
 
@@ -618,6 +657,34 @@
    */
   export async function save(): Promise<'saved' | 'conflict' | 'error' | 'noop'> {
     return handleSave();
+  }
+
+  /**
+   * Replace a single match range in the editor.
+   * Dispatches a CM6 transaction that flows through the existing change pipeline.
+   */
+  export function replaceMatch(from: number, to: number, replacement: string): void {
+    if (!view) return;
+    view.dispatch({
+      changes: { from, to, insert: replacement },
+    });
+    // The CM6 updateListener fires scheduleChange(), which updates the tab store
+    // and triggers a PreviewPane re-render automatically.
+  }
+
+  /**
+   * Replace all match ranges at once.
+   * Applies replacements bottom-to-top to preserve character offsets.
+   */
+  export function replaceAllMatches(
+    matches: { from: number; to: number }[],
+    replacement: string,
+  ): void {
+    if (!view || matches.length === 0) return;
+    // Sort descending by `from` so earlier offsets remain valid as we replace.
+    const sorted = [...matches].sort((a, b) => b.from - a.from);
+    const changes = sorted.map((m) => ({ from: m.from, to: m.to, insert: replacement }));
+    view.dispatch({ changes });
   }
 
   async function handleSave(): Promise<'saved' | 'conflict' | 'error' | 'noop'> {

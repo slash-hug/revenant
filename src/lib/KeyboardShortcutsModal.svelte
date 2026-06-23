@@ -50,6 +50,17 @@
       ],
     },
     {
+      title: 'Find & Replace',
+      items: [
+        { keys: [mod, 'F'], label: 'Find' },
+        { keys: [mod, 'H'], label: 'Find & Replace' },
+        { keys: [enter], label: 'Next match' },
+        { keys: [shift, enter], label: 'Previous match' },
+        { keys: [alt, enter], label: 'Replace current' },
+        { keys: [mod, alt, enter], label: 'Replace all' },
+      ],
+    },
+    {
       title: 'General',
       items: [
         { keys: [mod, 'K'], label: 'Command palette' },

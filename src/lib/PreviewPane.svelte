@@ -45,7 +45,9 @@
     isHighlightSupported,
   } from './annotationHighlight';
   import { annotationsStore } from './stores/annotations';
+  import { findStore } from './stores/find';
   import { resolveBlock } from './annotationResolve';
+  import { refreshFindHighlights, clearFindHighlights } from './find-highlight';
   import { nearestLineIndex } from './scrollSync';
   import {
     previewZoom,
@@ -160,6 +162,63 @@
       void scrollToActiveAndAnchor(state.activeId);
     }
     prevScrollNonce = state.scrollNonce;
+  });
+
+  // ── Find & Replace highlight sync ──────────────────────────────────────
+  let lastFindQuery = '';
+  let lastFindIndex = -1;
+  let lastFindMatchCount = 0;
+
+  const unsubFindPreview = findStore.subscribe((s) => {
+    if (!previewEl) return;
+    if (!s.open || s.matches.length === 0) {
+      if (lastFindMatchCount > 0) {
+        clearFindHighlights();
+        lastFindMatchCount = 0;
+      }
+      lastFindQuery = s.query;
+      lastFindIndex = s.currentIndex;
+      return;
+    }
+    // Only refresh if something actually changed.
+    if (
+      s.query === lastFindQuery &&
+      s.currentIndex === lastFindIndex &&
+      s.matches.length === lastFindMatchCount
+    ) {
+      return;
+    }
+    lastFindQuery = s.query;
+    lastFindIndex = s.currentIndex;
+    lastFindMatchCount = s.matches.length;
+
+    requestAnimationFrame(() => {
+      if (!previewEl) return;
+      refreshFindHighlights(previewEl, s.matches, s.currentIndex, s.content);
+      // Scroll active match into view in the preview.
+      if (s.currentIndex >= 0 && s.currentIndex < s.matches.length && pvScrollEl) {
+        // The active highlight is in the find-active CSS highlight set.
+        // To scroll, find the block containing the match text.
+        const matchText = s.content.slice(
+          s.matches[s.currentIndex].from,
+          s.matches[s.currentIndex].to,
+        );
+        if (matchText) {
+          const stripped = matchText.replace(/[*_~`]/g, '');
+          const walker = document.createTreeWalker(previewEl, NodeFilter.SHOW_TEXT);
+          let node: Node | null;
+          while ((node = walker.nextNode())) {
+            if ((node.textContent ?? '').includes(stripped)) {
+              const parent = node.parentElement;
+              if (parent) {
+                parent.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              }
+              break;
+            }
+          }
+        }
+      }
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -309,6 +368,11 @@
       // Mermaid/hljs hydration is async; compute offsetTop only after SVGs inject).
       triggerSealRecompute();
       refreshAnnotationWash();
+      // Refresh find highlights after re-render (matches may need remapping).
+      const findState = findStore.snapshot;
+      if (findState.open && findState.matches.length > 0 && previewEl) {
+        refreshFindHighlights(previewEl, findState.matches, findState.currentIndex, findState.content);
+      }
     }
   }
 
@@ -478,7 +542,9 @@
     resizeObserver = null;
     if (scrollSyncRaf) cancelAnimationFrame(scrollSyncRaf);
     unsubFocus();
+    unsubFindPreview();
     clearHighlights();
+    clearFindHighlights();
     clearFocus();
     for (const instance of mountedContainers) {
       unmount(instance);

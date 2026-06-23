@@ -334,6 +334,14 @@
   margin-top: 8px;
 }
 
+/* ---- Find & Replace highlights (CSS Custom Highlight API) ---- */
+::highlight(find-match) {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+::highlight(find-active) {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
 /* ---- wikilinks (T2.3) ---- */
 
 /*
